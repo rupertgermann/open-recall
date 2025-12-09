@@ -1,7 +1,8 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Save, RefreshCw, CheckCircle, AlertCircle, Loader2, Server, Cpu, Database } from "lucide-react";
+import { getAISettings, saveAISettings, getDatabaseStats, testAIConnection, type AISettings } from "@/actions/settings";
 import { Header } from "@/components/layout/header";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -12,6 +13,7 @@ type Provider = "local" | "openai";
 type ConnectionStatus = "connected" | "disconnected" | "testing";
 
 export default function SettingsPage() {
+  const [isLoading, setIsLoading] = useState(true);
   const [provider, setProvider] = useState<Provider>("local");
   const [baseUrl, setBaseUrl] = useState("http://localhost:11434/v1");
   const [model, setModel] = useState("llama3.2:8b");
@@ -27,22 +29,82 @@ export default function SettingsPage() {
   ]);
   const [isSaving, setIsSaving] = useState(false);
   const [saved, setSaved] = useState(false);
+  const [dbStats, setDbStats] = useState({ documents: 0, entities: 0, relationships: 0 });
+  const [connectionError, setConnectionError] = useState<string | null>(null);
+
+  // Load settings on mount
+  useEffect(() => {
+    async function loadSettings() {
+      try {
+        const [settings, stats] = await Promise.all([
+          getAISettings(),
+          getDatabaseStats(),
+        ]);
+        setProvider(settings.provider);
+        setBaseUrl(settings.baseUrl);
+        setModel(settings.model);
+        setEmbeddingModel(settings.embeddingModel);
+        setOpenaiKey(settings.openaiKey || "");
+        setDbStats(stats);
+      } catch (error) {
+        console.error("Failed to load settings:", error);
+      } finally {
+        setIsLoading(false);
+      }
+    }
+    loadSettings();
+  }, []);
 
   const testConnection = async () => {
     setConnectionStatus("testing");
-    // Simulate connection test
-    await new Promise((r) => setTimeout(r, 1500));
-    setConnectionStatus("connected");
+    setConnectionError(null);
+    
+    try {
+      const result = await testAIConnection(baseUrl);
+      if (result.success) {
+        setConnectionStatus("connected");
+        if (result.models && result.models.length > 0) {
+          setAvailableModels(result.models);
+        }
+      } else {
+        setConnectionStatus("disconnected");
+        setConnectionError(result.error || "Connection failed");
+      }
+    } catch (error) {
+      setConnectionStatus("disconnected");
+      setConnectionError(error instanceof Error ? error.message : "Connection failed");
+    }
   };
 
   const handleSave = async () => {
     setIsSaving(true);
-    // Simulate save
-    await new Promise((r) => setTimeout(r, 800));
-    setIsSaving(false);
-    setSaved(true);
-    setTimeout(() => setSaved(false), 2000);
+    try {
+      await saveAISettings({
+        provider,
+        baseUrl,
+        model,
+        embeddingModel,
+        openaiKey: openaiKey || undefined,
+      });
+      setSaved(true);
+      setTimeout(() => setSaved(false), 2000);
+    } catch (error) {
+      console.error("Failed to save settings:", error);
+    } finally {
+      setIsSaving(false);
+    }
   };
+
+  if (isLoading) {
+    return (
+      <div className="min-h-screen bg-background">
+        <Header />
+        <main className="container mx-auto px-4 py-8 max-w-3xl flex items-center justify-center">
+          <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+        </main>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-background">
@@ -122,6 +184,9 @@ export default function SettingsPage() {
                         <Badge variant="outline" className="text-muted-foreground">
                           Not tested
                         </Badge>
+                      )}
+                      {connectionError && (
+                        <span className="text-xs text-destructive">{connectionError}</span>
                       )}
                     </div>
                   </div>
@@ -220,15 +285,15 @@ export default function SettingsPage() {
 
               <div className="grid grid-cols-3 gap-4 mt-4 pt-4 border-t">
                 <div className="text-center">
-                  <p className="text-2xl font-bold">3</p>
+                  <p className="text-2xl font-bold">{dbStats.documents}</p>
                   <p className="text-xs text-muted-foreground">Documents</p>
                 </div>
                 <div className="text-center">
-                  <p className="text-2xl font-bold">12</p>
+                  <p className="text-2xl font-bold">{dbStats.entities}</p>
                   <p className="text-xs text-muted-foreground">Entities</p>
                 </div>
                 <div className="text-center">
-                  <p className="text-2xl font-bold">24</p>
+                  <p className="text-2xl font-bold">{dbStats.relationships}</p>
                   <p className="text-xs text-muted-foreground">Relationships</p>
                 </div>
               </div>

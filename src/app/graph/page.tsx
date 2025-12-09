@@ -1,8 +1,10 @@
 "use client";
 
-import { useState, useCallback, useMemo } from "react";
+import { useState, useCallback, useMemo, useEffect } from "react";
 import dynamic from "next/dynamic";
-import { Search, Filter, ZoomIn, ZoomOut, Maximize2 } from "lucide-react";
+import Link from "next/link";
+import { Search, Loader2, RefreshCw } from "lucide-react";
+import { getGraphData, getEntityDetails, type GraphData, type GraphNode } from "@/actions/graph";
 import { Header } from "@/components/layout/header";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -19,36 +21,13 @@ const ForceGraph2D = dynamic(() => import("react-force-graph-2d"), {
   ),
 });
 
-// Mock graph data
-const mockGraphData = {
-  nodes: [
-    { id: "graphrag", name: "GraphRAG", type: "concept", val: 20 },
-    { id: "rag", name: "RAG", type: "concept", val: 15 },
-    { id: "knowledge-graph", name: "Knowledge Graph", type: "concept", val: 18 },
-    { id: "vector-search", name: "Vector Search", type: "technology", val: 12 },
-    { id: "llm", name: "LLM", type: "technology", val: 16 },
-    { id: "embeddings", name: "Embeddings", type: "concept", val: 10 },
-    { id: "postgresql", name: "PostgreSQL", type: "technology", val: 8 },
-    { id: "pgvector", name: "pgvector", type: "technology", val: 7 },
-    { id: "ollama", name: "Ollama", type: "technology", val: 9 },
-    { id: "local-first", name: "Local-First", type: "concept", val: 11 },
-    { id: "privacy", name: "Privacy", type: "concept", val: 8 },
-    { id: "nextjs", name: "Next.js", type: "technology", val: 10 },
-  ],
-  links: [
-    { source: "graphrag", target: "rag", label: "extends" },
-    { source: "graphrag", target: "knowledge-graph", label: "uses" },
-    { source: "rag", target: "vector-search", label: "uses" },
-    { source: "rag", target: "llm", label: "uses" },
-    { source: "vector-search", target: "embeddings", label: "requires" },
-    { source: "embeddings", target: "llm", label: "generated_by" },
-    { source: "pgvector", target: "postgresql", label: "extends" },
-    { source: "vector-search", target: "pgvector", label: "implemented_by" },
-    { source: "ollama", target: "llm", label: "provides" },
-    { source: "local-first", target: "privacy", label: "enables" },
-    { source: "local-first", target: "ollama", label: "uses" },
-    { source: "nextjs", target: "local-first", label: "supports" },
-  ],
+type EntityDetails = {
+  id: string;
+  name: string;
+  type: string;
+  description: string | null;
+  documents: { id: string; title: string; type: string; createdAt: Date }[];
+  connectedEntities: { id: string; name: string; type: string; relationType: string }[];
 };
 
 const typeColors: Record<string, string> = {
@@ -59,14 +38,62 @@ const typeColors: Record<string, string> = {
 };
 
 export default function GraphPage() {
+  const [graphData, setGraphData] = useState<GraphData>({ nodes: [], links: [] });
+  const [isLoading, setIsLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState("");
-  const [selectedNode, setSelectedNode] = useState<typeof mockGraphData.nodes[0] | null>(null);
+  const [selectedNode, setSelectedNode] = useState<GraphNode | null>(null);
+  const [selectedDetails, setSelectedDetails] = useState<EntityDetails | null>(null);
   const [filterType, setFilterType] = useState<string | null>(null);
 
-  const filteredData = useMemo(() => {
-    if (!filterType && !searchQuery) return mockGraphData;
+  // Fetch graph data
+  useEffect(() => {
+    async function fetchGraph() {
+      setIsLoading(true);
+      try {
+        const data = await getGraphData();
+        setGraphData(data);
+      } catch (error) {
+        console.error("Failed to fetch graph:", error);
+      } finally {
+        setIsLoading(false);
+      }
+    }
+    fetchGraph();
+  }, []);
 
-    const filteredNodes = mockGraphData.nodes.filter((node) => {
+  // Fetch entity details when selected
+  useEffect(() => {
+    async function fetchDetails() {
+      if (!selectedNode) {
+        setSelectedDetails(null);
+        return;
+      }
+      try {
+        const details = await getEntityDetails(selectedNode.id);
+        setSelectedDetails(details);
+      } catch (error) {
+        console.error("Failed to fetch entity details:", error);
+      }
+    }
+    fetchDetails();
+  }, [selectedNode]);
+
+  const handleRefresh = async () => {
+    setIsLoading(true);
+    try {
+      const data = await getGraphData();
+      setGraphData(data);
+    } catch (error) {
+      console.error("Failed to refresh graph:", error);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const filteredData = useMemo(() => {
+    if (!filterType && !searchQuery) return graphData;
+
+    const filteredNodes = graphData.nodes.filter((node) => {
       const matchesType = !filterType || node.type === filterType;
       const matchesSearch = !searchQuery || 
         node.name.toLowerCase().includes(searchQuery.toLowerCase());
@@ -74,25 +101,34 @@ export default function GraphPage() {
     });
 
     const nodeIds = new Set(filteredNodes.map((n) => n.id));
-    const filteredLinks = mockGraphData.links.filter(
+    const filteredLinks = graphData.links.filter(
       (link) => nodeIds.has(link.source as string) && nodeIds.has(link.target as string)
     );
 
     return { nodes: filteredNodes, links: filteredLinks };
-  }, [filterType, searchQuery]);
+  }, [graphData, filterType, searchQuery]);
 
-  const handleNodeClick = useCallback((node: typeof mockGraphData.nodes[0]) => {
-    setSelectedNode(node);
-  }, []);
+  // Transform data for force graph
+  const forceGraphData = useMemo(() => ({
+    nodes: filteredData.nodes.map((n) => ({
+      id: n.id,
+      name: n.name,
+      type: n.type,
+      val: Math.max(5, n.mentionCount * 3 + 5),
+    })),
+    links: filteredData.links.map((l) => ({
+      source: l.source,
+      target: l.target,
+      label: l.relationType,
+    })),
+  }), [filteredData]);
 
-  const getConnectedNodes = (nodeId: string) => {
-    const connected = new Set<string>();
-    mockGraphData.links.forEach((link) => {
-      if (link.source === nodeId) connected.add(link.target as string);
-      if (link.target === nodeId) connected.add(link.source as string);
-    });
-    return mockGraphData.nodes.filter((n) => connected.has(n.id));
-  };
+  const handleNodeClick = useCallback((node: { id: string; name: string; type: string }) => {
+    const graphNode = graphData.nodes.find((n) => n.id === node.id);
+    if (graphNode) {
+      setSelectedNode(graphNode);
+    }
+  }, [graphData.nodes]);
 
   return (
     <div className="min-h-screen bg-background flex flex-col">
@@ -103,53 +139,56 @@ export default function GraphPage() {
         <div className="flex-1 relative">
           <Card className="h-[calc(100vh-12rem)]">
             <CardContent className="p-0 h-full">
+              {isLoading ? (
+                <div className="flex items-center justify-center h-full">
+                  <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+                </div>
+              ) : forceGraphData.nodes.length === 0 ? (
+                <div className="flex flex-col items-center justify-center h-full text-muted-foreground">
+                  <p>No entities in your knowledge graph yet.</p>
+                  <Link href="/add" className="text-primary hover:underline mt-2">
+                    Add some content to get started
+                  </Link>
+                </div>
+              ) : (
               <ForceGraph2D
-                graphData={filteredData}
+                graphData={forceGraphData}
                 nodeLabel="name"
                 nodeColor={(node) => typeColors[(node as any).type || "concept"] || "#888"}
                 nodeVal={(node) => (node as any).val || 5}
                 linkColor={() => "#888"}
                 linkWidth={1}
                 onNodeClick={(node) => handleNodeClick(node as any)}
+                nodeCanvasObjectMode={() => "after"}
                 nodeCanvasObject={(node: { x?: number; y?: number; name?: string; type?: string; val?: number }, ctx: CanvasRenderingContext2D, globalScale: number) => {
                   const label = node.name || "";
-                  const fontSize = 12 / globalScale;
+                  const fontSize = 10 / globalScale;
                   ctx.font = `${fontSize}px Sans-Serif`;
-                  const textWidth = ctx.measureText(label).width;
-                  const bckgDimensions = [textWidth, fontSize].map((n) => n + fontSize * 0.2);
-
-                  // Draw node circle
-                  ctx.beginPath();
-                  ctx.arc(node.x || 0, node.y || 0, (node.val || 5) / 2, 0, 2 * Math.PI);
-                  ctx.fillStyle = typeColors[node.type || "concept"] || "#888";
-                  ctx.fill();
-
-                  // Draw label
                   ctx.textAlign = "center";
                   ctx.textBaseline = "middle";
-                  ctx.fillStyle = "#fff";
-                  ctx.fillText(label, node.x || 0, (node.y || 0) + (node.val || 5) / 2 + fontSize);
-                }}
-                nodePointerAreaPaint={(node: { x?: number; y?: number; val?: number }, color: string, ctx: CanvasRenderingContext2D) => {
-                  ctx.fillStyle = color;
-                  ctx.beginPath();
-                  ctx.arc(node.x || 0, node.y || 0, (node.val || 5) / 2, 0, 2 * Math.PI);
-                  ctx.fill();
+                  ctx.fillStyle = "hsl(var(--foreground))";
+                  ctx.fillText(label, node.x || 0, (node.y || 0) + (node.val || 5) / 2 + fontSize + 2);
                 }}
               />
+              )}
             </CardContent>
           </Card>
 
           {/* Controls */}
           <div className="absolute top-4 left-4 flex flex-col gap-2">
-            <div className="relative">
-              <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-              <Input
-                placeholder="Search entities..."
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                className="pl-10 w-64 bg-background"
-              />
+            <div className="flex gap-2">
+              <div className="relative">
+                <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                <Input
+                  placeholder="Search entities..."
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  className="pl-10 w-56 bg-background"
+                />
+              </div>
+              <Button variant="outline" size="icon" onClick={handleRefresh} disabled={isLoading}>
+                <RefreshCw className={`h-4 w-4 ${isLoading ? "animate-spin" : ""}`} />
+              </Button>
             </div>
             <div className="flex gap-1 flex-wrap">
               {Object.keys(typeColors).map((type) => (
@@ -192,46 +231,78 @@ export default function GraphPage() {
               </CardDescription>
             </CardHeader>
             <CardContent>
-              {selectedNode ? (
+              {selectedNode && selectedDetails ? (
                 <div className="space-y-4">
                   <div>
                     <h4 className="text-sm font-medium mb-2">Entity Type</h4>
                     <Badge
                       style={{ backgroundColor: typeColors[selectedNode.type] }}
-                      className="capitalize"
+                      className="capitalize text-white"
                     >
                       {selectedNode.type}
                     </Badge>
                   </div>
 
+                  {selectedDetails.description && (
+                    <div>
+                      <h4 className="text-sm font-medium mb-2">Description</h4>
+                      <p className="text-sm text-muted-foreground">
+                        {selectedDetails.description}
+                      </p>
+                    </div>
+                  )}
+
                   <div>
                     <h4 className="text-sm font-medium mb-2">Connected Entities</h4>
-                    <div className="space-y-2">
-                      {getConnectedNodes(selectedNode.id).map((node) => (
-                        <div
-                          key={node.id}
-                          className="flex items-center gap-2 p-2 rounded-lg bg-muted cursor-pointer hover:bg-muted/80"
-                          onClick={() => setSelectedNode(node)}
-                        >
+                    {selectedDetails.connectedEntities.length > 0 ? (
+                      <div className="space-y-2 max-h-40 overflow-y-auto">
+                        {selectedDetails.connectedEntities.map((entity, idx) => (
                           <div
-                            className="w-3 h-3 rounded-full"
-                            style={{ backgroundColor: typeColors[node.type] }}
-                          />
-                          <span className="text-sm">{node.name}</span>
-                          <Badge variant="outline" className="ml-auto text-xs capitalize">
-                            {node.type}
-                          </Badge>
-                        </div>
-                      ))}
-                    </div>
+                            key={`${entity.id}-${idx}`}
+                            className="flex items-center gap-2 p-2 rounded-lg bg-muted cursor-pointer hover:bg-muted/80"
+                            onClick={() => {
+                              const node = graphData.nodes.find((n) => n.id === entity.id);
+                              if (node) setSelectedNode(node);
+                            }}
+                          >
+                            <div
+                              className="w-3 h-3 rounded-full flex-shrink-0"
+                              style={{ backgroundColor: typeColors[entity.type] || "#888" }}
+                            />
+                            <span className="text-sm truncate">{entity.name}</span>
+                            <Badge variant="outline" className="ml-auto text-xs">
+                              {entity.relationType}
+                            </Badge>
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <p className="text-sm text-muted-foreground">No connections</p>
+                    )}
                   </div>
 
                   <div>
                     <h4 className="text-sm font-medium mb-2">Mentioned In</h4>
-                    <p className="text-sm text-muted-foreground">
-                      3 documents reference this entity
-                    </p>
+                    {selectedDetails.documents.length > 0 ? (
+                      <div className="space-y-2 max-h-40 overflow-y-auto">
+                        {selectedDetails.documents.map((doc) => (
+                          <Link
+                            key={doc.id}
+                            href={`/library/${doc.id}`}
+                            className="block p-2 rounded-lg bg-muted hover:bg-muted/80 text-sm"
+                          >
+                            {doc.title}
+                          </Link>
+                        ))}
+                      </div>
+                    ) : (
+                      <p className="text-sm text-muted-foreground">No documents</p>
+                    )}
                   </div>
+                </div>
+              ) : selectedNode ? (
+                <div className="flex items-center justify-center py-8">
+                  <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
                 </div>
               ) : (
                 <div className="space-y-4">

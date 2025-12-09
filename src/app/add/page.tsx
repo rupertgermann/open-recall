@@ -1,8 +1,9 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Globe, FileText, Link as LinkIcon, Loader2, CheckCircle, AlertCircle } from "lucide-react";
+import { ingestUrl, ingestText } from "@/actions/ingest";
 import { Header } from "@/components/layout/header";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -10,13 +11,15 @@ import { Textarea } from "@/components/ui/textarea";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 
 type ContentType = "url" | "text" | "file";
-type ProcessingStep = "idle" | "fetching" | "chunking" | "extracting" | "embedding" | "complete" | "error";
+type ProcessingStep = "idle" | "fetching" | "chunking" | "summarizing" | "extracting" | "embedding" | "saving" | "complete" | "error";
 
 const processingSteps = [
   { key: "fetching", label: "Fetching content..." },
   { key: "chunking", label: "Splitting into chunks..." },
+  { key: "summarizing", label: "Generating summary..." },
   { key: "extracting", label: "Extracting entities..." },
   { key: "embedding", label: "Generating embeddings..." },
+  { key: "saving", label: "Saving to database..." },
   { key: "complete", label: "Complete!" },
 ];
 
@@ -28,36 +31,44 @@ export default function AddPage() {
   const [title, setTitle] = useState("");
   const [processingStep, setProcessingStep] = useState<ProcessingStep>("idle");
   const [error, setError] = useState<string | null>(null);
+  const [isPending, startTransition] = useTransition();
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
 
-    // Simulate processing pipeline
-    try {
-      setProcessingStep("fetching");
-      await new Promise((r) => setTimeout(r, 1000));
+    startTransition(async () => {
+      try {
+        // Show progress UI
+        setProcessingStep("fetching");
 
-      setProcessingStep("chunking");
-      await new Promise((r) => setTimeout(r, 800));
+        let result;
+        if (contentType === "url") {
+          // Ingest URL
+          setProcessingStep("fetching");
+          result = await ingestUrl(url);
+        } else {
+          // Ingest text
+          setProcessingStep("saving");
+          result = await ingestText(title, text);
+        }
 
-      setProcessingStep("extracting");
-      await new Promise((r) => setTimeout(r, 1500));
-
-      setProcessingStep("embedding");
-      await new Promise((r) => setTimeout(r, 1200));
-
-      setProcessingStep("complete");
-      await new Promise((r) => setTimeout(r, 500));
-
-      router.push("/library");
-    } catch (err) {
-      setProcessingStep("error");
-      setError("Failed to process content. Please try again.");
-    }
+        if (result.success) {
+          setProcessingStep("complete");
+          await new Promise((r) => setTimeout(r, 500));
+          router.push("/library");
+        } else {
+          setProcessingStep("error");
+          setError(result.error || "Failed to process content");
+        }
+      } catch (err) {
+        setProcessingStep("error");
+        setError(err instanceof Error ? err.message : "Failed to process content. Please try again.");
+      }
+    });
   };
 
-  const isProcessing = processingStep !== "idle" && processingStep !== "complete" && processingStep !== "error";
+  const isProcessing = isPending || (processingStep !== "idle" && processingStep !== "complete" && processingStep !== "error");
 
   return (
     <div className="min-h-screen bg-background">

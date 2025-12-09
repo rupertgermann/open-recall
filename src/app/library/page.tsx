@@ -1,47 +1,21 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect, useTransition } from "react";
 import Link from "next/link";
-import { FileText, Video, Globe, Search, Filter, MoreVertical, Trash2, ExternalLink } from "lucide-react";
+import { useRouter } from "next/navigation";
+import { FileText, Video, Globe, Search, MoreVertical, Trash2, ExternalLink, Loader2, RefreshCw } from "lucide-react";
 import { Header } from "@/components/layout/header";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-
-// Mock data - will be replaced with real data from database
-const mockDocuments = [
-  {
-    id: "1",
-    title: "Introduction to GraphRAG",
-    type: "article",
-    url: "https://example.com/graphrag",
-    summary: "GraphRAG combines knowledge graphs with retrieval-augmented generation for more accurate AI responses.",
-    createdAt: new Date("2024-01-15"),
-    processingStatus: "completed",
-    entityCount: 12,
-  },
-  {
-    id: "2",
-    title: "Building Local-First Applications",
-    type: "youtube",
-    url: "https://youtube.com/watch?v=abc123",
-    summary: "A comprehensive guide to building applications that work offline and sync when connected.",
-    createdAt: new Date("2024-01-14"),
-    processingStatus: "completed",
-    entityCount: 8,
-  },
-  {
-    id: "3",
-    title: "Vector Databases Explained",
-    type: "pdf",
-    url: null,
-    summary: "Understanding how vector databases store and query high-dimensional embeddings.",
-    createdAt: new Date("2024-01-13"),
-    processingStatus: "processing",
-    entityCount: 0,
-  },
-];
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import { getDocuments, deleteDocument, type DocumentWithStats } from "@/actions/documents";
 
 const typeIcons = {
   article: Globe,
@@ -58,15 +32,57 @@ const typeColors = {
 };
 
 export default function LibraryPage() {
+  const router = useRouter();
+  const [documents, setDocuments] = useState<DocumentWithStats[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [isPending, startTransition] = useTransition();
   const [searchQuery, setSearchQuery] = useState("");
   const [filterType, setFilterType] = useState<string | null>(null);
+  const [debouncedSearch, setDebouncedSearch] = useState("");
 
-  const filteredDocuments = mockDocuments.filter((doc) => {
-    const matchesSearch = doc.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      doc.summary?.toLowerCase().includes(searchQuery.toLowerCase());
-    const matchesType = !filterType || doc.type === filterType;
-    return matchesSearch && matchesType;
-  });
+  // Debounce search
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setDebouncedSearch(searchQuery);
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [searchQuery]);
+
+  // Fetch documents
+  useEffect(() => {
+    async function fetchDocuments() {
+      setIsLoading(true);
+      try {
+        const docs = await getDocuments({
+          search: debouncedSearch || undefined,
+          type: filterType || undefined,
+        });
+        setDocuments(docs);
+      } catch (error) {
+        console.error("Failed to fetch documents:", error);
+      } finally {
+        setIsLoading(false);
+      }
+    }
+    fetchDocuments();
+  }, [debouncedSearch, filterType]);
+
+  const handleDelete = async (id: string) => {
+    if (!confirm("Are you sure you want to delete this document?")) return;
+    
+    startTransition(async () => {
+      try {
+        await deleteDocument(id);
+        setDocuments((prev) => prev.filter((d) => d.id !== id));
+      } catch (error) {
+        console.error("Failed to delete document:", error);
+      }
+    });
+  };
+
+  const handleRefresh = () => {
+    setDebouncedSearch(searchQuery);
+  };
 
   return (
     <div className="min-h-screen bg-background">
@@ -79,12 +95,17 @@ export default function LibraryPage() {
             <div>
               <h1 className="text-3xl font-bold">Library</h1>
               <p className="text-muted-foreground">
-                {mockDocuments.length} documents in your knowledge base
+                {isLoading ? "Loading..." : `${documents.length} documents in your knowledge base`}
               </p>
             </div>
-            <Link href="/add">
-              <Button>Add Content</Button>
-            </Link>
+            <div className="flex gap-2">
+              <Button variant="outline" size="icon" onClick={handleRefresh} disabled={isLoading}>
+                <RefreshCw className={`h-4 w-4 ${isLoading ? "animate-spin" : ""}`} />
+              </Button>
+              <Link href="/add">
+                <Button>Add Content</Button>
+              </Link>
+            </div>
           </div>
 
           {/* Search and Filters */}
@@ -114,8 +135,13 @@ export default function LibraryPage() {
           </div>
 
           {/* Document Grid */}
+          {isLoading ? (
+            <div className="flex items-center justify-center py-12">
+              <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+            </div>
+          ) : (
           <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-            {filteredDocuments.map((doc) => {
+            {documents.map((doc) => {
               const Icon = typeIcons[doc.type as keyof typeof typeIcons] || FileText;
               const colorClass = typeColors[doc.type as keyof typeof typeColors] || typeColors.note;
               
@@ -126,9 +152,33 @@ export default function LibraryPage() {
                       <div className={`p-2 rounded-lg ${colorClass}`}>
                         <Icon className="h-5 w-5" />
                       </div>
-                      <Button variant="ghost" size="icon" className="opacity-0 group-hover:opacity-100 transition-opacity">
-                        <MoreVertical className="h-4 w-4" />
-                      </Button>
+                      <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
+                          <Button variant="ghost" size="icon" className="opacity-0 group-hover:opacity-100 transition-opacity">
+                            <MoreVertical className="h-4 w-4" />
+                          </Button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="end">
+                          <DropdownMenuItem asChild>
+                            <Link href={`/library/${doc.id}`}>View Details</Link>
+                          </DropdownMenuItem>
+                          {doc.url && (
+                            <DropdownMenuItem asChild>
+                              <a href={doc.url} target="_blank" rel="noopener noreferrer">
+                                Open Original
+                              </a>
+                            </DropdownMenuItem>
+                          )}
+                          <DropdownMenuItem
+                            className="text-destructive"
+                            onClick={() => handleDelete(doc.id)}
+                            disabled={isPending}
+                          >
+                            <Trash2 className="h-4 w-4 mr-2" />
+                            Delete
+                          </DropdownMenuItem>
+                        </DropdownMenuContent>
+                      </DropdownMenu>
                     </div>
                     <CardTitle className="text-lg line-clamp-2 mt-2">
                       {doc.title}
@@ -166,8 +216,9 @@ export default function LibraryPage() {
               );
             })}
           </div>
+          )}
 
-          {filteredDocuments.length === 0 && (
+          {!isLoading && documents.length === 0 && (
             <div className="text-center py-12">
               <p className="text-muted-foreground">No documents found</p>
               <Link href="/add">
