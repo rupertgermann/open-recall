@@ -8,7 +8,7 @@ import { extractFromUrl, extractFromHtml, detectContentType, extractYouTubeId } 
 import { chunkByParagraphs } from "@/lib/content/chunker";
 import {
   generateSummary,
-  generateEmbedding,
+  generateEmbeddings,
   extractEntitiesAndRelationships,
   type ExtractedEntity,
   type ExtractedRelationship,
@@ -131,75 +131,89 @@ async function processDocument(documentId: string, content: string): Promise<voi
       console.error("Entity extraction failed:", error);
     }
 
-    // 4. Save chunks with embeddings
-    for (const chunk of textChunks) {
-      let embedding: number[] | null = null;
-      try {
-        embedding = await generateEmbedding(chunk.content);
-      } catch (error) {
-        console.error("Embedding generation failed for chunk:", error);
-      }
-
-      await db.insert(chunks).values({
-        documentId,
-        content: chunk.content,
-        chunkIndex: chunk.index,
-        tokenCount: chunk.tokenCount,
-        embedding,
-      });
+    // 4. Save chunks with embeddings (batch processing for speed)
+    const chunkContents = textChunks.map(chunk => chunk.content);
+    let chunkEmbeddings: number[][] = [];
+    
+    try {
+      chunkEmbeddings = await generateEmbeddings(chunkContents);
+    } catch (error) {
+      console.error("Embedding generation failed:", error);
     }
 
-    // 5. Save entities (upsert to avoid duplicates)
-    const entityIdMap = new Map<string, string>(); // name -> id
+    // Batch insert all chunks at once
+    const chunkValues = textChunks.map((chunk, i) => ({
+      documentId,
+      content: chunk.content,
+      chunkIndex: chunk.index,
+      tokenCount: chunk.tokenCount,
+      embedding: chunkEmbeddings[i] ?? null,
+    }));
 
+    await db.insert(chunks).values(chunkValues);
+
+    // 5. Save entities (optimized with batch processing)
+    const entityIdMap = new Map<string, string>(); // name -> id
+    
+    // First, check which entities already exist
+    const newEntities: ExtractedEntity[] = [];
     for (const entity of extractedData.entities) {
-      // Check if entity already exists
       const existing = await db
         .select()
         .from(entities)
         .where(and(eq(entities.name, entity.name), eq(entities.type, entity.type)))
         .limit(1);
 
-      let entityId: string;
       if (existing.length > 0) {
-        entityId = existing[0].id;
+        entityIdMap.set(entity.name, existing[0].id);
       } else {
-        // Create new entity
-        let entityEmbedding: number[] | null = null;
-        try {
-          entityEmbedding = await generateEmbedding(entity.name + (entity.description ? `: ${entity.description}` : ""));
-        } catch (error) {
-          console.error("Entity embedding failed:", error);
-        }
+        newEntities.push(entity);
+      }
+    }
 
+    // Generate embeddings for new entities in batch
+    if (newEntities.length > 0) {
+      const entityTexts = newEntities.map(e => e.name + (e.description ? `: ${e.description}` : ""));
+      let entityEmbeddings: number[][] = [];
+      
+      try {
+        entityEmbeddings = await generateEmbeddings(entityTexts);
+      } catch (error) {
+        console.error("Entity embedding failed:", error);
+      }
+
+      // Insert new entities
+      for (let i = 0; i < newEntities.length; i++) {
+        const entity = newEntities[i];
         const [newEntity] = await db
           .insert(entities)
           .values({
             name: entity.name,
             type: entity.type,
             description: entity.description,
-            embedding: entityEmbedding,
+            embedding: entityEmbeddings[i] ?? null,
           })
           .returning();
-        entityId = newEntity.id;
+        entityIdMap.set(entity.name, newEntity.id);
       }
+    }
 
-      entityIdMap.set(entity.name, entityId);
+    // Create entity mentions (batch query for first chunk)
+    const firstChunk = await db
+      .select()
+      .from(chunks)
+      .where(eq(chunks.documentId, documentId))
+      .limit(1);
 
-      // Create entity mention for this document
-      // Link to first chunk for simplicity
-      const firstChunk = await db
-        .select()
-        .from(chunks)
-        .where(eq(chunks.documentId, documentId))
-        .limit(1);
-
-      if (firstChunk.length > 0) {
-        await db.insert(entityMentions).values({
-          entityId,
-          chunkId: firstChunk[0].id,
-          documentId,
-        });
+    if (firstChunk.length > 0) {
+      const mentionValues = Array.from(entityIdMap.values()).map(entityId => ({
+        entityId,
+        chunkId: firstChunk[0].id,
+        documentId,
+      }));
+      
+      if (mentionValues.length > 0) {
+        await db.insert(entityMentions).values(mentionValues);
       }
     }
 

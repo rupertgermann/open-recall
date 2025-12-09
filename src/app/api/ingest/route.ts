@@ -143,11 +143,13 @@ export async function POST(req: Request) {
 
         controller.enqueue(encoder.encode(createSSEMessage("embedding", `Saved ${textChunks.length} chunks with ${chunkEmbeddings.length} embeddings`, 80)));
 
-        // Step 7: Save Entities
+        // Step 7: Save Entities (optimized with batch processing)
         controller.enqueue(encoder.encode(createSSEMessage("saving", "Saving entities to knowledge graph...", 82)));
         
         const entityIdMap = new Map<string, string>();
-
+        
+        // First, check which entities already exist
+        const newEntities: typeof extractedData.entities = [];
         for (const entity of extractedData.entities) {
           const existing = await db
             .select()
@@ -155,48 +157,60 @@ export async function POST(req: Request) {
             .where(and(eq(entities.name, entity.name), eq(entities.type, entity.type)))
             .limit(1);
 
-          let entityId: string;
           if (existing.length > 0) {
-            entityId = existing[0].id;
+            entityIdMap.set(entity.name, existing[0].id);
           } else {
-            let entityEmbedding: number[] | null = null;
-            try {
-              entityEmbedding = await generateEmbedding(entity.name + (entity.description ? `: ${entity.description}` : ""));
-            } catch (error) {
-              // Continue without embedding
-            }
+            newEntities.push(entity);
+          }
+        }
 
+        // Generate embeddings for new entities in batch
+        if (newEntities.length > 0) {
+          const entityTexts = newEntities.map(e => e.name + (e.description ? `: ${e.description}` : ""));
+          let entityEmbeddings: number[][] = [];
+          
+          try {
+            entityEmbeddings = await generateEmbeddings(entityTexts);
+          } catch (error) {
+            // Continue without embeddings
+          }
+
+          // Insert new entities
+          for (let i = 0; i < newEntities.length; i++) {
+            const entity = newEntities[i];
             const [newEntity] = await db
               .insert(entities)
               .values({
                 name: entity.name,
                 type: entity.type,
                 description: entity.description,
-                embedding: entityEmbedding,
+                embedding: entityEmbeddings[i] ?? null,
               })
               .returning();
-            entityId = newEntity.id;
-          }
-
-          entityIdMap.set(entity.name, entityId);
-
-          // Create entity mention
-          const firstChunk = await db
-            .select()
-            .from(chunks)
-            .where(eq(chunks.documentId, doc.id))
-            .limit(1);
-
-          if (firstChunk.length > 0) {
-            await db.insert(entityMentions).values({
-              entityId,
-              chunkId: firstChunk[0].id,
-              documentId: doc.id,
-            });
+            entityIdMap.set(entity.name, newEntity.id);
           }
         }
 
-        controller.enqueue(encoder.encode(createSSEMessage("saving", `Saved ${extractedData.entities.length} entities`, 88)));
+        // Create entity mentions (batch query for first chunk)
+        const firstChunk = await db
+          .select()
+          .from(chunks)
+          .where(eq(chunks.documentId, doc.id))
+          .limit(1);
+
+        if (firstChunk.length > 0) {
+          const mentionValues = Array.from(entityIdMap.values()).map(entityId => ({
+            entityId,
+            chunkId: firstChunk[0].id,
+            documentId: doc.id,
+          }));
+          
+          if (mentionValues.length > 0) {
+            await db.insert(entityMentions).values(mentionValues);
+          }
+        }
+
+        controller.enqueue(encoder.encode(createSSEMessage("saving", `Saved ${newEntities.length} new entities (${extractedData.entities.length - newEntities.length} existing)`, 88)));
 
         // Step 8: Save Relationships
         controller.enqueue(encoder.encode(createSSEMessage("saving", "Saving relationships...", 90)));
