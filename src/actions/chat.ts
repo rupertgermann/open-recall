@@ -153,8 +153,9 @@ export async function retrieveContext(query: string, limit: number = 5): Promise
 
 /**
  * Build the full context for the LLM
+ * Note: This is a pure function, not a server action
  */
-export function buildPromptContext(retrieved: RetrievedContext): string {
+export async function buildPromptContext(retrieved: RetrievedContext): Promise<string> {
   const parts: string[] = [];
 
   // Add chunk content

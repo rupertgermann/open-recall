@@ -1,5 +1,5 @@
 import { createOpenAI } from "@ai-sdk/openai";
-import { generateText, generateObject, streamText, embed } from "ai";
+import { generateText, generateObject, streamText, embed, embedMany } from "ai";
 import { z } from "zod";
 import { defaultAIConfig, type AIConfig, ENTITY_TYPES } from "./config";
 
@@ -185,19 +185,17 @@ export async function generateEmbeddings(
   texts: string[],
   config: AIConfig = defaultAIConfig
 ): Promise<number[][]> {
-  // Process in batches to avoid overwhelming the local model
-  const batchSize = 10;
-  const results: number[][] = [];
+  if (texts.length === 0) return [];
+  
+  const model = getEmbeddingModel(config);
 
-  for (let i = 0; i < texts.length; i += batchSize) {
-    const batch = texts.slice(i, i + batchSize);
-    const embeddings = await Promise.all(
-      batch.map((text) => generateEmbedding(text, config))
-    );
-    results.push(...embeddings);
-  }
+  // Use embedMany for batch processing - much faster than sequential calls
+  const { embeddings } = await embedMany({
+    model,
+    values: texts,
+  });
 
-  return results;
+  return embeddings;
 }
 
 // ============================================================================

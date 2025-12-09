@@ -5,7 +5,7 @@ import { extractFromUrl } from "@/lib/content/extractor";
 import { chunkByParagraphs } from "@/lib/content/chunker";
 import {
   generateSummary,
-  generateEmbedding,
+  generateEmbeddings,
   extractEntitiesAndRelationships,
 } from "@/lib/ai";
 
@@ -115,38 +115,33 @@ export async function POST(req: Request) {
           controller.enqueue(encoder.encode(createSSEMessage("extracting", "Entity extraction skipped (AI unavailable)", 60)));
         }
 
-        // Step 6: Generate Embeddings
+        // Step 6: Generate Embeddings (batch processing for speed)
         controller.enqueue(encoder.encode(createSSEMessage("embedding", "Generating embeddings for chunks...", 65)));
         
-        let embeddedCount = 0;
-        for (let i = 0; i < textChunks.length; i++) {
-          const chunk = textChunks[i];
-          let embedding: number[] | null = null;
-          
-          try {
-            embedding = await generateEmbedding(chunk.content);
-            embeddedCount++;
-          } catch (error) {
-            // Continue without embedding
-          }
-
-          await db.insert(chunks).values({
-            documentId: doc.id,
-            content: chunk.content,
-            chunkIndex: chunk.index,
-            tokenCount: chunk.tokenCount,
-            embedding,
-          });
-
-          const progress = 65 + Math.round((i / textChunks.length) * 15);
-          controller.enqueue(encoder.encode(createSSEMessage(
-            "embedding",
-            `Embedded chunk ${i + 1}/${textChunks.length}`,
-            progress
-          )));
+        // Extract all chunk contents for batch embedding
+        const chunkContents = textChunks.map(chunk => chunk.content);
+        let chunkEmbeddings: number[][] = [];
+        
+        try {
+          chunkEmbeddings = await generateEmbeddings(chunkContents);
+          controller.enqueue(encoder.encode(createSSEMessage("embedding", `Generated ${chunkEmbeddings.length} embeddings`, 75)));
+        } catch (error) {
+          // Continue without embeddings
+          controller.enqueue(encoder.encode(createSSEMessage("embedding", "Embedding generation skipped (AI unavailable)", 75)));
         }
 
-        controller.enqueue(encoder.encode(createSSEMessage("embedding", `Embedded ${embeddedCount}/${textChunks.length} chunks`, 80)));
+        // Batch insert all chunks at once
+        const chunkValues = textChunks.map((chunk, i) => ({
+          documentId: doc.id,
+          content: chunk.content,
+          chunkIndex: chunk.index,
+          tokenCount: chunk.tokenCount,
+          embedding: chunkEmbeddings[i] ?? null,
+        }));
+
+        await db.insert(chunks).values(chunkValues);
+
+        controller.enqueue(encoder.encode(createSSEMessage("embedding", `Saved ${textChunks.length} chunks with ${chunkEmbeddings.length} embeddings`, 80)));
 
         // Step 7: Save Entities
         controller.enqueue(encoder.encode(createSSEMessage("saving", "Saving entities to knowledge graph...", 82)));

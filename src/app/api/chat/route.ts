@@ -25,7 +25,7 @@ export async function POST(req: Request) {
   if (lastUserMessage) {
     try {
       retrievedData = await retrieveContext(lastUserMessage.content, 5);
-      contextString = buildPromptContext(retrievedData);
+      contextString = await buildPromptContext(retrievedData);
     } catch (error) {
       console.error("Context retrieval failed:", error);
     }

@@ -14,9 +14,13 @@ import { relations } from "drizzle-orm";
 // Custom vector type for pgvector
 import { customType } from "drizzle-orm/pg-core";
 
+// Vector dimension: 768 for nomic-embed-text, 1536 for OpenAI
+// Change this if using a different embedding model
+const VECTOR_DIMENSION = 768;
+
 const vector = customType<{ data: number[]; driverData: string }>({
   dataType() {
-    return "vector(1536)";
+    return `vector(${VECTOR_DIMENSION})`;
   },
   toDriver(value: number[]): string {
     return `[${value.join(",")}]`;
