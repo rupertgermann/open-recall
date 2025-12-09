@@ -6,8 +6,11 @@ const nextConfig: NextConfig = {
       bodySizeLimit: "10mb",
     },
   },
+  // Turbopack config (Next.js 16+ default bundler)
+  // Empty config acknowledges we're aware of Turbopack usage
+  turbopack: {},
+  // Webpack fallback (for production builds or --webpack flag)
   webpack: (config) => {
-    // Required for pdfjs-dist
     config.resolve.alias.canvas = false;
     return config;
   },
