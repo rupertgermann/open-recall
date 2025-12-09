@@ -1,26 +1,44 @@
 import { createOpenAI } from "@ai-sdk/openai";
 import { generateText, generateObject, streamText, embed, embedMany } from "ai";
 import { z } from "zod";
-import { defaultAIConfig, type AIConfig, ENTITY_TYPES } from "./config";
+import {
+  defaultChatConfig,
+  defaultEmbeddingConfig,
+  type ChatConfig,
+  type EmbeddingConfig,
+  ENTITY_TYPES,
+} from "./config";
 
-// Create AI client based on configuration
-export function createAIClient(config: AIConfig = defaultAIConfig) {
+// ============================================================================
+// CLIENT CREATION
+// ============================================================================
+
+// Create AI client for chat
+export function createChatClient(config: ChatConfig = defaultChatConfig) {
   return createOpenAI({
     baseURL: config.baseUrl,
     apiKey: config.apiKey || "ollama", // Ollama doesn't require a real key
   });
 }
 
-// Get the model instance
-export function getModel(config: AIConfig = defaultAIConfig) {
-  const client = createAIClient(config);
+// Create AI client for embeddings
+export function createEmbeddingClient(config: EmbeddingConfig = defaultEmbeddingConfig) {
+  return createOpenAI({
+    baseURL: config.baseUrl,
+    apiKey: config.apiKey || "ollama",
+  });
+}
+
+// Get the chat model instance
+export function getModel(config: ChatConfig = defaultChatConfig) {
+  const client = createChatClient(config);
   return client(config.model);
 }
 
 // Get the embedding model instance
-export function getEmbeddingModel(config: AIConfig = defaultAIConfig) {
-  const client = createAIClient(config);
-  return client.embedding(config.embeddingModel);
+export function getEmbeddingModel(config: EmbeddingConfig = defaultEmbeddingConfig) {
+  const client = createEmbeddingClient(config);
+  return client.embedding(config.model);
 }
 
 // ============================================================================
@@ -29,7 +47,7 @@ export function getEmbeddingModel(config: AIConfig = defaultAIConfig) {
 
 export async function generateSummary(
   content: string,
-  config: AIConfig = defaultAIConfig
+  config: ChatConfig = defaultChatConfig
 ): Promise<string> {
   const model = getModel(config);
 
@@ -47,7 +65,7 @@ Keep the summary clear and well-structured.`,
 
 export async function* streamSummary(
   content: string,
-  config: AIConfig = defaultAIConfig
+  config: ChatConfig = defaultChatConfig
 ) {
   const model = getModel(config);
 
@@ -97,7 +115,7 @@ export type ExtractionResult = z.infer<typeof extractionResultSchema>;
 
 export async function extractEntitiesAndRelationships(
   content: string,
-  config: AIConfig = defaultAIConfig
+  config: ChatConfig = defaultChatConfig
 ): Promise<ExtractionResult> {
   const model = getModel(config);
 
@@ -141,7 +159,7 @@ export type Flashcard = z.infer<typeof flashcardSchema>;
 export async function generateFlashcards(
   content: string,
   count: number = 5,
-  config: AIConfig = defaultAIConfig
+  config: ChatConfig = defaultChatConfig
 ): Promise<Flashcard[]> {
   const model = getModel(config);
 
@@ -169,7 +187,7 @@ Answers should be concise but complete.`,
 
 export async function generateEmbedding(
   text: string,
-  config: AIConfig = defaultAIConfig
+  config: EmbeddingConfig = defaultEmbeddingConfig
 ): Promise<number[]> {
   const model = getEmbeddingModel(config);
 
@@ -183,7 +201,7 @@ export async function generateEmbedding(
 
 export async function generateEmbeddings(
   texts: string[],
-  config: AIConfig = defaultAIConfig
+  config: EmbeddingConfig = defaultEmbeddingConfig
 ): Promise<number[][]> {
   if (texts.length === 0) return [];
   
@@ -205,7 +223,7 @@ export async function generateEmbeddings(
 export async function* streamChat(
   messages: { role: "user" | "assistant" | "system"; content: string }[],
   context: string,
-  config: AIConfig = defaultAIConfig
+  config: ChatConfig = defaultChatConfig
 ) {
   const model = getModel(config);
 
