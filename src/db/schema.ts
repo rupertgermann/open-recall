@@ -147,7 +147,7 @@ export const relationships = pgTable(
     relationType: text("relation_type").notNull(), // 'built_with', 'parent_of', 'related_to', etc.
     description: text("description"),
     weight: real("weight").default(1.0),
-    sourceDocumentId: uuid("source_document_id").references(() => documents.id),
+    sourceDocumentId: uuid("source_document_id").references(() => documents.id, { onDelete: "cascade" }),
     createdAt: timestamp("created_at").defaultNow().notNull(),
   },
   (table) => ({

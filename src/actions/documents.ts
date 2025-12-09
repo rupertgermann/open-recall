@@ -152,7 +152,13 @@ export async function getDocumentStats() {
  * Delete a document and all related data
  */
 export async function deleteDocument(id: string) {
+  // Delete relationships that reference this document first
+  // (sourceDocumentId FK doesn't have onDelete cascade)
+  await db.delete(relationships).where(eq(relationships.sourceDocumentId, id));
+  
+  // Now delete the document (cascades to chunks, entityMentions, srsItems)
   await db.delete(documents).where(eq(documents.id, id));
+  
   revalidatePath("/library");
   return { success: true };
 }
