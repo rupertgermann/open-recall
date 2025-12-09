@@ -5,7 +5,22 @@ import { settings, documents, entities, relationships } from "@/db/schema";
 import { eq, count } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 
+// Provider-specific settings
+export type ProviderSettings = {
+  provider: "local" | "openai";
+  baseUrl: string;
+  model: string;
+  apiKey?: string;
+};
+
+// Combined AI settings with separate chat and embedding configs
 export type AISettings = {
+  chat: ProviderSettings;
+  embedding: ProviderSettings;
+};
+
+// Legacy format for backwards compatibility
+export type LegacyAISettings = {
   provider: "local" | "openai";
   baseUrl: string;
   model: string;
@@ -14,11 +29,47 @@ export type AISettings = {
 };
 
 const DEFAULT_SETTINGS: AISettings = {
-  provider: "local",
-  baseUrl: "http://localhost:11434/v1",
-  model: "llama3.2:8b",
-  embeddingModel: "nomic-embed-text",
+  chat: {
+    provider: "local",
+    baseUrl: "http://localhost:11434/v1",
+    model: "llama3.2:8b",
+  },
+  embedding: {
+    provider: "local",
+    baseUrl: "http://localhost:11434/v1",
+    model: "nomic-embed-text",
+  },
 };
+
+// Helper to migrate legacy settings to new format
+function migrateSettings(value: unknown): AISettings {
+  const legacy = value as LegacyAISettings;
+  
+  // Check if already in new format
+  if (legacy && typeof legacy === "object" && "chat" in legacy && "embedding" in legacy) {
+    return legacy as unknown as AISettings;
+  }
+  
+  // Migrate from legacy format
+  if (legacy && typeof legacy === "object" && "baseUrl" in legacy) {
+    return {
+      chat: {
+        provider: legacy.provider || "local",
+        baseUrl: legacy.baseUrl,
+        model: legacy.model,
+        apiKey: legacy.openaiKey,
+      },
+      embedding: {
+        provider: legacy.provider || "local",
+        baseUrl: legacy.baseUrl,
+        model: legacy.embeddingModel || "nomic-embed-text",
+        apiKey: legacy.openaiKey,
+      },
+    };
+  }
+  
+  return DEFAULT_SETTINGS;
+}
 
 /**
  * Get AI settings
@@ -34,7 +85,8 @@ export async function getAISettings(): Promise<AISettings> {
     return DEFAULT_SETTINGS;
   }
 
-  return result.value as AISettings;
+  // Migrate legacy settings if needed
+  return migrateSettings(result.value);
 }
 
 /**
