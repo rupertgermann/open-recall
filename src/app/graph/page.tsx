@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback, useMemo, useEffect } from "react";
+import { useState, useCallback, useMemo, useEffect, useRef } from "react";
 import dynamic from "next/dynamic";
 import Link from "next/link";
 import { Search, Loader2, RefreshCw } from "lucide-react";
@@ -44,6 +44,27 @@ export default function GraphPage() {
   const [selectedNode, setSelectedNode] = useState<GraphNode | null>(null);
   const [selectedDetails, setSelectedDetails] = useState<EntityDetails | null>(null);
   const [filterType, setFilterType] = useState<string | null>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const [dimensions, setDimensions] = useState({ width: 0, height: 0 });
+
+  useEffect(() => {
+    if (!containerRef.current) return;
+
+    const updateDimensions = () => {
+      if (containerRef.current) {
+        setDimensions({
+          width: containerRef.current.clientWidth,
+          height: containerRef.current.clientHeight,
+        });
+      }
+    };
+
+    const observer = new ResizeObserver(updateDimensions);
+    observer.observe(containerRef.current);
+    updateDimensions(); // Initial size
+
+    return () => observer.disconnect();
+  }, []);
 
   // Fetch graph data
   useEffect(() => {
@@ -138,7 +159,7 @@ export default function GraphPage() {
         {/* Graph Canvas */}
         <div className="flex-1 relative">
           <Card className="h-[calc(100vh-12rem)]">
-            <CardContent className="p-0 h-full">
+            <CardContent ref={containerRef} className="p-0 h-full overflow-hidden">
               {isLoading ? (
                 <div className="flex items-center justify-center h-full">
                   <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
@@ -152,6 +173,8 @@ export default function GraphPage() {
                 </div>
               ) : (
                 <ForceGraph2D
+                  width={dimensions.width}
+                  height={dimensions.height}
                   graphData={forceGraphData}
                   nodeLabel="name"
                   nodeColor={(node) => typeColors[(node as any).type || "concept"] || "#888"}
@@ -162,12 +185,47 @@ export default function GraphPage() {
                   nodeCanvasObjectMode={() => "after"}
                   nodeCanvasObject={(node: { x?: number; y?: number; name?: string; type?: string; val?: number }, ctx: CanvasRenderingContext2D, globalScale: number) => {
                     const label = node.name || "";
-                    const fontSize = 10 / globalScale;
+                    const fontSize = 14 / globalScale; // Increased font size
                     ctx.font = `${fontSize}px Sans-Serif`;
+                    const textWidth = ctx.measureText(label).width;
+                    const bckgDimensions = [textWidth, fontSize].map(n => n + fontSize * 0.2); // some padding
+
+                    // Draw Node
+                    const r = Math.sqrt(Math.max(0, node.val || 5)) * 4;
+                    ctx.beginPath();
+                    ctx.arc(node.x || 0, node.y || 0, r, 0, 2 * Math.PI, false);
+                    ctx.fillStyle = typeColors[(node as any).type || "concept"] || "#888";
+                    ctx.fill();
+
+                    // Text Wrapping Logic
+                    const words = label.split(' ');
+                    const maxLineLength = 15; // characters
+                    let lines = [];
+                    let currentLine = words[0];
+
+                    for (let i = 1; i < words.length; i++) {
+                      if (currentLine.length + words[i].length + 1 < maxLineLength) {
+                        currentLine += ' ' + words[i];
+                      } else {
+                        lines.push(currentLine);
+                        currentLine = words[i];
+                      }
+                    }
+                    lines.push(currentLine);
+                    if (lines.length > 2) {
+                      lines = lines.slice(0, 2);
+                      lines[1] += "...";
+                    }
+
+                    // Draw Text
                     ctx.textAlign = "center";
                     ctx.textBaseline = "middle";
                     ctx.fillStyle = "hsl(var(--foreground))";
-                    ctx.fillText(label, node.x || 0, (node.y || 0) + (node.val || 5) / 2 + fontSize + 2);
+
+                    lines.forEach((line, i) => {
+                      const yOffset = r + fontSize + (i * fontSize * 1.2);
+                      ctx.fillText(line, node.x || 0, (node.y || 0) + yOffset);
+                    });
                   }}
                 />
               )}
