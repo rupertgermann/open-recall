@@ -85,7 +85,7 @@ export default function AddPage() {
           if (line.startsWith("data: ")) {
             try {
               const data = JSON.parse(line.slice(6));
-              
+
               if (data.step === "done") {
                 setTimeout(() => router.push("/library"), 500);
                 return;
@@ -154,7 +154,7 @@ export default function AddPage() {
   };
 
   return (
-    <div className="min-h-screen bg-background">
+    <div className="min-h-screen">
       <Header />
 
       <main className="container mx-auto px-4 py-8 max-w-2xl">
@@ -262,9 +262,8 @@ export default function AddPage() {
                       return (
                         <div
                           key={step}
-                          className={`flex items-center gap-3 transition-opacity ${
-                            isPending ? "opacity-40" : "opacity-100"
-                          }`}
+                          className={`flex items-center gap-3 transition-opacity ${isPending ? "opacity-40" : "opacity-100"
+                            }`}
                         >
                           {getStepIcon(step)}
                           <div className="flex-1">

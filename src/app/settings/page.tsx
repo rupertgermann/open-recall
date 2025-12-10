@@ -14,7 +14,7 @@ type ConnectionStatus = "connected" | "disconnected" | "testing";
 
 export default function SettingsPage() {
   const [isLoading, setIsLoading] = useState(true);
-  
+
   // Chat provider settings
   const [chatProvider, setChatProvider] = useState<Provider>("local");
   const [chatBaseUrl, setChatBaseUrl] = useState("http://localhost:11434/v1");
@@ -27,7 +27,7 @@ export default function SettingsPage() {
     "mistral:7b",
     "qwen2.5:7b",
   ]);
-  
+
   // Embedding provider settings
   const [embeddingProvider, setEmbeddingProvider] = useState<Provider>("local");
   const [embeddingBaseUrl, setEmbeddingBaseUrl] = useState("http://localhost:11434/v1");
@@ -39,7 +39,7 @@ export default function SettingsPage() {
     "nomic-embed-text",
     "mxbai-embed-large",
   ]);
-  
+
   const [isSaving, setIsSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [dbStats, setDbStats] = useState({ documents: 0, entities: 0, relationships: 0 });
@@ -76,7 +76,7 @@ export default function SettingsPage() {
   const testChatConnection = async () => {
     setChatConnectionStatus("testing");
     setChatConnectionError(null);
-    
+
     try {
       const result = await testAIConnection(chatBaseUrl);
       if (result.success) {
@@ -97,7 +97,7 @@ export default function SettingsPage() {
   const testEmbeddingConnection = async () => {
     setEmbeddingConnectionStatus("testing");
     setEmbeddingConnectionError(null);
-    
+
     try {
       const result = await testAIConnection(embeddingBaseUrl);
       if (result.success) {
@@ -299,7 +299,7 @@ export default function SettingsPage() {
   );
 
   return (
-    <div className="min-h-screen bg-background">
+    <div className="min-h-screen">
       <Header />
 
       <main className="container mx-auto px-4 py-8 max-w-3xl">

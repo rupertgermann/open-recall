@@ -95,7 +95,7 @@ export default function GraphPage() {
 
     const filteredNodes = graphData.nodes.filter((node) => {
       const matchesType = !filterType || node.type === filterType;
-      const matchesSearch = !searchQuery || 
+      const matchesSearch = !searchQuery ||
         node.name.toLowerCase().includes(searchQuery.toLowerCase());
       return matchesType && matchesSearch;
     });
@@ -131,7 +131,7 @@ export default function GraphPage() {
   }, [graphData.nodes]);
 
   return (
-    <div className="min-h-screen bg-background flex flex-col">
+    <div className="min-h-screen flex flex-col">
       <Header />
 
       <main className="flex-1 container mx-auto px-4 py-6 flex gap-6">
@@ -151,25 +151,25 @@ export default function GraphPage() {
                   </Link>
                 </div>
               ) : (
-              <ForceGraph2D
-                graphData={forceGraphData}
-                nodeLabel="name"
-                nodeColor={(node) => typeColors[(node as any).type || "concept"] || "#888"}
-                nodeVal={(node) => (node as any).val || 5}
-                linkColor={() => "#888"}
-                linkWidth={1}
-                onNodeClick={(node) => handleNodeClick(node as any)}
-                nodeCanvasObjectMode={() => "after"}
-                nodeCanvasObject={(node: { x?: number; y?: number; name?: string; type?: string; val?: number }, ctx: CanvasRenderingContext2D, globalScale: number) => {
-                  const label = node.name || "";
-                  const fontSize = 10 / globalScale;
-                  ctx.font = `${fontSize}px Sans-Serif`;
-                  ctx.textAlign = "center";
-                  ctx.textBaseline = "middle";
-                  ctx.fillStyle = "hsl(var(--foreground))";
-                  ctx.fillText(label, node.x || 0, (node.y || 0) + (node.val || 5) / 2 + fontSize + 2);
-                }}
-              />
+                <ForceGraph2D
+                  graphData={forceGraphData}
+                  nodeLabel="name"
+                  nodeColor={(node) => typeColors[(node as any).type || "concept"] || "#888"}
+                  nodeVal={(node) => (node as any).val || 5}
+                  linkColor={() => "#888"}
+                  linkWidth={1}
+                  onNodeClick={(node) => handleNodeClick(node as any)}
+                  nodeCanvasObjectMode={() => "after"}
+                  nodeCanvasObject={(node: { x?: number; y?: number; name?: string; type?: string; val?: number }, ctx: CanvasRenderingContext2D, globalScale: number) => {
+                    const label = node.name || "";
+                    const fontSize = 10 / globalScale;
+                    ctx.font = `${fontSize}px Sans-Serif`;
+                    ctx.textAlign = "center";
+                    ctx.textBaseline = "middle";
+                    ctx.fillStyle = "hsl(var(--foreground))";
+                    ctx.fillText(label, node.x || 0, (node.y || 0) + (node.val || 5) / 2 + fontSize + 2);
+                  }}
+                />
               )}
             </CardContent>
           </Card>

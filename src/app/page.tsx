@@ -4,8 +4,8 @@ import { Button } from "@/components/ui/button";
 
 export default function HomePage() {
   return (
-    <div className="min-h-screen bg-gradient-to-br from-background to-secondary/20">
-      <header className="border-b">
+    <div className="min-h-screen">
+      <header className="border-b bg-background/40 backdrop-blur-md sticky top-0 z-10">
         <div className="container mx-auto px-4 py-4 flex items-center justify-between">
           <div className="flex items-center gap-2">
             <Brain className="h-8 w-8 text-primary" />
@@ -86,7 +86,7 @@ function FeatureCard({
   description: string;
 }) {
   return (
-    <div className="p-6 rounded-lg border bg-card text-card-foreground shadow-sm">
+    <div className="p-6 rounded-lg border text-card-foreground glass-card">
       <div className="text-primary mb-4">{icon}</div>
       <h3 className="text-lg font-semibold mb-2">{title}</h3>
       <p className="text-muted-foreground">{description}</p>

@@ -4,15 +4,19 @@
 
 @layer base {
   :root {
-    --background: 0 0% 100%; /* White */
-    --foreground: 240 10% 3.9%; /* Zinc-950 */
+    --background: 0 0% 100%;
+    /* White */
+    --foreground: 240 10% 3.9%;
+    /* Zinc-950 */
     --card: 0 0% 100%;
     --card-foreground: 240 10% 3.9%;
     --popover: 0 0% 100%;
     --popover-foreground: 240 10% 3.9%;
-    --primary: 262.1 83.3% 57.8%; /* Violet-600 - Dynamic Primary */
+    --primary: 262.1 83.3% 57.8%;
+    /* Violet-600 - Dynamic Primary */
     --primary-foreground: 210 40% 98%;
-    --secondary: 240 4.8% 95.9%; /* Zinc-100 */
+    --secondary: 240 4.8% 95.9%;
+    /* Zinc-100 */
     --secondary-foreground: 240 5.9% 10%;
     --muted: 240 4.8% 95.9%;
     --muted-foreground: 240 3.8% 46.1%;
@@ -23,19 +27,21 @@
     --border: 240 5.9% 90%;
     --input: 240 5.9% 90%;
     --ring: 262.1 83.3% 57.8%;
-    --radius: 0.75rem; /* Increased radius */
+    --radius: 0.75rem;
+    /* Increased radius */
   }
 
   .dark {
-    --background: 240 10% 3.9%; /* Zinc-950 - Deep Dark */
+    --background: 240 10% 3.9%;
     --foreground: 0 0% 98%;
+    /* ... existing dark mode vars ... */
     --card: 240 10% 3.9%;
     --card-foreground: 0 0% 98%;
     --popover: 240 10% 3.9%;
     --popover-foreground: 0 0% 98%;
-    --primary: 263.4 70% 50.4%; /* Violet-500 */
+    --primary: 263.4 70% 50.4%;
     --primary-foreground: 210 40% 98%;
-    --secondary: 240 3.7% 15.9%; /* Zinc-800 */
+    --secondary: 240 3.7% 15.9%;
     --secondary-foreground: 0 0% 98%;
     --muted: 240 3.7% 15.9%;
     --muted-foreground: 240 5% 64.9%;
@@ -53,7 +59,27 @@
   * {
     @apply border-border;
   }
+
   body {
     @apply bg-background text-foreground;
+    background-image: radial-gradient(at 0% 0%, hsl(var(--primary) / 0.15) 0px, transparent 50%),
+      radial-gradient(at 100% 0%, hsl(var(--primary) / 0.10) 0px, transparent 50%);
+    background-attachment: fixed;
+  }
+}
+
+@layer utilities {
+  .glass {
+    @apply backdrop-blur-lg border-white/10 shadow-sm supports-[backdrop-filter]:bg-background/20;
+    background-color: hsl(var(--background) / 0.6);
+  }
+
+  .glass-card {
+    @apply backdrop-blur-sm border-white/5 shadow-md transition-all duration-300;
+    background-color: hsl(var(--card) / 0.5);
+  }
+
+  .glass-card:hover {
+    background-color: hsl(var(--card) / 0.7);
   }
 }

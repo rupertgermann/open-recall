@@ -69,7 +69,7 @@ export default function LibraryPage() {
 
   const handleDelete = async (id: string) => {
     if (!confirm("Are you sure you want to delete this document?")) return;
-    
+
     startTransition(async () => {
       try {
         await deleteDocument(id);
@@ -85,9 +85,9 @@ export default function LibraryPage() {
   };
 
   return (
-    <div className="min-h-screen bg-background">
+    <div className="min-h-screen">
       <Header />
-      
+
       <main className="container mx-auto px-4 py-8">
         <div className="flex flex-col gap-6">
           {/* Page Header */}
@@ -140,82 +140,82 @@ export default function LibraryPage() {
               <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
             </div>
           ) : (
-          <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-            {documents.map((doc) => {
-              const Icon = typeIcons[doc.type as keyof typeof typeIcons] || FileText;
-              const colorClass = typeColors[doc.type as keyof typeof typeColors] || typeColors.note;
-              
-              return (
-                <Card key={doc.id} className="group hover:shadow-md transition-shadow">
-                  <CardHeader className="pb-3">
-                    <div className="flex items-start justify-between">
-                      <div className={`p-2 rounded-lg ${colorClass}`}>
-                        <Icon className="h-5 w-5" />
-                      </div>
-                      <DropdownMenu>
-                        <DropdownMenuTrigger asChild>
-                          <Button variant="ghost" size="icon" className="opacity-0 group-hover:opacity-100 transition-opacity">
-                            <MoreVertical className="h-4 w-4" />
-                          </Button>
-                        </DropdownMenuTrigger>
-                        <DropdownMenuContent align="end">
-                          <DropdownMenuItem asChild>
-                            <Link href={`/library/${doc.id}`}>View Details</Link>
-                          </DropdownMenuItem>
-                          {doc.url && (
+            <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+              {documents.map((doc) => {
+                const Icon = typeIcons[doc.type as keyof typeof typeIcons] || FileText;
+                const colorClass = typeColors[doc.type as keyof typeof typeColors] || typeColors.note;
+
+                return (
+                  <Card key={doc.id} className="group hover:shadow-md transition-shadow">
+                    <CardHeader className="pb-3">
+                      <div className="flex items-start justify-between">
+                        <div className={`p-2 rounded-lg ${colorClass}`}>
+                          <Icon className="h-5 w-5" />
+                        </div>
+                        <DropdownMenu>
+                          <DropdownMenuTrigger asChild>
+                            <Button variant="ghost" size="icon" className="opacity-0 group-hover:opacity-100 transition-opacity">
+                              <MoreVertical className="h-4 w-4" />
+                            </Button>
+                          </DropdownMenuTrigger>
+                          <DropdownMenuContent align="end">
                             <DropdownMenuItem asChild>
-                              <a href={doc.url} target="_blank" rel="noopener noreferrer">
-                                Open Original
-                              </a>
+                              <Link href={`/library/${doc.id}`}>View Details</Link>
                             </DropdownMenuItem>
-                          )}
-                          <DropdownMenuItem
-                            className="text-destructive"
-                            onClick={() => handleDelete(doc.id)}
-                            disabled={isPending}
-                          >
-                            <Trash2 className="h-4 w-4 mr-2" />
-                            Delete
-                          </DropdownMenuItem>
-                        </DropdownMenuContent>
-                      </DropdownMenu>
-                    </div>
-                    <CardTitle className="text-lg line-clamp-2 mt-2">
-                      {doc.title}
-                    </CardTitle>
-                    <CardDescription className="line-clamp-2">
-                      {doc.summary}
-                    </CardDescription>
-                  </CardHeader>
-                  <CardContent>
-                    <div className="flex items-center justify-between text-sm">
-                      <div className="flex items-center gap-2">
-                        {doc.processingStatus === "completed" ? (
-                          <Badge variant="secondary">{doc.entityCount} entities</Badge>
-                        ) : (
-                          <Badge variant="outline">Processing...</Badge>
-                        )}
+                            {doc.url && (
+                              <DropdownMenuItem asChild>
+                                <a href={doc.url} target="_blank" rel="noopener noreferrer">
+                                  Open Original
+                                </a>
+                              </DropdownMenuItem>
+                            )}
+                            <DropdownMenuItem
+                              className="text-destructive"
+                              onClick={() => handleDelete(doc.id)}
+                              disabled={isPending}
+                            >
+                              <Trash2 className="h-4 w-4 mr-2" />
+                              Delete
+                            </DropdownMenuItem>
+                          </DropdownMenuContent>
+                        </DropdownMenu>
                       </div>
-                      <span className="text-muted-foreground">
-                        {doc.createdAt.toLocaleDateString()}
-                      </span>
-                    </div>
-                    {doc.url && (
-                      <a
-                        href={doc.url}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground mt-2 truncate"
-                      >
-                        <ExternalLink className="h-3 w-3 flex-shrink-0" />
-                        <span className="truncate">{doc.url}</span>
-                      </a>
-                    )}
-                  </CardContent>
-                </Card>
-              );
-            })}
-          </div>
+                      <CardTitle className="text-lg line-clamp-2 mt-2">
+                        {doc.title}
+                      </CardTitle>
+                      <CardDescription className="line-clamp-2">
+                        {doc.summary}
+                      </CardDescription>
+                    </CardHeader>
+                    <CardContent>
+                      <div className="flex items-center justify-between text-sm">
+                        <div className="flex items-center gap-2">
+                          {doc.processingStatus === "completed" ? (
+                            <Badge variant="secondary">{doc.entityCount} entities</Badge>
+                          ) : (
+                            <Badge variant="outline">Processing...</Badge>
+                          )}
+                        </div>
+                        <span className="text-muted-foreground">
+                          {doc.createdAt.toLocaleDateString()}
+                        </span>
+                      </div>
+                      {doc.url && (
+                        <a
+                          href={doc.url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground mt-2 truncate"
+                        >
+                          <ExternalLink className="h-3 w-3 flex-shrink-0" />
+                          <span className="truncate">{doc.url}</span>
+                        </a>
+                      )}
+                    </CardContent>
+                  </Card>
+                );
+              })}
+            </div>
           )}
 
           {!isLoading && documents.length === 0 && (
