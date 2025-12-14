@@ -115,19 +115,49 @@ export async function POST(req: Request) {
           controller.enqueue(encoder.encode(createSSEMessage("extracting", "Entity extraction skipped (AI unavailable)", 60)));
         }
 
-        // Step 6: Generate Embeddings (batch processing for speed)
-        controller.enqueue(encoder.encode(createSSEMessage("embedding", "Generating embeddings for chunks...", 65)));
-        
-        // Extract all chunk contents for batch embedding
+        // Step 6: Generate Embeddings (batched to avoid stack overflow on large documents)
+        const EMBEDDING_BATCH_SIZE = 10; // Process 10 chunks at a time
         const chunkContents = textChunks.map(chunk => chunk.content);
+        const totalChunks = chunkContents.length;
         let chunkEmbeddings: number[][] = [];
         
+        controller.enqueue(encoder.encode(createSSEMessage(
+          "embedding", 
+          `Generating embeddings for ${totalChunks} chunks...`, 
+          65
+        )));
+        
         try {
-          chunkEmbeddings = await generateEmbeddingsWithDBConfig(chunkContents);
-          controller.enqueue(encoder.encode(createSSEMessage("embedding", `Generated ${chunkEmbeddings.length} embeddings`, 75)));
+          // Process embeddings in batches to avoid stack overflow
+          for (let i = 0; i < totalChunks; i += EMBEDDING_BATCH_SIZE) {
+            const batch = chunkContents.slice(i, i + EMBEDDING_BATCH_SIZE);
+            const batchEmbeddings = await generateEmbeddingsWithDBConfig(batch);
+            chunkEmbeddings.push(...batchEmbeddings);
+            
+            // Calculate progress (65% to 75% range for embedding step)
+            const batchProgress = Math.min(i + EMBEDDING_BATCH_SIZE, totalChunks);
+            const progressPercent = 65 + Math.round((batchProgress / totalChunks) * 10);
+            
+            controller.enqueue(encoder.encode(createSSEMessage(
+              "embedding",
+              `Embedded ${batchProgress}/${totalChunks} chunks...`,
+              progressPercent
+            )));
+          }
+          
+          controller.enqueue(encoder.encode(createSSEMessage(
+            "embedding", 
+            `Generated ${chunkEmbeddings.length} embeddings`, 
+            75
+          )));
         } catch (error) {
+          console.error("Embedding generation failed:", error);
           // Continue without embeddings
-          controller.enqueue(encoder.encode(createSSEMessage("embedding", "Embedding generation skipped (AI unavailable)", 75)));
+          controller.enqueue(encoder.encode(createSSEMessage(
+            "embedding", 
+            `Embedding generation failed after ${chunkEmbeddings.length}/${totalChunks} chunks`, 
+            75
+          )));
         }
 
         // Batch insert all chunks at once

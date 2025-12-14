@@ -131,12 +131,18 @@ async function processDocument(documentId: string, content: string): Promise<voi
       console.error("Entity extraction failed:", error);
     }
 
-    // 4. Save chunks with embeddings (batch processing for speed)
+    // 4. Save chunks with embeddings (batched to avoid stack overflow on large documents)
+    const EMBEDDING_BATCH_SIZE = 10;
     const chunkContents = textChunks.map(chunk => chunk.content);
     let chunkEmbeddings: number[][] = [];
     
     try {
-      chunkEmbeddings = await generateEmbeddingsWithDBConfig(chunkContents);
+      // Process embeddings in batches to avoid stack overflow
+      for (let i = 0; i < chunkContents.length; i += EMBEDDING_BATCH_SIZE) {
+        const batch = chunkContents.slice(i, i + EMBEDDING_BATCH_SIZE);
+        const batchEmbeddings = await generateEmbeddingsWithDBConfig(batch);
+        chunkEmbeddings.push(...batchEmbeddings);
+      }
     } catch (error) {
       console.error("Embedding generation failed:", error);
     }
