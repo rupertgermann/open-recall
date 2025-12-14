@@ -1,4 +1,4 @@
-import { streamText, convertToModelMessages, type UIMessage } from "ai";
+import { streamText, convertToModelMessages, type UIMessage, generateText } from "ai";
 import { createOpenAI } from "@ai-sdk/openai";
 import { retrieveContext, buildPromptContext } from "@/actions/chat";
 import { getChatConfigFromDB, type ChatConfig } from "@/lib/ai/config";
@@ -12,6 +12,12 @@ function createAIClient(config: ChatConfig) {
     baseURL: config.baseUrl,
     apiKey: config.apiKey || "ollama",
   });
+}
+
+function fallbackTitleFromUserText(text: string): string {
+  const cleaned = text.replace(/\s+/g, " ").trim();
+  if (!cleaned) return "New chat";
+  return cleaned.length > 60 ? `${cleaned.slice(0, 57)}...` : cleaned;
 }
 
 // Helper to get model instance based on provider
@@ -172,6 +178,41 @@ Guidelines:
           await db
             .update(chatThreads)
             .set({ lastMessageAt: new Date(), updatedAt: new Date() })
+            .where(eq(chatThreads.id, effectiveThreadId));
+        }
+
+        // Auto-name chat if it still has the default title.
+        const [thread] = await db
+          .select({ id: chatThreads.id, title: chatThreads.title })
+          .from(chatThreads)
+          .where(eq(chatThreads.id, effectiveThreadId))
+          .limit(1);
+
+        if (thread && (thread.title === "New chat" || thread.title.trim() === "")) {
+          let title = lastUserText ? fallbackTitleFromUserText(lastUserText) : "New chat";
+
+          // Best-effort LLM title generation (keep it short).
+          try {
+            if (lastUserText) {
+              const { text: titleText } = await generateText({
+                model: model as Parameters<typeof generateText>[0]["model"],
+                system:
+                  "Generate a short chat title (3-6 words). Return only the title, no quotes.",
+                prompt: `User message: ${lastUserText}`,
+                maxOutputTokens: 32,
+              });
+              const candidate = titleText.replace(/^"|"$/g, "").trim();
+              if (candidate.length > 0) {
+                title = candidate.length > 80 ? `${candidate.slice(0, 77)}...` : candidate;
+              }
+            }
+          } catch {
+            // ignore, fallback title already set
+          }
+
+          await db
+            .update(chatThreads)
+            .set({ title, updatedAt: new Date() })
             .where(eq(chatThreads.id, effectiveThreadId));
         }
       } catch (error) {
