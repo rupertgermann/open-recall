@@ -195,29 +195,8 @@ export default function SettingsPage() {
     }
   }, [embeddingProvider]);
 
-  useEffect(() => {
-    if (chatProvider === "openai" && openaiApiKey) {
-      void testChatConnection();
-    }
-  }, [chatProvider, openaiApiKey]);
-
-  useEffect(() => {
-    if (chatProvider === "local" && chatBaseUrl) {
-      void testChatConnection();
-    }
-  }, [chatProvider, chatBaseUrl]);
-
-  useEffect(() => {
-    if (embeddingProvider === "openai" && openaiApiKey) {
-      void testEmbeddingConnection();
-    }
-  }, [embeddingProvider, openaiApiKey]);
-
-  useEffect(() => {
-    if (embeddingProvider === "local" && embeddingBaseUrl) {
-      void testEmbeddingConnection();
-    }
-  }, [embeddingProvider, embeddingBaseUrl]);
+  // Connection tests are now ONLY triggered by user interaction (clicking Test button)
+  // Removed auto-test on mount/state change to prevent cascading server calls
 
   if (isLoading) {
     return (
