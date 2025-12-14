@@ -100,8 +100,8 @@ export async function POST(req: Request) {
         controller.enqueue(encoder.encode(createSSEMessage("extracting", "Extracting entities and relationships...", 50)));
         
         let extractedData = { entities: [], relationships: [] } as {
-          entities: { name: string; type: string; description?: string }[];
-          relationships: { source: string; target: string; type: string; description?: string }[];
+          entities: { name: string; type: string; description: string | null }[];
+          relationships: { source: string; target: string; type: string; description: string | null }[];
         };
         
         try {

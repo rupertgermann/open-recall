@@ -34,22 +34,10 @@ export function createEmbeddingClient(config: EmbeddingConfig = defaultEmbedding
 // Get the chat model instance
 export function getModel(config: ChatConfig = defaultChatConfig) {
   const client = createChatClient(config);
-
-  const anyClient = client as unknown as {
-    responses?: (modelId: string) => unknown;
-    chat?: (modelId: string) => unknown;
-    (modelId: string): unknown;
-  };
-
-  if (config.provider === "openai" && typeof anyClient.responses === "function") {
-    return anyClient.responses(config.model) as ReturnType<typeof client>;
-  }
-
-  if (typeof anyClient.chat === "function") {
-    return anyClient.chat(config.model) as ReturnType<typeof client>;
-  }
-
-  return anyClient(config.model) as ReturnType<typeof client>;
+  // Use the standard model interface which works for both text generation
+  // and structured output (generateObject). Do NOT use responses() as it
+  // is incompatible with generateObject for structured entity extraction.
+  return client(config.model);
 }
 
 // Get the embedding model instance
@@ -107,7 +95,7 @@ const entitySchema = z.object({
   type: z.enum(ENTITY_TYPES).describe("The type/category of the entity"),
   description: z
     .string()
-    .optional()
+    .nullable()
     .describe("A brief description of the entity"),
 });
 
@@ -117,7 +105,7 @@ const relationshipSchema = z.object({
   type: z.string().describe("The type of relationship"),
   description: z
     .string()
-    .optional()
+    .nullable()
     .describe("A brief description of the relationship"),
 });
 
