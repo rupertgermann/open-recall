@@ -62,7 +62,7 @@ export async function generateSummary(
 Focus on the key points, main arguments, and important details.
 Keep the summary clear and well-structured.`,
     prompt: `Please summarize the following content:\n\n${content}`,
-    maxTokens: 1000,
+    maxOutputTokens: 1000,
   });
 
   return text;
@@ -78,7 +78,7 @@ export async function* streamSummary(
     model,
     system: `You are a helpful assistant that creates concise, informative summaries.`,
     prompt: `Please summarize the following content:\n\n${content}`,
-    maxTokens: 1000,
+    maxOutputTokens: 1000,
   });
 
   for await (const chunk of (await result).textStream) {
@@ -243,7 +243,7 @@ ${context}`;
     model,
     system: systemMessage,
     messages,
-    maxTokens: 2000,
+    maxOutputTokens: 2000,
   });
 
   for await (const chunk of (await result).textStream) {

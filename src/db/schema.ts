@@ -199,6 +199,44 @@ export const settings = pgTable("settings", {
 });
 
 // ============================================================================
+// CHAT_THREADS - Persistent chat sessions
+// ============================================================================
+export const chatThreads = pgTable(
+  "chat_threads",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    title: text("title").notNull().default("New chat"),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    updatedAt: timestamp("updated_at").defaultNow().notNull(),
+    lastMessageAt: timestamp("last_message_at").defaultNow().notNull(),
+  },
+  (table) => ({
+    lastMessageIdx: index("chat_threads_last_message_idx").on(table.lastMessageAt),
+  })
+);
+
+// ============================================================================
+// CHAT_MESSAGES - Persistent chat messages
+// ============================================================================
+export const chatMessages = pgTable(
+  "chat_messages",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    threadId: uuid("thread_id")
+      .notNull()
+      .references(() => chatThreads.id, { onDelete: "cascade" }),
+    role: text("role").notNull(),
+    content: text("content").notNull(),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    metadata: jsonb("metadata"),
+  },
+  (table) => ({
+    threadIdx: index("chat_messages_thread_idx").on(table.threadId),
+    createdAtIdx: index("chat_messages_created_at_idx").on(table.createdAt),
+  })
+);
+
+// ============================================================================
 // RELATIONS
 // ============================================================================
 export const documentsRelations = relations(documents, ({ many }) => ({
@@ -260,6 +298,17 @@ export const srsItemsRelations = relations(srsItems, ({ one }) => ({
   }),
 }));
 
+export const chatThreadsRelations = relations(chatThreads, ({ many }) => ({
+  messages: many(chatMessages),
+}));
+
+export const chatMessagesRelations = relations(chatMessages, ({ one }) => ({
+  thread: one(chatThreads, {
+    fields: [chatMessages.threadId],
+    references: [chatThreads.id],
+  }),
+}));
+
 // ============================================================================
 // TYPE EXPORTS
 // ============================================================================
@@ -277,3 +326,8 @@ export type SrsItem = typeof srsItems.$inferSelect;
 export type NewSrsItem = typeof srsItems.$inferInsert;
 export type Setting = typeof settings.$inferSelect;
 export type NewSetting = typeof settings.$inferInsert;
+
+export type ChatThread = typeof chatThreads.$inferSelect;
+export type NewChatThread = typeof chatThreads.$inferInsert;
+export type ChatMessage = typeof chatMessages.$inferSelect;
+export type NewChatMessage = typeof chatMessages.$inferInsert;

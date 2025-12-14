@@ -1,7 +1,8 @@
 "use client";
 
-import { useRef, useEffect } from "react";
-import { useChat } from "ai/react";
+import { useRef, useEffect, useState } from "react";
+import { useChat } from "@ai-sdk/react";
+import { DefaultChatTransport } from "ai";
 import { Send, Loader2, Bot, User, Sparkles, Network, Trash2 } from "lucide-react";
 import { Header } from "@/components/layout/header";
 import { Button } from "@/components/ui/button";
@@ -12,13 +13,21 @@ import { cn } from "@/lib/utils";
 
 
 export default function ChatPage() {
-  const { messages, input, handleInputChange, handleSubmit, isLoading, setMessages } = useChat({
-    api: "/api/chat",
-    initialMessages: [
+  const [input, setInput] = useState("");
+  const { messages, status, sendMessage, setMessages } = useChat({
+    transport: new DefaultChatTransport({
+      api: "/api/chat",
+    }),
+    messages: [
       {
         id: "welcome",
         role: "assistant",
-        content: "Hello! I'm your knowledge assistant. Ask me anything about your saved content, and I'll use both semantic search and your knowledge graph to find relevant information.",
+        parts: [
+          {
+            type: "text",
+            text: "Hello! I'm your knowledge assistant. Ask me anything about your saved content, and I'll use both semantic search and your knowledge graph to find relevant information.",
+          },
+        ],
       },
     ],
   });
@@ -37,7 +46,12 @@ export default function ChatPage() {
       {
         id: "welcome",
         role: "assistant",
-        content: "Hello! I'm your knowledge assistant. Ask me anything about your saved content, and I'll use both semantic search and your knowledge graph to find relevant information.",
+        parts: [
+          {
+            type: "text",
+            text: "Hello! I'm your knowledge assistant. Ask me anything about your saved content, and I'll use both semantic search and your knowledge graph to find relevant information.",
+          },
+        ],
       },
     ]);
   };
@@ -45,8 +59,16 @@ export default function ChatPage() {
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
-      handleSubmit(e as unknown as React.FormEvent<HTMLFormElement>);
+      void handleSubmit(e as unknown as React.FormEvent<HTMLFormElement>);
     }
+  };
+
+  const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    const text = input.trim();
+    if (!text || status !== "ready") return;
+    await sendMessage({ text });
+    setInput("");
   };
 
   return (
@@ -73,10 +95,10 @@ export default function ChatPage() {
               key={message.id}
               className={cn(
                 "flex gap-3",
-                message.role === "user" ? "justify-end" : "justify-start"
+                String(message.role) === "user" ? "justify-end" : "justify-start"
               )}
             >
-              {message.role === "assistant" && (
+              {String(message.role) === "assistant" && (
                 <div className="flex-shrink-0 w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center">
                   <Bot className="h-5 w-5 text-primary" />
                 </div>
@@ -85,15 +107,22 @@ export default function ChatPage() {
               <div
                 className={cn(
                   "max-w-[80%] rounded-lg px-4 py-3",
-                  message.role === "user"
+                  String(message.role) === "user"
                     ? "bg-primary text-primary-foreground"
                     : "bg-muted"
                 )}
               >
-                <p className="whitespace-pre-wrap">{message.content}</p>
+                <div className="whitespace-pre-wrap">
+                  {message.parts.map((part, i) => {
+                    if (part.type === "text") {
+                      return <p key={`${message.id}-text-${i}`}>{part.text}</p>;
+                    }
+                    return null;
+                  })}
+                </div>
               </div>
 
-              {message.role === "user" && (
+              {String(message.role) === "user" && (
                 <div className="flex-shrink-0 w-8 h-8 rounded-full bg-primary flex items-center justify-center">
                   <User className="h-5 w-5 text-primary-foreground" />
                 </div>
@@ -101,7 +130,7 @@ export default function ChatPage() {
             </div>
           ))}
 
-          {isLoading && (
+          {status !== "ready" && (
             <div className="flex gap-3">
               <div className="flex-shrink-0 w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center">
                 <Bot className="h-5 w-5 text-primary" />
@@ -127,18 +156,18 @@ export default function ChatPage() {
               <Textarea
                 placeholder="Ask about your knowledge base..."
                 value={input}
-                onChange={handleInputChange}
+                onChange={(e) => setInput(e.target.value)}
                 onKeyDown={handleKeyDown}
-                disabled={isLoading}
+                disabled={status !== "ready"}
                 rows={1}
                 className="min-h-[44px] max-h-32 resize-none"
               />
               <Button
                 type="submit"
                 size="icon"
-                disabled={!input.trim() || isLoading}
+                disabled={!input.trim() || status !== "ready"}
               >
-                {isLoading ? (
+                {status !== "ready" ? (
                   <Loader2 className="h-4 w-4 animate-spin" />
                 ) : (
                   <Send className="h-4 w-4" />
