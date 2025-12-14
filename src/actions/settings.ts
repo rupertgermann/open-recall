@@ -15,6 +15,7 @@ export type ProviderSettings = {
 
 // Combined AI settings with separate chat and embedding configs
 export type AISettings = {
+  openaiApiKey?: string;
   chat: ProviderSettings;
   embedding: ProviderSettings;
 };
@@ -53,6 +54,7 @@ function migrateSettings(value: unknown): AISettings {
   // Migrate from legacy format
   if (legacy && typeof legacy === "object" && "baseUrl" in legacy) {
     return {
+      openaiApiKey: legacy.openaiKey,
       chat: {
         provider: legacy.provider || "local",
         baseUrl: legacy.baseUrl,

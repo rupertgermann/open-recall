@@ -151,6 +151,7 @@ export default function SettingsPage() {
       const sharedKey = openaiApiKey || undefined;
 
       await saveAISettings({
+        openaiApiKey: sharedKey,
         chat: {
           provider: chatProvider,
           baseUrl: chatProvider === "openai" ? openaiBaseUrl : chatBaseUrl,
