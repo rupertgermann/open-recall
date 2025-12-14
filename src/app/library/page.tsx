@@ -15,6 +15,17 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import { useToast } from "@/hooks/use-toast";
 import { getDocuments, deleteDocument, type DocumentWithStats } from "@/actions/documents";
 
 const typeIcons = {
@@ -33,12 +44,14 @@ const typeColors = {
 
 export default function LibraryPage() {
   const router = useRouter();
+  const { toast } = useToast();
   const [documents, setDocuments] = useState<DocumentWithStats[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isPending, startTransition] = useTransition();
   const [searchQuery, setSearchQuery] = useState("");
   const [filterType, setFilterType] = useState<string | null>(null);
   const [debouncedSearch, setDebouncedSearch] = useState("");
+  const [documentToDelete, setDocumentToDelete] = useState<string | null>(null);
 
   // Debounce search
   useEffect(() => {
@@ -67,15 +80,29 @@ export default function LibraryPage() {
     fetchDocuments();
   }, [debouncedSearch, filterType]);
 
-  const handleDelete = async (id: string) => {
-    if (!confirm("Are you sure you want to delete this document?")) return;
+  const handleDeleteClick = (id: string) => {
+    setDocumentToDelete(id);
+  };
+
+  const confirmDelete = async () => {
+    if (!documentToDelete) return;
 
     startTransition(async () => {
       try {
-        await deleteDocument(id);
-        setDocuments((prev) => prev.filter((d) => d.id !== id));
+        await deleteDocument(documentToDelete);
+        setDocuments((prev) => prev.filter((d) => d.id !== documentToDelete));
+        setDocumentToDelete(null);
+        toast({
+          title: "Document deleted",
+          description: "The document has been successfully deleted.",
+        });
       } catch (error) {
         console.error("Failed to delete document:", error);
+        toast({
+          title: "Error",
+          description: "Failed to delete document. Please try again.",
+          variant: "destructive",
+        });
       }
     });
   };
@@ -178,7 +205,7 @@ export default function LibraryPage() {
                             )}
                             <DropdownMenuItem
                               className="text-destructive"
-                              onClick={() => handleDelete(doc.id)}
+                              onClick={() => handleDeleteClick(doc.id)}
                               disabled={isPending}
                             >
                               <Trash2 className="h-4 w-4 mr-2" />
@@ -231,6 +258,31 @@ export default function LibraryPage() {
             </div>
           )}
         </div>
+
+        <AlertDialog open={!!documentToDelete} onOpenChange={(open) => !open && setDocumentToDelete(null)}>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>Are you sure?</AlertDialogTitle>
+              <AlertDialogDescription>
+                This action cannot be undone. This will permanently delete the document
+                and all associated data (chunks, entities, relationships).
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel disabled={isPending}>Cancel</AlertDialogCancel>
+              <AlertDialogAction
+                onClick={(e) => {
+                  e.preventDefault();
+                  confirmDelete();
+                }}
+                disabled={isPending}
+                className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              >
+                {isPending ? "Deleting..." : "Delete"}
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
       </main>
     </div>
   );
