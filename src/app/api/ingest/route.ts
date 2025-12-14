@@ -2,12 +2,18 @@ import { db } from "@/db";
 import { documents, chunks, entities, entityMentions, relationships } from "@/db/schema";
 import { eq, and } from "drizzle-orm";
 import { extractFromUrl } from "@/lib/content/extractor";
-import { chunkByParagraphs } from "@/lib/content/chunker";
 import {
   generateSummaryWithDBConfig,
-  generateEmbeddingsWithDBConfig,
   extractEntitiesWithDBConfig,
 } from "@/lib/ai";
+import {
+  chunkStructured,
+  generateRetrievalEmbeddings,
+  generateGraphEmbeddings,
+  generateContentHash,
+  metricsCollector,
+  type StructuredChunk,
+} from "@/lib/embedding";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -74,11 +80,29 @@ export async function POST(req: Request) {
           })
           .returning();
 
-        // Step 3: Chunking
+        // Step 3: Structure-aware chunking (Phase 1)
         controller.enqueue(encoder.encode(createSSEMessage("chunking", "Splitting content into chunks...", 25)));
         
-        const textChunks = chunkByParagraphs(content, { maxChunkSize: 1000 });
-        controller.enqueue(encoder.encode(createSSEMessage("chunking", `Created ${textChunks.length} chunks`, 30)));
+        const textChunks = chunkStructured(content, {
+          minChunkTokens: 100,
+          maxChunkTokens: 800,
+          targetChunkTokens: 500,
+        });
+        
+        // Phase 2: Deduplicate chunks by hash
+        const uniqueChunks: StructuredChunk[] = [];
+        const seenHashes = new Set<string>();
+        for (const chunk of textChunks) {
+          if (!seenHashes.has(chunk.contentHash)) {
+            seenHashes.add(chunk.contentHash);
+            uniqueChunks.push(chunk);
+          }
+        }
+        
+        const dedupeMsg = textChunks.length !== uniqueChunks.length 
+          ? ` (${textChunks.length - uniqueChunks.length} duplicates removed)`
+          : "";
+        controller.enqueue(encoder.encode(createSSEMessage("chunking", `Created ${uniqueChunks.length} chunks${dedupeMsg}`, 30)));
 
         // Step 4: Summarization
         controller.enqueue(encoder.encode(createSSEMessage("summarizing", "Generating AI summary...", 35)));
@@ -115,63 +139,59 @@ export async function POST(req: Request) {
           controller.enqueue(encoder.encode(createSSEMessage("extracting", "Entity extraction skipped (AI unavailable)", 60)));
         }
 
-        // Step 6: Generate Embeddings (batched to avoid stack overflow on large documents)
-        const EMBEDDING_BATCH_SIZE = 10; // Process 10 chunks at a time
-        const chunkContents = textChunks.map(chunk => chunk.content);
+        // Step 6: Generate Embeddings with caching (Phase 3 & 6)
+        const chunkContents = uniqueChunks.map(chunk => chunk.content);
         const totalChunks = chunkContents.length;
-        let chunkEmbeddings: number[][] = [];
         
         controller.enqueue(encoder.encode(createSSEMessage(
           "embedding", 
-          `Generating embeddings for ${totalChunks} chunks...`, 
+          `Generating embeddings for ${totalChunks} chunks (with caching)...`, 
           65
         )));
         
+        let chunkEmbeddingResult = { embeddings: [] as number[][], cacheHits: 0, cacheMisses: 0, timeMs: 0 };
+        
         try {
-          // Process embeddings in batches to avoid stack overflow
-          for (let i = 0; i < totalChunks; i += EMBEDDING_BATCH_SIZE) {
-            const batch = chunkContents.slice(i, i + EMBEDDING_BATCH_SIZE);
-            const batchEmbeddings = await generateEmbeddingsWithDBConfig(batch);
-            chunkEmbeddings.push(...batchEmbeddings);
-            
-            // Calculate progress (65% to 75% range for embedding step)
-            const batchProgress = Math.min(i + EMBEDDING_BATCH_SIZE, totalChunks);
-            const progressPercent = 65 + Math.round((batchProgress / totalChunks) * 10);
-            
-            controller.enqueue(encoder.encode(createSSEMessage(
-              "embedding",
-              `Embedded ${batchProgress}/${totalChunks} chunks...`,
-              progressPercent
-            )));
-          }
+          // Use new batched + cached embedding service
+          const startTime = Date.now();
+          chunkEmbeddingResult = await generateRetrievalEmbeddings(chunkContents);
+          const elapsedMs = Date.now() - startTime;
+          
+          const cacheMsg = chunkEmbeddingResult.cacheHits > 0 
+            ? ` (${chunkEmbeddingResult.cacheHits} from cache)`
+            : "";
           
           controller.enqueue(encoder.encode(createSSEMessage(
             "embedding", 
-            `Generated ${chunkEmbeddings.length} embeddings`, 
+            `Generated ${chunkEmbeddingResult.embeddings.length} embeddings in ${elapsedMs}ms${cacheMsg}`, 
             75
           )));
         } catch (error) {
           console.error("Embedding generation failed:", error);
-          // Continue without embeddings
           controller.enqueue(encoder.encode(createSSEMessage(
             "embedding", 
-            `Embedding generation failed after ${chunkEmbeddings.length}/${totalChunks} chunks`, 
+            `Embedding generation failed`, 
             75
           )));
         }
 
-        // Batch insert all chunks at once
-        const chunkValues = textChunks.map((chunk, i) => ({
+        // Batch insert all chunks with new schema fields
+        const chunkValues = uniqueChunks.map((chunk, i) => ({
           documentId: doc.id,
           content: chunk.content,
+          contentHash: chunk.contentHash,
           chunkIndex: chunk.index,
           tokenCount: chunk.tokenCount,
-          embedding: chunkEmbeddings[i] ?? null,
+          embedding: chunkEmbeddingResult.embeddings[i] ?? null,
+          embeddingStatus: chunkEmbeddingResult.embeddings[i] ? "embedded" : "pending",
+          embeddingPurpose: "retrieval" as const,
         }));
 
-        await db.insert(chunks).values(chunkValues);
+        if (chunkValues.length > 0) {
+          await db.insert(chunks).values(chunkValues);
+        }
 
-        controller.enqueue(encoder.encode(createSSEMessage("embedding", `Saved ${textChunks.length} chunks with ${chunkEmbeddings.length} embeddings`, 80)));
+        controller.enqueue(encoder.encode(createSSEMessage("embedding", `Saved ${uniqueChunks.length} chunks`, 80)));
 
         // Step 7: Save Entities (optimized with batch processing)
         controller.enqueue(encoder.encode(createSSEMessage("saving", "Saving entities to knowledge graph...", 82)));
@@ -194,13 +214,13 @@ export async function POST(req: Request) {
           }
         }
 
-        // Generate embeddings for new entities in batch
+        // Generate graph embeddings for new entities (Phase 4)
         if (newEntities.length > 0) {
           const entityTexts = newEntities.map(e => e.name + (e.description ? `: ${e.description}` : ""));
-          let entityEmbeddings: number[][] = [];
+          let entityEmbeddingResult = { embeddings: [] as number[][], cacheHits: 0, cacheMisses: 0, timeMs: 0 };
           
           try {
-            entityEmbeddings = await generateEmbeddingsWithDBConfig(entityTexts);
+            entityEmbeddingResult = await generateGraphEmbeddings(entityTexts);
           } catch (error) {
             // Continue without embeddings
           }
@@ -214,7 +234,7 @@ export async function POST(req: Request) {
                 name: entity.name,
                 type: entity.type,
                 description: entity.description,
-                embedding: entityEmbeddings[i] ?? null,
+                embedding: entityEmbeddingResult.embeddings[i] ?? null,
               })
               .returning();
             entityIdMap.set(entity.name, newEntity.id);
