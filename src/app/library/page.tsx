@@ -146,7 +146,11 @@ export default function LibraryPage() {
                 const colorClass = typeColors[doc.type as keyof typeof typeColors] || typeColors.note;
 
                 return (
-                  <Card key={doc.id} className="group hover:shadow-md transition-shadow">
+                  <Card 
+                    key={doc.id} 
+                    className="group hover:shadow-md transition-shadow cursor-pointer"
+                    onClick={() => router.push(`/library/${doc.id}`)}
+                  >
                     <CardHeader className="pb-3">
                       <div className="flex items-start justify-between">
                         <div className={`p-2 rounded-lg ${colorClass}`}>
@@ -154,17 +158,20 @@ export default function LibraryPage() {
                         </div>
                         <DropdownMenu>
                           <DropdownMenuTrigger asChild>
-                            <Button variant="ghost" size="icon" className="opacity-0 group-hover:opacity-100 transition-opacity">
+                            <Button 
+                              variant="ghost" 
+                              size="icon" 
+                              className="opacity-0 group-hover:opacity-100 transition-opacity"
+                              onClick={(e) => e.stopPropagation()}
+                            >
                               <MoreVertical className="h-4 w-4" />
                             </Button>
                           </DropdownMenuTrigger>
-                          <DropdownMenuContent align="end">
-                            <DropdownMenuItem asChild>
-                              <Link href={`/library/${doc.id}`}>View Details</Link>
-                            </DropdownMenuItem>
+                          <DropdownMenuContent align="end" onClick={(e) => e.stopPropagation()}>
                             {doc.url && (
                               <DropdownMenuItem asChild>
                                 <a href={doc.url} target="_blank" rel="noopener noreferrer">
+                                  <ExternalLink className="h-4 w-4 mr-2" />
                                   Open Original
                                 </a>
                               </DropdownMenuItem>
@@ -201,15 +208,12 @@ export default function LibraryPage() {
                         </span>
                       </div>
                       {doc.url && (
-                        <a
-                          href={doc.url}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground mt-2 truncate"
+                        <span
+                          className="flex items-center gap-1 text-xs text-muted-foreground mt-2 truncate"
                         >
                           <ExternalLink className="h-3 w-3 flex-shrink-0" />
                           <span className="truncate">{doc.url}</span>
-                        </a>
+                        </span>
                       )}
                     </CardContent>
                   </Card>

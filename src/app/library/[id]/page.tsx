@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { getDocument } from "@/actions/documents";
+import { DeleteButton } from "./delete-button";
 
 const typeIcons = {
   article: Globe,
@@ -92,6 +93,7 @@ export default async function DocumentDetailPage({
                 </a>
               )}
             </div>
+            <DeleteButton documentId={document.id} />
           </div>
 
           <div className="grid gap-6 lg:grid-cols-3">

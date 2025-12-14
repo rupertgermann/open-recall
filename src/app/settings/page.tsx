@@ -97,11 +97,15 @@ export default function SettingsPage() {
 
           const gpt5Models = openaiModels.filter((m: string) => m.startsWith("gpt-5"));
 
-          const models = chatProvider === "openai" ? gpt5Models : localModels;
-          setChatAvailableModels(models);
-          if (models.length > 0 && !models.includes(chatModel)) {
-            setChatModel(models[0]);
+          let models = chatProvider === "openai" ? gpt5Models : localModels;
+          
+          // Always include the currently configured model in the list
+          if (chatModel && !models.includes(chatModel)) {
+            models = [chatModel, ...models];
           }
+          
+          setChatAvailableModels(models);
+          // Don't auto-switch the model - keep the user's configured choice
         }
       } else {
         setChatConnectionStatus("disconnected");
@@ -128,11 +132,15 @@ export default function SettingsPage() {
           const openaiModels = result.models.filter((m: string) => m.startsWith("text-embedding-"));
           const localModels = result.models.filter((m: string) => m.includes("embed"));
 
-          const models = embeddingProvider === "openai" ? openaiModels : localModels;
-          setEmbeddingAvailableModels(models);
-          if (models.length > 0 && !models.includes(embeddingModel)) {
-            setEmbeddingModel(models[0]);
+          let models = embeddingProvider === "openai" ? openaiModels : localModels;
+          
+          // Always include the currently configured model in the list
+          if (embeddingModel && !models.includes(embeddingModel)) {
+            models = [embeddingModel, ...models];
           }
+          
+          setEmbeddingAvailableModels(models);
+          // Don't auto-switch the model - keep the user's configured choice
         }
       } else {
         setEmbeddingConnectionStatus("disconnected");
@@ -325,7 +333,7 @@ export default function SettingsPage() {
           <div className="space-y-2">
             <label className="text-sm font-medium">Model</label>
             <select
-              value={availableModels.includes(model) ? model : (availableModels[0] || "")}
+              value={model}
               onChange={(e) => setModel(e.target.value)}
               disabled={availableModels.length === 0}
               className="h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm disabled:opacity-50"

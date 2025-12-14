@@ -110,6 +110,18 @@ open-recall/
 | `EMBEDDING_MODEL` | Embedding model | `nomic-embed-text` |
 | `OPENAI_API_KEY` | Optional OpenAI key for cloud mode | — |
 
+## Troubleshooting
+
+### Embedding Dimensions Mismatch
+If you switch embedding providers (e.g., from local `nomic-embed-text` with 768 dimensions to OpenAI `text-embedding-3-small` with 1536 dimensions), you might encounter database errors about vector dimension mismatch.
+
+**Solution:**
+We have removed fixed dimension constraints from the schema. However, existing data will still have the old dimensions. You have two options:
+1. **Clear the database**: Reset your library and re-ingest content with the new provider.
+2. **Stick to one provider**: Choose either local or OpenAI for embeddings and stick with it.
+
+If you see `expected X dimensions, not Y` during `db:push`, it means your local schema was previously expecting a fixed size. The latest schema update removes this constraint. Run `npm run db:push` again to update your database schema.
+
 ## Hardware Requirements
 
 - **RAM**: 16GB recommended (8GB minimum)
