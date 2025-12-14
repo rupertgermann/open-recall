@@ -32,7 +32,22 @@ export function createEmbeddingClient(config: EmbeddingConfig = defaultEmbedding
 // Get the chat model instance
 export function getModel(config: ChatConfig = defaultChatConfig) {
   const client = createChatClient(config);
-  return client(config.model);
+
+  const anyClient = client as unknown as {
+    responses?: (modelId: string) => unknown;
+    chat?: (modelId: string) => unknown;
+    (modelId: string): unknown;
+  };
+
+  if (config.provider === "openai" && typeof anyClient.responses === "function") {
+    return anyClient.responses(config.model) as ReturnType<typeof client>;
+  }
+
+  if (typeof anyClient.chat === "function") {
+    return anyClient.chat(config.model) as ReturnType<typeof client>;
+  }
+
+  return anyClient(config.model) as ReturnType<typeof client>;
 }
 
 // Get the embedding model instance

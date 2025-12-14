@@ -132,7 +132,10 @@ export async function getDatabaseStats() {
 /**
  * Test connection to AI provider
  */
-export async function testAIConnection(baseUrl: string): Promise<{ success: boolean; models?: string[]; error?: string }> {
+export async function testAIConnection(
+  baseUrl: string,
+  apiKey?: string
+): Promise<{ success: boolean; models?: string[]; error?: string }> {
   try {
     // Try to fetch models from Ollama
     const modelsUrl = baseUrl.replace("/v1", "/api/tags");
@@ -144,7 +147,20 @@ export async function testAIConnection(baseUrl: string): Promise<{ success: bool
     if (!response.ok) {
       // Try OpenAI-compatible endpoint
       const openaiModelsUrl = `${baseUrl}/models`;
-      const openaiResponse = await fetch(openaiModelsUrl);
+      let host: string | undefined;
+      try {
+        host = new URL(openaiModelsUrl).host;
+      } catch {
+        host = undefined;
+      }
+
+      if ((host === "api.openai.com" || host?.endsWith(".openai.com")) && !apiKey) {
+        return { success: false, error: "Missing OpenAI API key" };
+      }
+
+      const openaiResponse = await fetch(openaiModelsUrl, {
+        headers: apiKey ? { Authorization: `Bearer ${apiKey}` } : undefined,
+      });
       
       if (!openaiResponse.ok) {
         return { success: false, error: `Connection failed: ${response.status}` };

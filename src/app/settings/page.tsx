@@ -15,29 +15,32 @@ type ConnectionStatus = "connected" | "disconnected" | "testing";
 export default function SettingsPage() {
   const [isLoading, setIsLoading] = useState(true);
 
+  const [openaiApiKey, setOpenaiApiKey] = useState("");
+
   // Chat provider settings
   const [chatProvider, setChatProvider] = useState<Provider>("local");
   const [chatBaseUrl, setChatBaseUrl] = useState("http://localhost:11434/v1");
   const [chatModel, setChatModel] = useState("llama3.2:8b");
-  const [chatApiKey, setChatApiKey] = useState("");
   const [chatConnectionStatus, setChatConnectionStatus] = useState<ConnectionStatus>("disconnected");
   const [chatConnectionError, setChatConnectionError] = useState<string | null>(null);
   const [chatAvailableModels, setChatAvailableModels] = useState<string[]>([
     "llama3.2:8b",
     "mistral:7b",
     "qwen2.5:7b",
+    "gpt-5",
   ]);
 
   // Embedding provider settings
   const [embeddingProvider, setEmbeddingProvider] = useState<Provider>("local");
   const [embeddingBaseUrl, setEmbeddingBaseUrl] = useState("http://localhost:11434/v1");
   const [embeddingModel, setEmbeddingModel] = useState("nomic-embed-text");
-  const [embeddingApiKey, setEmbeddingApiKey] = useState("");
   const [embeddingConnectionStatus, setEmbeddingConnectionStatus] = useState<ConnectionStatus>("disconnected");
   const [embeddingConnectionError, setEmbeddingConnectionError] = useState<string | null>(null);
   const [embeddingAvailableModels, setEmbeddingAvailableModels] = useState<string[]>([
     "nomic-embed-text",
     "mxbai-embed-large",
+    "text-embedding-3-small",
+    "text-embedding-3-large",
   ]);
 
   const [isSaving, setIsSaving] = useState(false);
@@ -56,12 +59,14 @@ export default function SettingsPage() {
         setChatProvider(settings.chat.provider);
         setChatBaseUrl(settings.chat.baseUrl);
         setChatModel(settings.chat.model);
-        setChatApiKey(settings.chat.apiKey || "");
         // Embedding settings
         setEmbeddingProvider(settings.embedding.provider);
         setEmbeddingBaseUrl(settings.embedding.baseUrl);
         setEmbeddingModel(settings.embedding.model);
-        setEmbeddingApiKey(settings.embedding.apiKey || "");
+
+        const keyFromSettings =
+          settings.chat.apiKey || settings.embedding.apiKey || "";
+        setOpenaiApiKey(keyFromSettings);
         // Stats
         setDbStats(stats);
       } catch (error) {
@@ -78,11 +83,25 @@ export default function SettingsPage() {
     setChatConnectionError(null);
 
     try {
-      const result = await testAIConnection(chatBaseUrl);
+      const result = await testAIConnection(
+        chatProvider === "openai" ? "https://api.openai.com/v1" : chatBaseUrl,
+        chatProvider === "openai" ? (openaiApiKey || undefined) : undefined
+      );
       if (result.success) {
         setChatConnectionStatus("connected");
         if (result.models && result.models.length > 0) {
-          setChatAvailableModels(result.models.filter((m: string) => !m.includes("embed")));
+          const openaiModels = result.models
+            .filter((m: string) => !m.startsWith("text-embedding-"))
+            .filter((m: string) => !m.includes("embedding"));
+          const localModels = result.models.filter((m: string) => !m.includes("embed"));
+
+          const gpt5Models = openaiModels.filter((m: string) => m.startsWith("gpt-5"));
+
+          const models = chatProvider === "openai" ? gpt5Models : localModels;
+          setChatAvailableModels(models);
+          if (models.length > 0 && !models.includes(chatModel)) {
+            setChatModel(models[0]);
+          }
         }
       } else {
         setChatConnectionStatus("disconnected");
@@ -99,11 +118,21 @@ export default function SettingsPage() {
     setEmbeddingConnectionError(null);
 
     try {
-      const result = await testAIConnection(embeddingBaseUrl);
+      const result = await testAIConnection(
+        embeddingProvider === "openai" ? "https://api.openai.com/v1" : embeddingBaseUrl,
+        embeddingProvider === "openai" ? (openaiApiKey || undefined) : undefined
+      );
       if (result.success) {
         setEmbeddingConnectionStatus("connected");
         if (result.models && result.models.length > 0) {
-          setEmbeddingAvailableModels(result.models.filter((m: string) => m.includes("embed")));
+          const openaiModels = result.models.filter((m: string) => m.startsWith("text-embedding-"));
+          const localModels = result.models.filter((m: string) => m.includes("embed"));
+
+          const models = embeddingProvider === "openai" ? openaiModels : localModels;
+          setEmbeddingAvailableModels(models);
+          if (models.length > 0 && !models.includes(embeddingModel)) {
+            setEmbeddingModel(models[0]);
+          }
         }
       } else {
         setEmbeddingConnectionStatus("disconnected");
@@ -118,18 +147,21 @@ export default function SettingsPage() {
   const handleSave = async () => {
     setIsSaving(true);
     try {
+      const openaiBaseUrl = "https://api.openai.com/v1";
+      const sharedKey = openaiApiKey || undefined;
+
       await saveAISettings({
         chat: {
           provider: chatProvider,
-          baseUrl: chatBaseUrl,
+          baseUrl: chatProvider === "openai" ? openaiBaseUrl : chatBaseUrl,
           model: chatModel,
-          apiKey: chatApiKey || undefined,
+          apiKey: chatProvider === "openai" ? sharedKey : undefined,
         },
         embedding: {
           provider: embeddingProvider,
-          baseUrl: embeddingBaseUrl,
+          baseUrl: embeddingProvider === "openai" ? openaiBaseUrl : embeddingBaseUrl,
           model: embeddingModel,
-          apiKey: embeddingApiKey || undefined,
+          apiKey: embeddingProvider === "openai" ? sharedKey : undefined,
         },
       });
       setSaved(true);
@@ -140,6 +172,43 @@ export default function SettingsPage() {
       setIsSaving(false);
     }
   };
+
+  // Apply OpenAI defaults when switching provider
+  useEffect(() => {
+    if (chatProvider === "openai") {
+      setChatModel((prev) => (prev === "llama3.2:8b" ? "gpt-5" : prev));
+    }
+  }, [chatProvider]);
+
+  useEffect(() => {
+    if (embeddingProvider === "openai") {
+      setEmbeddingModel((prev) => (prev === "nomic-embed-text" ? "text-embedding-3-small" : prev));
+    }
+  }, [embeddingProvider]);
+
+  useEffect(() => {
+    if (chatProvider === "openai" && openaiApiKey) {
+      void testChatConnection();
+    }
+  }, [chatProvider, openaiApiKey]);
+
+  useEffect(() => {
+    if (chatProvider === "local" && chatBaseUrl) {
+      void testChatConnection();
+    }
+  }, [chatProvider, chatBaseUrl]);
+
+  useEffect(() => {
+    if (embeddingProvider === "openai" && openaiApiKey) {
+      void testEmbeddingConnection();
+    }
+  }, [embeddingProvider, openaiApiKey]);
+
+  useEffect(() => {
+    if (embeddingProvider === "local" && embeddingBaseUrl) {
+      void testEmbeddingConnection();
+    }
+  }, [embeddingProvider, embeddingBaseUrl]);
 
   if (isLoading) {
     return (
@@ -163,8 +232,6 @@ export default function SettingsPage() {
     setBaseUrl,
     model,
     setModel,
-    apiKey,
-    setApiKey,
     connectionStatus,
     connectionError,
     availableModels,
@@ -179,8 +246,6 @@ export default function SettingsPage() {
     setBaseUrl: (url: string) => void;
     model: string;
     setModel: (m: string) => void;
-    apiKey: string;
-    setApiKey: (k: string) => void;
     connectionStatus: ConnectionStatus;
     connectionError: string | null;
     availableModels: string[];
@@ -215,84 +280,62 @@ export default function SettingsPage() {
         </div>
 
         <div className="space-y-4 pt-4 border-t">
-          <div className="space-y-2">
-            <label className="text-sm font-medium">Base URL</label>
-            <div className="flex gap-2">
-              <Input
-                value={baseUrl}
-                onChange={(e) => setBaseUrl(e.target.value)}
-                placeholder={provider === "openai" ? "https://api.openai.com/v1" : "http://localhost:11434/v1"}
-              />
-              <Button
-                variant="outline"
-                onClick={testConnection}
-                disabled={connectionStatus === "testing"}
-              >
-                {connectionStatus === "testing" ? (
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                ) : connectionStatus === "connected" ? (
-                  <CheckCircle className="h-4 w-4 text-green-500" />
-                ) : (
-                  <RefreshCw className="h-4 w-4" />
+          {provider === "local" && (
+            <div className="space-y-2">
+              <label className="text-sm font-medium">Base URL</label>
+              <div className="flex gap-2">
+                <Input
+                  value={baseUrl}
+                  onChange={(e) => setBaseUrl(e.target.value)}
+                  placeholder="http://localhost:11434/v1"
+                />
+                <Button
+                  variant="outline"
+                  onClick={testConnection}
+                  disabled={connectionStatus === "testing"}
+                >
+                  {connectionStatus === "testing" ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : connectionStatus === "connected" ? (
+                    <CheckCircle className="h-4 w-4 text-green-500" />
+                  ) : (
+                    <RefreshCw className="h-4 w-4" />
+                  )}
+                </Button>
+              </div>
+              <div className="flex items-center gap-2">
+                {connectionStatus === "connected" && (
+                  <Badge variant="outline" className="text-green-500 border-green-500">
+                    Connected
+                  </Badge>
                 )}
-              </Button>
+                {connectionStatus === "disconnected" && (
+                  <Badge variant="outline" className="text-muted-foreground">
+                    Not tested
+                  </Badge>
+                )}
+                {connectionError && (
+                  <span className="text-xs text-destructive">{connectionError}</span>
+                )}
+              </div>
             </div>
-            <div className="flex items-center gap-2">
-              {connectionStatus === "connected" && (
-                <Badge variant="outline" className="text-green-500 border-green-500">
-                  Connected
-                </Badge>
-              )}
-              {connectionStatus === "disconnected" && (
-                <Badge variant="outline" className="text-muted-foreground">
-                  Not tested
-                </Badge>
-              )}
-              {connectionError && (
-                <span className="text-xs text-destructive">{connectionError}</span>
-              )}
-            </div>
-          </div>
+          )}
 
           <div className="space-y-2">
             <label className="text-sm font-medium">Model</label>
-            <div className="flex gap-2">
-              <Input
-                value={model}
-                onChange={(e) => setModel(e.target.value)}
-                placeholder="Model name"
-                className="flex-1"
-              />
-              {availableModels.length > 0 && (
-                <select
-                  value={model}
-                  onChange={(e) => setModel(e.target.value)}
-                  className="h-10 rounded-md border border-input bg-background px-3 py-2 text-sm"
-                >
-                  {availableModels.map((m) => (
-                    <option key={m} value={m}>
-                      {m}
-                    </option>
-                  ))}
-                </select>
-              )}
-            </div>
+            <select
+              value={availableModels.includes(model) ? model : (availableModels[0] || "")}
+              onChange={(e) => setModel(e.target.value)}
+              disabled={availableModels.length === 0}
+              className="h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm disabled:opacity-50"
+            >
+              {availableModels.map((m) => (
+                <option key={m} value={m}>
+                  {m}
+                </option>
+              ))}
+            </select>
           </div>
-
-          {provider === "openai" && (
-            <div className="space-y-2">
-              <label className="text-sm font-medium">API Key</label>
-              <Input
-                type="password"
-                value={apiKey}
-                onChange={(e) => setApiKey(e.target.value)}
-                placeholder="sk-..."
-              />
-              <p className="text-xs text-muted-foreground">
-                Stored locally, never sent to our servers
-              </p>
-            </div>
-          )}
         </div>
       </CardContent>
     </Card>
@@ -311,6 +354,30 @@ export default function SettingsPage() {
             </p>
           </div>
 
+          {(chatProvider === "openai" || embeddingProvider === "openai") && (
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <Server className="h-5 w-5" />
+                  OpenAI
+                </CardTitle>
+                <CardDescription>Used when you select OpenAI as provider</CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-2">
+                <label className="text-sm font-medium">API Key</label>
+                <Input
+                  type="password"
+                  value={openaiApiKey}
+                  onChange={(e) => setOpenaiApiKey(e.target.value)}
+                  placeholder="sk-..."
+                />
+                <p className="text-xs text-muted-foreground">
+                  Stored locally, never sent to our servers
+                </p>
+              </CardContent>
+            </Card>
+          )}
+
           {/* Chat Provider */}
           <ProviderConfig
             title="Chat Provider"
@@ -322,8 +389,6 @@ export default function SettingsPage() {
             setBaseUrl={setChatBaseUrl}
             model={chatModel}
             setModel={setChatModel}
-            apiKey={chatApiKey}
-            setApiKey={setChatApiKey}
             connectionStatus={chatConnectionStatus}
             connectionError={chatConnectionError}
             availableModels={chatAvailableModels}
@@ -341,8 +406,6 @@ export default function SettingsPage() {
             setBaseUrl={setEmbeddingBaseUrl}
             model={embeddingModel}
             setModel={setEmbeddingModel}
-            apiKey={embeddingApiKey}
-            setApiKey={setEmbeddingApiKey}
             connectionStatus={embeddingConnectionStatus}
             connectionError={embeddingConnectionError}
             availableModels={embeddingAvailableModels}
