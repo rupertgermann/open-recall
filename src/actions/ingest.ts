@@ -7,9 +7,9 @@ import { revalidatePath } from "next/cache";
 import { extractFromUrl, extractFromHtml, detectContentType, extractYouTubeId } from "@/lib/content/extractor";
 import { chunkByParagraphs } from "@/lib/content/chunker";
 import {
-  generateSummary,
-  generateEmbeddings,
-  extractEntitiesAndRelationships,
+  generateSummaryWithDBConfig,
+  generateEmbeddingsWithDBConfig,
+  extractEntitiesWithDBConfig,
   type ExtractedEntity,
   type ExtractedRelationship,
 } from "@/lib/ai";
@@ -107,7 +107,7 @@ async function processDocument(documentId: string, content: string): Promise<voi
     // 2. Generate summary
     let summary: string | null = null;
     try {
-      summary = await generateSummary(content.slice(0, 8000)); // Limit for context window
+      summary = await generateSummaryWithDBConfig(content.slice(0, 8000)); // Limit for context window
     } catch (error) {
       console.error("Summary generation failed:", error);
     }
@@ -126,7 +126,7 @@ async function processDocument(documentId: string, content: string): Promise<voi
       relationships: [],
     };
     try {
-      extractedData = await extractEntitiesAndRelationships(content.slice(0, 8000));
+      extractedData = await extractEntitiesWithDBConfig(content.slice(0, 8000));
     } catch (error) {
       console.error("Entity extraction failed:", error);
     }
@@ -136,7 +136,7 @@ async function processDocument(documentId: string, content: string): Promise<voi
     let chunkEmbeddings: number[][] = [];
     
     try {
-      chunkEmbeddings = await generateEmbeddings(chunkContents);
+      chunkEmbeddings = await generateEmbeddingsWithDBConfig(chunkContents);
     } catch (error) {
       console.error("Embedding generation failed:", error);
     }
@@ -177,7 +177,7 @@ async function processDocument(documentId: string, content: string): Promise<voi
       let entityEmbeddings: number[][] = [];
       
       try {
-        entityEmbeddings = await generateEmbeddings(entityTexts);
+        entityEmbeddings = await generateEmbeddingsWithDBConfig(entityTexts);
       } catch (error) {
         console.error("Entity embedding failed:", error);
       }

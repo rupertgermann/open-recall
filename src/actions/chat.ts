@@ -3,7 +3,7 @@
 import { db } from "@/db";
 import { chunks, documents, entities, entityMentions, relationships } from "@/db/schema";
 import { eq, sql, cosineDistance, isNotNull } from "drizzle-orm";
-import { generateEmbedding } from "@/lib/ai";
+import { generateEmbeddingWithDBConfig } from "@/lib/ai";
 
 export type RetrievedContext = {
   chunks: {
@@ -29,7 +29,7 @@ export async function retrieveContext(query: string, limit: number = 5): Promise
   // 1. Generate query embedding
   let queryEmbedding: number[];
   try {
-    queryEmbedding = await generateEmbedding(query);
+    queryEmbedding = await generateEmbeddingWithDBConfig(query);
   } catch (error) {
     console.error("Failed to generate query embedding:", error);
     return { chunks: [], entities: [], graphContext: "" };

@@ -113,6 +113,10 @@ export async function saveAISettings(config: AISettings): Promise<void> {
     });
   }
 
+  // Clear the settings cache so new settings take effect immediately
+  const { clearSettingsCache } = await import("@/lib/ai/config");
+  clearSettingsCache();
+
   revalidatePath("/settings");
 }
 

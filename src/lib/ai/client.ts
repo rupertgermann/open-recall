@@ -4,6 +4,8 @@ import { z } from "zod";
 import {
   defaultChatConfig,
   defaultEmbeddingConfig,
+  getChatConfigFromDB,
+  getEmbeddingConfigFromDB,
   type ChatConfig,
   type EmbeddingConfig,
   ENTITY_TYPES,
@@ -259,4 +261,49 @@ ${context}`;
   for await (const chunk of (await result).textStream) {
     yield chunk;
   }
+}
+
+// ============================================================================
+// DATABASE-BACKED WRAPPERS
+// These functions automatically load settings from the database
+// ============================================================================
+
+/**
+ * Generate summary using database-stored AI settings
+ */
+export async function generateSummaryWithDBConfig(content: string): Promise<string> {
+  const config = await getChatConfigFromDB();
+  return generateSummary(content, config);
+}
+
+/**
+ * Extract entities and relationships using database-stored AI settings
+ */
+export async function extractEntitiesWithDBConfig(content: string): Promise<ExtractionResult> {
+  const config = await getChatConfigFromDB();
+  return extractEntitiesAndRelationships(content, config);
+}
+
+/**
+ * Generate flashcards using database-stored AI settings
+ */
+export async function generateFlashcardsWithDBConfig(content: string, count: number = 5): Promise<Flashcard[]> {
+  const config = await getChatConfigFromDB();
+  return generateFlashcards(content, count, config);
+}
+
+/**
+ * Generate single embedding using database-stored AI settings
+ */
+export async function generateEmbeddingWithDBConfig(text: string): Promise<number[]> {
+  const config = await getEmbeddingConfigFromDB();
+  return generateEmbedding(text, config);
+}
+
+/**
+ * Generate multiple embeddings using database-stored AI settings
+ */
+export async function generateEmbeddingsWithDBConfig(texts: string[]): Promise<number[][]> {
+  const config = await getEmbeddingConfigFromDB();
+  return generateEmbeddings(texts, config);
 }

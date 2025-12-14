@@ -4,9 +4,9 @@ import { eq, and } from "drizzle-orm";
 import { extractFromUrl } from "@/lib/content/extractor";
 import { chunkByParagraphs } from "@/lib/content/chunker";
 import {
-  generateSummary,
-  generateEmbeddings,
-  extractEntitiesAndRelationships,
+  generateSummaryWithDBConfig,
+  generateEmbeddingsWithDBConfig,
+  extractEntitiesWithDBConfig,
 } from "@/lib/ai";
 
 export const runtime = "nodejs";
@@ -85,7 +85,7 @@ export async function POST(req: Request) {
         
         let summary: string | null = null;
         try {
-          summary = await generateSummary(content.slice(0, 8000));
+          summary = await generateSummaryWithDBConfig(content.slice(0, 8000));
           controller.enqueue(encoder.encode(createSSEMessage("summarizing", "Summary generated successfully", 45)));
           
           await db
@@ -105,7 +105,7 @@ export async function POST(req: Request) {
         };
         
         try {
-          extractedData = await extractEntitiesAndRelationships(content.slice(0, 8000));
+          extractedData = await extractEntitiesWithDBConfig(content.slice(0, 8000));
           controller.enqueue(encoder.encode(createSSEMessage(
             "extracting",
             `Found ${extractedData.entities.length} entities, ${extractedData.relationships.length} relationships`,
@@ -123,7 +123,7 @@ export async function POST(req: Request) {
         let chunkEmbeddings: number[][] = [];
         
         try {
-          chunkEmbeddings = await generateEmbeddings(chunkContents);
+          chunkEmbeddings = await generateEmbeddingsWithDBConfig(chunkContents);
           controller.enqueue(encoder.encode(createSSEMessage("embedding", `Generated ${chunkEmbeddings.length} embeddings`, 75)));
         } catch (error) {
           // Continue without embeddings
@@ -170,7 +170,7 @@ export async function POST(req: Request) {
           let entityEmbeddings: number[][] = [];
           
           try {
-            entityEmbeddings = await generateEmbeddings(entityTexts);
+            entityEmbeddings = await generateEmbeddingsWithDBConfig(entityTexts);
           } catch (error) {
             // Continue without embeddings
           }

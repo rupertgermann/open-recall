@@ -57,6 +57,83 @@ export const defaultAIConfig: AIConfig = {
   embedding: defaultEmbeddingConfig,
 };
 
+// ============================================================================
+// DATABASE-BACKED CONFIGURATION LOADERS
+// ============================================================================
+
+// Cache for settings to avoid repeated DB calls within the same request
+let cachedSettings: { chat: ChatConfig; embedding: ChatConfig; openaiApiKey?: string } | null = null;
+let cacheTimestamp = 0;
+const CACHE_TTL_MS = 5000; // 5 second cache
+
+/**
+ * Load AI settings from the database.
+ * Falls back to environment-based defaults if DB settings are unavailable.
+ */
+export async function loadAISettingsFromDB(): Promise<{ chat: ChatConfig; embedding: EmbeddingConfig; openaiApiKey?: string }> {
+  // Check cache first
+  const now = Date.now();
+  if (cachedSettings && (now - cacheTimestamp) < CACHE_TTL_MS) {
+    return cachedSettings as { chat: ChatConfig; embedding: EmbeddingConfig; openaiApiKey?: string };
+  }
+
+  try {
+    // Dynamic import to avoid circular dependencies
+    const { getAISettings } = await import("@/actions/settings");
+    const settings = await getAISettings();
+
+    const chatConfig: ChatConfig = {
+      provider: settings.chat.provider,
+      baseUrl: settings.chat.baseUrl,
+      model: settings.chat.model,
+      apiKey: settings.chat.provider === "openai" 
+        ? (settings.openaiApiKey || settings.chat.apiKey) 
+        : settings.chat.apiKey,
+    };
+
+    const embeddingConfig: EmbeddingConfig = {
+      provider: settings.embedding.provider,
+      baseUrl: settings.embedding.baseUrl,
+      model: settings.embedding.model,
+      apiKey: settings.embedding.provider === "openai"
+        ? (settings.openaiApiKey || settings.embedding.apiKey)
+        : settings.embedding.apiKey,
+    };
+
+    cachedSettings = { chat: chatConfig, embedding: embeddingConfig, openaiApiKey: settings.openaiApiKey };
+    cacheTimestamp = now;
+
+    return { chat: chatConfig, embedding: embeddingConfig, openaiApiKey: settings.openaiApiKey };
+  } catch (error) {
+    console.error("Failed to load AI settings from DB, using defaults:", error);
+    return { chat: defaultChatConfig, embedding: defaultEmbeddingConfig };
+  }
+}
+
+/**
+ * Get chat configuration from database settings.
+ */
+export async function getChatConfigFromDB(): Promise<ChatConfig> {
+  const settings = await loadAISettingsFromDB();
+  return settings.chat;
+}
+
+/**
+ * Get embedding configuration from database settings.
+ */
+export async function getEmbeddingConfigFromDB(): Promise<EmbeddingConfig> {
+  const settings = await loadAISettingsFromDB();
+  return settings.embedding;
+}
+
+/**
+ * Clear the settings cache (useful after saving new settings).
+ */
+export function clearSettingsCache(): void {
+  cachedSettings = null;
+  cacheTimestamp = 0;
+}
+
 // Entity types for extraction
 export const ENTITY_TYPES = [
   "person",

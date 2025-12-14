@@ -1,15 +1,36 @@
 import { streamText } from "ai";
 import { createOpenAI } from "@ai-sdk/openai";
 import { retrieveContext, buildPromptContext } from "@/actions/chat";
+import { getChatConfigFromDB, type ChatConfig } from "@/lib/ai/config";
 
-// Create AI client for local Ollama
-const ollama = createOpenAI({
-  baseURL: process.env.AI_BASE_URL || "http://localhost:11434/v1",
-  apiKey: "ollama", // Ollama doesn't need a real key
-});
+// Helper to create AI client from config
+function createAIClient(config: ChatConfig) {
+  return createOpenAI({
+    baseURL: config.baseUrl,
+    apiKey: config.apiKey || "ollama",
+  });
+}
+
+// Helper to get model instance based on provider
+function getModelFromConfig(config: ChatConfig) {
+  const client = createAIClient(config);
+  
+  // Use responses API for OpenAI, default for others
+  if (config.provider === "openai") {
+    const anyClient = client as unknown as { responses?: (modelId: string) => unknown };
+    if (typeof anyClient.responses === "function") {
+      return anyClient.responses(config.model);
+    }
+  }
+  
+  return client(config.model);
+}
 
 export async function POST(req: Request) {
   const { messages } = await req.json();
+
+  // Load chat configuration from database
+  const chatConfig = await getChatConfigFromDB();
 
   // Get the latest user message for retrieval
   const lastUserMessage = messages.filter((m: { role: string }) => m.role === "user").pop();
@@ -43,8 +64,11 @@ Guidelines:
 - Be concise but thorough in your responses.
 - If you're unsure about something, acknowledge the uncertainty.`;
 
+  // Get model from DB-backed config
+  const model = getModelFromConfig(chatConfig);
+
   const result = streamText({
-    model: ollama(process.env.AI_MODEL || "llama3.2:8b"),
+    model: model as Parameters<typeof streamText>[0]["model"],
     system: systemPrompt,
     messages,
   });
