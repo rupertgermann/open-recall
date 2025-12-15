@@ -5,7 +5,7 @@
 
 import { db } from "@/db";
 import { embeddingCache } from "@/db/schema";
-import { eq, and } from "drizzle-orm";
+import { eq, and, inArray } from "drizzle-orm";
 import { createHash } from "crypto";
 import { metricsCollector } from "./metrics";
 
@@ -151,19 +151,20 @@ export async function batchGetOrCreateEmbeddings(
   const results: (number[] | null)[] = new Array(texts.length).fill(null);
   let cacheHits = 0;
 
-  // Batch query cache
+  // Batch query cache - only fetch the hashes we need
   try {
     const cachedEntries = await db
       .select()
       .from(embeddingCache)
       .where(
         and(
+          inArray(embeddingCache.contentHash, hashes),
           eq(embeddingCache.model, model),
           eq(embeddingCache.purpose, purpose)
         )
       );
 
-    // Build lookup map
+    // Build lookup map from results
     const cacheMap = new Map<string, number[]>();
     for (const entry of cachedEntries) {
       cacheMap.set(entry.contentHash, entry.embedding);
@@ -177,6 +178,8 @@ export async function batchGetOrCreateEmbeddings(
         cacheHits++;
       }
     }
+    
+    metricsCollector.log(`[CACHE] Batch lookup: ${cacheHits}/${hashes.length} cache hits`);
   } catch (error) {
     metricsCollector.log(`[CACHE] Error batch fetching cached embeddings: ${error}`);
   }

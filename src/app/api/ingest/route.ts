@@ -81,6 +81,7 @@ export async function POST(req: Request) {
           .returning();
 
         // Step 3: Structure-aware chunking (Phase 1)
+        console.log("[INGEST] Using new structure-aware chunking");
         controller.enqueue(encoder.encode(createSSEMessage("chunking", "Splitting content into chunks...", 25)));
         
         const textChunks = chunkStructured(content, {
@@ -108,9 +109,11 @@ export async function POST(req: Request) {
         controller.enqueue(encoder.encode(createSSEMessage("summarizing", "Generating AI summary...", 35)));
         
         let summary: string | null = null;
+        const summaryStart = Date.now();
         try {
           summary = await generateSummaryWithDBConfig(content.slice(0, 8000));
-          controller.enqueue(encoder.encode(createSSEMessage("summarizing", "Summary generated successfully", 45)));
+          const summaryMs = Date.now() - summaryStart;
+          controller.enqueue(encoder.encode(createSSEMessage("summarizing", `Summary generated in ${summaryMs}ms`, 45)));
           
           await db
             .update(documents)
@@ -128,11 +131,13 @@ export async function POST(req: Request) {
           relationships: { source: string; target: string; type: string; description: string | null }[];
         };
         
+        const extractStart = Date.now();
         try {
           extractedData = await extractEntitiesWithDBConfig(content.slice(0, 8000));
+          const extractMs = Date.now() - extractStart;
           controller.enqueue(encoder.encode(createSSEMessage(
             "extracting",
-            `Found ${extractedData.entities.length} entities, ${extractedData.relationships.length} relationships`,
+            `Found ${extractedData.entities.length} entities, ${extractedData.relationships.length} relationships in ${extractMs}ms`,
             60
           )));
         } catch (error) {
