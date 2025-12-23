@@ -75,12 +75,27 @@ export async function getGraphData(options?: { tags?: string[] }): Promise<Graph
     .from(relationships);
 
   if (requestedTags.length === 0) {
-    return {
-      nodes: entitiesWithCounts.map((e) => ({
+    const connectedIds = new Set<string>();
+    for (const l of allRelationships) {
+      connectedIds.add(l.source);
+      connectedIds.add(l.target);
+    }
+
+    const filteredNodes = entitiesWithCounts
+      .filter((e) => connectedIds.has(e.id))
+      .map((e) => ({
         ...e,
         mentionCount: Number(e.mentionCount) || 0,
-      })),
-      links: allRelationships,
+      }));
+
+    const allowedEntityIds = new Set(filteredNodes.map((n) => n.id));
+    const filteredLinks = allRelationships.filter(
+      (l) => allowedEntityIds.has(l.source) && allowedEntityIds.has(l.target)
+    );
+
+    return {
+      nodes: filteredNodes,
+      links: filteredLinks,
     };
   }
 
@@ -89,12 +104,27 @@ export async function getGraphData(options?: { tags?: string[] }): Promise<Graph
     (l) => allowedEntityIds.has(l.source) && allowedEntityIds.has(l.target)
   );
 
-  return {
-    nodes: entitiesWithCounts.map((e) => ({
+  const connectedIds = new Set<string>();
+  for (const l of filteredLinks) {
+    connectedIds.add(l.source);
+    connectedIds.add(l.target);
+  }
+
+  const filteredNodes = entitiesWithCounts
+    .filter((e) => connectedIds.has(e.id))
+    .map((e) => ({
       ...e,
       mentionCount: Number(e.mentionCount) || 0,
-    })),
-    links: filteredLinks,
+    }));
+
+  const filteredNodeIds = new Set(filteredNodes.map((n) => n.id));
+  const filteredLinks2 = filteredLinks.filter(
+    (l) => filteredNodeIds.has(l.source) && filteredNodeIds.has(l.target)
+  );
+
+  return {
+    nodes: filteredNodes,
+    links: filteredLinks2,
   };
 }
 
