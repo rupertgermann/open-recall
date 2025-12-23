@@ -301,16 +301,44 @@ export default function GraphPage() {
   const handleZoomIn = useCallback(() => {
     if (graphRef.current) {
       const currentZoom = graphRef.current.zoom();
-      graphRef.current.zoom(currentZoom * 1.2, 400);
+      const newZoom = currentZoom * 1.5;
+
+      if (selectedNode) {
+        const graphInstance = graphRef.current;
+        const internalData = (graphInstance as any)._graphData || forceGraphData;
+        const internalNode = internalData.nodes.find((n: any) => n.id === selectedNode.id);
+        
+        if (internalNode && internalNode.x !== undefined && internalNode.y !== undefined) {
+          graphInstance.centerAt(internalNode.x, internalNode.y, 400);
+          graphInstance.zoom(newZoom, 400);
+          return;
+        }
+      }
+      
+      graphRef.current.zoom(newZoom, 400);
     }
-  }, []);
+  }, [selectedNode, forceGraphData]);
 
   const handleZoomOut = useCallback(() => {
     if (graphRef.current) {
       const currentZoom = graphRef.current.zoom();
-      graphRef.current.zoom(currentZoom / 1.2, 400);
+      const newZoom = currentZoom / 1.2;
+
+      if (selectedNode) {
+        const graphInstance = graphRef.current;
+        const internalData = (graphInstance as any)._graphData || forceGraphData;
+        const internalNode = internalData.nodes.find((n: any) => n.id === selectedNode.id);
+        
+        if (internalNode && internalNode.x !== undefined && internalNode.y !== undefined) {
+          graphInstance.centerAt(internalNode.x, internalNode.y, 400);
+          graphInstance.zoom(newZoom, 400);
+          return;
+        }
+      }
+
+      graphRef.current.zoom(newZoom, 400);
     }
-  }, []);
+  }, [selectedNode, forceGraphData]);
 
   // Zoom to and center on the selected node
   const handleZoomToNode = useCallback(() => {

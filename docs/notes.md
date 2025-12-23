@@ -19,3 +19,5 @@
 - filter graph by category/tag option
 
 - add zoom in/out buttons next to the zoom-to-node button in entity details
+
+- show nodes titles with most connections in a cluster overlay (bigger bold font, semi transparent) when graph is zoomed out
