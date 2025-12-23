@@ -211,6 +211,23 @@ export default function GraphPage() {
                     const minRadius = maxRadius * 0.05; // Minimum size is 33% of max size (6.67px when max is 20px)
                     const r = Math.max(minRadius, Math.min(baseRadius, maxRadius)); // Cap both min and max
                     
+                    // Draw glow effect for selected node
+                    const isSelected = selectedNode && selectedNode.id === (node as any).id;
+                    if (isSelected) {
+                      // Glow parameters - adjust these to customize the effect
+                      const glowColor = typeColors[(node as any).type || "concept"] || "#888";
+                      const glowRadius = 20 / globalScale; // Glow size (increase for more prominent glow)
+                      const glowOpacity = 0.4; // Glow transparency (0.1 = subtle, 0.5 = prominent)
+                      
+                      // Draw multiple circles for glow effect
+                      for (let i = 3; i > 0; i--) {
+                        ctx.beginPath();
+                        ctx.arc(node.x || 0, node.y || 0, r + (glowRadius * i / 3), 0, 2 * Math.PI, false);
+                        ctx.fillStyle = glowColor + Math.floor(glowOpacity * 255 / i).toString(16).padStart(2, '0');
+                        ctx.fill();
+                      }
+                    }
+                    
                     ctx.beginPath();
                     ctx.arc(node.x || 0, node.y || 0, r, 0, 2 * Math.PI, false);
                     ctx.fillStyle = typeColors[(node as any).type || "concept"] || "#888";
