@@ -215,15 +215,28 @@ export default function GraphPage() {
                     const isSelected = selectedNode && selectedNode.id === (node as any).id;
                     if (isSelected) {
                       // Glow parameters - adjust these to customize the effect
-                      const glowColor = typeColors[(node as any).type || "concept"] || "#888";
+                      const baseColor = typeColors[(node as any).type || "concept"] || "#888";
                       const glowRadius = 20 / globalScale; // Glow size (increase for more prominent glow)
                       const glowOpacity = 0.4; // Glow transparency (0.1 = subtle, 0.5 = prominent)
+                      
+                      // Convert hex to RGB and add alpha channel
+                      const hexToRgb = (hex: string) => {
+                        const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
+                        return result ? {
+                          r: parseInt(result[1], 16),
+                          g: parseInt(result[2], 16),
+                          b: parseInt(result[3], 16)
+                        } : { r: 136, g: 136, b: 136 }; // Default to #888
+                      };
+                      
+                      const rgb = hexToRgb(baseColor);
                       
                       // Draw multiple circles for glow effect
                       for (let i = 3; i > 0; i--) {
                         ctx.beginPath();
                         ctx.arc(node.x || 0, node.y || 0, r + (glowRadius * i / 3), 0, 2 * Math.PI, false);
-                        ctx.fillStyle = glowColor + Math.floor(glowOpacity * 255 / i).toString(16).padStart(2, '0');
+                        const alpha = Math.floor(glowOpacity * 255 / i);
+                        ctx.fillStyle = `rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, ${alpha / 255})`;
                         ctx.fill();
                       }
                     }
