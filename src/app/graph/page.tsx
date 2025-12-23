@@ -3,8 +3,9 @@
 import { useState, useCallback, useMemo, useEffect, useRef } from "react";
 import dynamic from "next/dynamic";
 import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 import { Search, Loader2, RefreshCw } from "lucide-react";
-import { getGraphData, getEntityDetails, type GraphData, type GraphNode } from "@/actions/graph";
+import { getGraphData, getDocumentGraph, getEntityDetails, type GraphData, type GraphNode } from "@/actions/graph";
 import { Header } from "@/components/layout/header";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -38,6 +39,8 @@ const typeColors: Record<string, string> = {
 };
 
 export default function GraphPage() {
+  const searchParams = useSearchParams();
+  const focusDocumentId = searchParams.get("focus");
   const [graphData, setGraphData] = useState<GraphData>({ nodes: [], links: [] });
   const [isLoading, setIsLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState("");
@@ -46,6 +49,7 @@ export default function GraphPage() {
   const [filterType, setFilterType] = useState<string | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const [dimensions, setDimensions] = useState({ width: 0, height: 0 });
+  const graphRef = useRef<any>(null);
 
   useEffect(() => {
     if (!containerRef.current) return;
@@ -71,7 +75,9 @@ export default function GraphPage() {
     async function fetchGraph() {
       setIsLoading(true);
       try {
-        const data = await getGraphData();
+        const data = focusDocumentId 
+          ? await getDocumentGraph(focusDocumentId)
+          : await getGraphData();
         setGraphData(data);
       } catch (error) {
         console.error("Failed to fetch graph:", error);
@@ -80,9 +86,17 @@ export default function GraphPage() {
       }
     }
     fetchGraph();
-  }, []);
+  }, [focusDocumentId]);
 
-  // Fetch entity details when selected
+  // Center graph when focused data loads
+  useEffect(() => {
+    if (focusDocumentId && !isLoading && graphRef.current && graphData.nodes.length > 0) {
+      // Center and zoom to fit all nodes
+      setTimeout(() => {
+        graphRef.current?.zoomToFit(400);
+      }, 100);
+    }
+  }, [focusDocumentId, isLoading, graphData.nodes.length]);
   useEffect(() => {
     async function fetchDetails() {
       if (!selectedNode) {
@@ -155,7 +169,7 @@ export default function GraphPage() {
     <div className="min-h-screen flex flex-col">
       <Header />
 
-      <main className="flex-1 container mx-auto px-4 py-6 flex gap-6">
+      <main className="flex-1 flex gap-6 px-6 py-6">
         {/* Graph Canvas */}
         <div className="flex-1 relative">
           <Card className="h-[calc(100vh-12rem)]">
@@ -173,6 +187,7 @@ export default function GraphPage() {
                 </div>
               ) : (
                 <ForceGraph2D
+                  ref={graphRef}
                   width={dimensions.width}
                   height={dimensions.height}
                   graphData={forceGraphData}
@@ -191,7 +206,7 @@ export default function GraphPage() {
                     const bckgDimensions = [textWidth, fontSize].map(n => n + fontSize * 0.2); // some padding
 
                     // Draw Node
-                    const r = Math.sqrt(Math.max(0, node.val || 5)) * 4;
+                    const r = Math.sqrt(Math.max(0, node.val || 5)) * 0.4; // Reduced by 90% (from *4 to *0.4)
                     ctx.beginPath();
                     ctx.arc(node.x || 0, node.y || 0, r, 0, 2 * Math.PI, false);
                     ctx.fillStyle = typeColors[(node as any).type || "concept"] || "#888";

@@ -96,7 +96,7 @@ export async function getDocumentGraph(documentId: string): Promise<GraphData> {
     })
     .from(relationships)
     .where(
-      sql`${relationships.sourceEntityId} IN ${entityIds} OR ${relationships.targetEntityId} IN ${entityIds}`
+      sql`${relationships.sourceEntityId} IN ${entityIds} AND ${relationships.targetEntityId} IN ${entityIds}`
     );
 
   return {
