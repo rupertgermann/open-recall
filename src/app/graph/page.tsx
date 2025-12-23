@@ -339,7 +339,7 @@ export default function GraphPage() {
     <div className="min-h-screen flex flex-col">
       <Header />
 
-      <main className="flex-1 flex gap-6 px-6 py-6">
+      <main className="flex-1 flex gap-1 px-1 py-1">
         {/* Graph Canvas */}
         <div className="flex-1 relative">
           <Card className="h-[calc(100vh-12rem)]">
@@ -453,8 +453,8 @@ export default function GraphPage() {
           </Card>
 
           {/* Header Controls & Stats */}
-          <div className="absolute top-0 left-0 right-0 z-10">
-            <div className="flex flex-wrap items-center gap-2 p-2 rounded-lg bg-background/80 backdrop-blur border shadow-sm">
+          <div className="absolute top-0 left-0 right-0 z-10 border-b bg-background/80 backdrop-blur">
+            <div className="flex flex-wrap items-center gap-2 p-2">
               {/* Search */}
               <div className="relative flex-shrink-0">
                 <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
