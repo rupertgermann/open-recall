@@ -8,9 +8,11 @@ import { extractFromUrl, detectContentType } from "@/lib/content/extractor";
 import {
   generateSummaryWithDBConfig,
   extractEntitiesWithDBConfig,
+  generateTagsWithDBConfig,
   type ExtractedEntity,
   type ExtractedRelationship,
 } from "@/lib/ai";
+import { updateDocumentTags } from "@/actions/documents";
 import {
   chunkStructured,
   generateRetrievalEmbeddings,
@@ -178,6 +180,16 @@ async function processDocument(documentId: string, content: string): Promise<voi
         embeddingVersion: "1.0",
       })
       .where(eq(documents.id, documentId));
+
+    try {
+      const tagText = (summary || content).slice(0, 8000);
+      const aiTags = await generateTagsWithDBConfig({ title: document.title, summary, content: tagText });
+      if (aiTags.length > 0) {
+        await updateDocumentTags(documentId, aiTags);
+      }
+    } catch (error) {
+      console.error("Tag generation failed:", error);
+    }
 
     // Phase 5: Extract entities from summary (not raw text) for efficiency
     metricsCollector.startTimer("entityExtraction");

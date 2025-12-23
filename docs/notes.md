@@ -15,3 +15,5 @@
 - filter graph by category/tag option
 
 implement ai tagging during document ingestion
+
+don't show entities in graph that are not related to other entities

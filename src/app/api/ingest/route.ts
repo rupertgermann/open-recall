@@ -5,7 +5,9 @@ import { extractFromUrl } from "@/lib/content/extractor";
 import {
   generateSummaryWithDBConfig,
   extractEntitiesWithDBConfig,
+  generateTagsWithDBConfig,
 } from "@/lib/ai";
+import { updateDocumentTags } from "@/actions/documents";
 import {
   chunkStructured,
   generateRetrievalEmbeddings,
@@ -121,6 +123,21 @@ export async function POST(req: Request) {
             .where(eq(documents.id, doc.id));
         } catch (error) {
           controller.enqueue(encoder.encode(createSSEMessage("summarizing", "Summary generation skipped (AI unavailable)", 45)));
+        }
+
+        controller.enqueue(encoder.encode(createSSEMessage("tagging", "Generating tags...", 47)));
+
+        try {
+          const tagText = (summary || content).slice(0, 8000);
+          const aiTags = await generateTagsWithDBConfig({ title, summary, content: tagText });
+          if (aiTags.length > 0) {
+            await updateDocumentTags(doc.id, aiTags);
+            controller.enqueue(encoder.encode(createSSEMessage("tagging", `Generated ${aiTags.length} tags`, 49)));
+          } else {
+            controller.enqueue(encoder.encode(createSSEMessage("tagging", "No tags generated", 49)));
+          }
+        } catch (error) {
+          controller.enqueue(encoder.encode(createSSEMessage("tagging", "Tag generation skipped (AI unavailable)", 49)));
         }
 
         // Step 5: Entity Extraction
