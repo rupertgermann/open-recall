@@ -149,7 +149,7 @@ export default function GraphPage() {
       id: n.id,
       name: n.name,
       type: n.type,
-      val: Math.max(5, n.mentionCount * 3 + 5),
+      val: Math.min(Math.max(5, n.mentionCount * 3 + 5), 50), // Cap at 50 to prevent oversized nodes
     })),
     links: filteredData.links.map((l) => ({
       source: l.source,
@@ -197,7 +197,7 @@ export default function GraphPage() {
                   linkColor={() => "#888"}
                   linkWidth={1}
                   onNodeClick={(node) => handleNodeClick(node as any)}
-                  nodeCanvasObjectMode={() => "after"}
+                  nodeCanvasObjectMode={() => "replace"}
                   nodeCanvasObject={(node: { x?: number; y?: number; name?: string; type?: string; val?: number }, ctx: CanvasRenderingContext2D, globalScale: number) => {
                     const label = node.name || "";
                     const fontSize = 14 / globalScale; // Increased font size
@@ -206,7 +206,11 @@ export default function GraphPage() {
                     const bckgDimensions = [textWidth, fontSize].map(n => n + fontSize * 0.2); // some padding
 
                     // Draw Node
-                    const r = Math.sqrt(Math.max(0, node.val || 5)) * 0.4; // Reduced by 90% (from *4 to *0.4)
+                    const baseRadius = Math.sqrt(Math.max(0, node.val || 5)) * 0.4; // Reduced by 90% (from *4 to *0.4)
+                    const maxRadius = 100 / globalScale; // Cap at 20px, adjusted for zoom
+                    const minRadius = maxRadius * 0.05; // Minimum size is 33% of max size (6.67px when max is 20px)
+                    const r = Math.max(minRadius, Math.min(baseRadius, maxRadius)); // Cap both min and max
+                    
                     ctx.beginPath();
                     ctx.arc(node.x || 0, node.y || 0, r, 0, 2 * Math.PI, false);
                     ctx.fillStyle = typeColors[(node as any).type || "concept"] || "#888";
