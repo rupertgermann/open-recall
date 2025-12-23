@@ -281,7 +281,7 @@ export default function GraphPage() {
     if (internalNode && internalNode.x !== undefined && internalNode.y !== undefined) {
       // Center on the node and zoom in for focus
       graphInstance.centerAt(internalNode.x, internalNode.y, 500);
-      graphInstance.zoom(2, 500);
+      graphInstance.zoom(5, 500);
     }
   }, [selectedNode, forceGraphData]);
 
