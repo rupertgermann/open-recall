@@ -1,7 +1,7 @@
 "use client";
 
-import { useState, useRef } from "react";
-import { useRouter } from "next/navigation";
+import { useState, useRef, useEffect } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import { FileText, Link as LinkIcon, Loader2, CheckCircle, AlertCircle, Circle } from "lucide-react";
 import { Header } from "@/components/layout/header";
 import { Button } from "@/components/ui/button";
@@ -32,6 +32,7 @@ const STEP_LABELS: Record<string, string> = {
 
 export default function AddPage() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const [contentType, setContentType] = useState<ContentType>("url");
   const [url, setUrl] = useState("");
   const [text, setText] = useState("");
@@ -41,6 +42,28 @@ export default function AddPage() {
   const [completedSteps, setCompletedSteps] = useState<Set<string>>(new Set());
   const [error, setError] = useState<string | null>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
+
+  const hasAutoStartedRef = useRef(false);
+
+  useEffect(() => {
+    const qpUrl = searchParams.get("url");
+    const qpStart = searchParams.get("start");
+    if (!qpUrl) return;
+
+    setContentType("url");
+    setUrl(qpUrl);
+
+    if (qpStart === "1" && !hasAutoStartedRef.current) {
+      hasAutoStartedRef.current = true;
+      // Let state update settle before submitting.
+      setTimeout(() => {
+        const form = document.querySelector("form");
+        if (form) {
+          form.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+        }
+      }, 0);
+    }
+  }, [searchParams]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();

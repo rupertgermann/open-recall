@@ -3,12 +3,11 @@
 import { useState, useCallback, useMemo, useEffect, useRef } from "react";
 import dynamic from "next/dynamic";
 import Link from "next/link";
-import { useSearchParams } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { Search, Loader2, RefreshCw, Focus, X, RotateCcw, ZoomIn, ZoomOut } from "lucide-react";
 import { getGraphData, getDocumentGraph, getEntityDetails, type GraphData, type GraphNode } from "@/actions/graph";
 import { getAllTags } from "@/actions/documents";
 import { aiWebSearchForEntity, type WebSearchResult } from "@/actions/websearch";
-import { ingestUrl } from "@/actions/ingest";
 import { Header } from "@/components/layout/header";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -56,6 +55,7 @@ const CLUSTER_TITLE_MIN_DEGREE = 8;
 const CLUSTER_TITLE_OPACITY = 0.3;
 
 export default function GraphPage() {
+  const router = useRouter();
   const searchParams = useSearchParams();
   const focusDocumentId = searchParams.get("focus");
   const focusEntityId = searchParams.get("entity");
@@ -72,6 +72,9 @@ export default function GraphPage() {
   const [isTagDropdownOpen, setIsTagDropdownOpen] = useState(false);
   const [tagActiveIndex, setTagActiveIndex] = useState(0);
   const [webSearchResults, setWebSearchResults] = useState<WebSearchResult[]>([]);
+  const [webSearchCacheByEntityId, setWebSearchCacheByEntityId] = useState<Record<string, WebSearchResult[]>>({});
+  const [webSearchAdditionalPrompt, setWebSearchAdditionalPrompt] = useState("");
+  const [webSearchAdditionalPromptByEntityId, setWebSearchAdditionalPromptByEntityId] = useState<Record<string, string>>({});
   const [isWebSearching, setIsWebSearching] = useState(false);
   const [isAddingUrl, setIsAddingUrl] = useState<Record<string, boolean>>({});
   const containerRef = useRef<HTMLDivElement>(null);
@@ -221,6 +224,7 @@ export default function GraphPage() {
       if (!selectedNode) {
         setSelectedDetails(null);
         setWebSearchResults([]);
+        setWebSearchAdditionalPrompt("");
         return;
       }
       try {
@@ -233,6 +237,12 @@ export default function GraphPage() {
     fetchDetails();
   }, [selectedNode]);
 
+  useEffect(() => {
+    if (!selectedNode) return;
+    setWebSearchResults(webSearchCacheByEntityId[selectedNode.id] || []);
+    setWebSearchAdditionalPrompt(webSearchAdditionalPromptByEntityId[selectedNode.id] || "");
+  }, [selectedNode, webSearchCacheByEntityId, webSearchAdditionalPromptByEntityId]);
+
   const handleAiWebSearch = useCallback(async () => {
     if (!selectedNode) return;
     setIsWebSearching(true);
@@ -240,9 +250,11 @@ export default function GraphPage() {
       const results = await aiWebSearchForEntity({
         entityName: selectedNode.name,
         entityType: selectedNode.type,
+        additionalPrompt: webSearchAdditionalPrompt,
         maxResults: 6,
       });
       setWebSearchResults(results);
+      setWebSearchCacheByEntityId((prev) => ({ ...prev, [selectedNode.id]: results }));
 
       if (results.length === 0) {
         toast({
@@ -259,20 +271,14 @@ export default function GraphPage() {
     } finally {
       setIsWebSearching(false);
     }
-  }, [selectedNode, toast]);
+  }, [selectedNode, toast, webSearchAdditionalPrompt]);
 
   const handleAddSearchResult = useCallback(
     async (url: string) => {
       setIsAddingUrl((prev) => ({ ...prev, [url]: true }));
       try {
-        const res = await ingestUrl(url);
-        if (!res.success) {
-          throw new Error(res.error || "Failed to add URL");
-        }
-        toast({
-          title: "Added to library",
-          description: "Ingestion started.",
-        });
+        const qs = new URLSearchParams({ url, start: "1" });
+        router.push(`/add?${qs.toString()}`);
       } catch (e) {
         toast({
           title: "Failed to add",
@@ -283,7 +289,7 @@ export default function GraphPage() {
         setIsAddingUrl((prev) => ({ ...prev, [url]: false }));
       }
     },
-    [toast]
+    [router, toast]
   );
 
   const handleRefresh = async () => {
@@ -584,7 +590,13 @@ export default function GraphPage() {
                     />
 
                     {!focusDocumentId && isTagDropdownOpen && (
-                      <div className="absolute left-0 right-0 top-full mt-1 z-20 rounded-md border bg-background shadow-sm">
+                      <div
+                        className="absolute left-0 right-0 top-full mt-1 z-20 rounded-md border bg-background shadow-sm"
+                        onMouseDown={(e) => {
+                          // Prevent input blur from closing the dropdown before click handlers run
+                          e.preventDefault();
+                        }}
+                      >
                         {(tagInput.trim().length === 0
                           ? availableTags
                               .filter((t) => !selectedTags.includes(t))
@@ -597,9 +609,14 @@ export default function GraphPage() {
                             <button
                               key={t}
                               type="button"
+                              onMouseDown={(e) => {
+                                // Keep focus on the input so blur doesn't close the menu
+                                e.preventDefault();
+                              }}
                               onClick={() => {
                                 setSelectedTags((prev) => [...prev, t]);
                                 setTagInput("");
+                                setIsTagDropdownOpen(false);
                               }}
                               className={`w-full px-2 py-1 text-left text-sm hover:bg-muted ${idx === tagActiveIndex ? "bg-muted" : ""}`}
                             >
@@ -958,6 +975,22 @@ export default function GraphPage() {
                         )}
                       </Button>
                     </div>
+
+                    <Input
+                      value={webSearchAdditionalPrompt}
+                      onChange={(e) => {
+                        const v = e.target.value;
+                        setWebSearchAdditionalPrompt(v);
+                        if (selectedNode) {
+                          setWebSearchAdditionalPromptByEntityId((prev) => ({
+                            ...prev,
+                            [selectedNode.id]: v,
+                          }));
+                        }
+                      }}
+                      placeholder="Additional prompt (optional)…"
+                      className="mb-2"
+                    />
 
                     {webSearchResults.length > 0 ? (
                       <div className="space-y-2">

@@ -20,6 +20,7 @@ export type WebSearchResult = z.infer<typeof webSearchResultsSchema>["results"][
 export async function aiWebSearchForEntity(input: {
   entityName: string;
   entityType?: string | null;
+  additionalPrompt?: string | null;
   maxResults?: number;
 }): Promise<WebSearchResult[]> {
   const cfg = await getChatConfigFromDB();
@@ -37,6 +38,7 @@ export async function aiWebSearchForEntity(input: {
 
   const maxResults = Math.max(1, Math.min(10, input.maxResults ?? 6));
   const entityType = (input.entityType || "").trim();
+  const additional = (input.additionalPrompt || "").trim();
 
   const { text } = await generateText({
     model,
@@ -44,7 +46,7 @@ export async function aiWebSearchForEntity(input: {
       "You are a research assistant. Use web search to find authoritative, relevant sources. Return concise snippets. Prefer primary sources and official documentation when possible.",
     prompt: `Find up to ${maxResults} good web sources about the following entity and return a short preview for each.
 
-Entity: ${input.entityName}${entityType ? `\nType: ${entityType}` : ""}
+Entity: ${input.entityName}${entityType ? `\nType: ${entityType}` : ""}${additional ? `\nAdditional prompt: ${additional}` : ""}
 
 Return STRICT JSON (no markdown, no commentary) with this shape:
 {
