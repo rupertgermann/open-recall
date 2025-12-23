@@ -311,6 +311,9 @@ export default function GraphPage() {
     setSelectedTypes([]);
     setSelectedTags([]);
     setTagInput("");
+    if (focusDocumentId || focusEntityId) {
+      router.push("/graph");
+    }
     // Optionally reset view to fit all nodes
     if (graphRef.current) {
       graphRef.current.zoomToFit(400);
