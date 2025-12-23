@@ -7,11 +7,14 @@ import { useSearchParams } from "next/navigation";
 import { Search, Loader2, RefreshCw, Focus, X, RotateCcw, ZoomIn, ZoomOut } from "lucide-react";
 import { getGraphData, getDocumentGraph, getEntityDetails, type GraphData, type GraphNode } from "@/actions/graph";
 import { getAllTags } from "@/actions/documents";
+import { aiWebSearchForEntity, type WebSearchResult } from "@/actions/websearch";
+import { ingestUrl } from "@/actions/ingest";
 import { Header } from "@/components/layout/header";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { useToast } from "@/hooks/use-toast";
 
 // Dynamically import the graph component to avoid SSR issues
 const ForceGraph2D = dynamic(() => import("react-force-graph-2d"), {
@@ -56,6 +59,7 @@ export default function GraphPage() {
   const searchParams = useSearchParams();
   const focusDocumentId = searchParams.get("focus");
   const focusEntityId = searchParams.get("entity");
+  const { toast } = useToast();
   const [graphData, setGraphData] = useState<GraphData>({ nodes: [], links: [] });
   const [isLoading, setIsLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState("");
@@ -67,6 +71,9 @@ export default function GraphPage() {
   const [availableTags, setAvailableTags] = useState<string[]>([]);
   const [isTagDropdownOpen, setIsTagDropdownOpen] = useState(false);
   const [tagActiveIndex, setTagActiveIndex] = useState(0);
+  const [webSearchResults, setWebSearchResults] = useState<WebSearchResult[]>([]);
+  const [isWebSearching, setIsWebSearching] = useState(false);
+  const [isAddingUrl, setIsAddingUrl] = useState<Record<string, boolean>>({});
   const containerRef = useRef<HTMLDivElement>(null);
   const [dimensions, setDimensions] = useState({ width: 0, height: 0 });
   const graphRef = useRef<any>(null);
@@ -213,6 +220,7 @@ export default function GraphPage() {
     async function fetchDetails() {
       if (!selectedNode) {
         setSelectedDetails(null);
+        setWebSearchResults([]);
         return;
       }
       try {
@@ -224,6 +232,59 @@ export default function GraphPage() {
     }
     fetchDetails();
   }, [selectedNode]);
+
+  const handleAiWebSearch = useCallback(async () => {
+    if (!selectedNode) return;
+    setIsWebSearching(true);
+    try {
+      const results = await aiWebSearchForEntity({
+        entityName: selectedNode.name,
+        entityType: selectedNode.type,
+        maxResults: 6,
+      });
+      setWebSearchResults(results);
+
+      if (results.length === 0) {
+        toast({
+          title: "No results",
+          description: "AI web search returned no results.",
+        });
+      }
+    } catch (e) {
+      toast({
+        title: "AI web search failed",
+        description: e instanceof Error ? e.message : "Unknown error",
+        variant: "destructive",
+      });
+    } finally {
+      setIsWebSearching(false);
+    }
+  }, [selectedNode, toast]);
+
+  const handleAddSearchResult = useCallback(
+    async (url: string) => {
+      setIsAddingUrl((prev) => ({ ...prev, [url]: true }));
+      try {
+        const res = await ingestUrl(url);
+        if (!res.success) {
+          throw new Error(res.error || "Failed to add URL");
+        }
+        toast({
+          title: "Added to library",
+          description: "Ingestion started.",
+        });
+      } catch (e) {
+        toast({
+          title: "Failed to add",
+          description: e instanceof Error ? e.message : "Unknown error",
+          variant: "destructive",
+        });
+      } finally {
+        setIsAddingUrl((prev) => ({ ...prev, [url]: false }));
+      }
+    },
+    [toast]
+  );
 
   const handleRefresh = async () => {
     setIsLoading(true);
@@ -878,6 +939,61 @@ export default function GraphPage() {
                       </div>
                     ) : (
                       <p className="text-sm text-muted-foreground">No documents</p>
+                    )}
+                  </div>
+
+                  <div>
+                    <div className="flex items-center justify-between gap-2 mb-2">
+                      <h4 className="text-sm font-medium">AI Websearch</h4>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={handleAiWebSearch}
+                        disabled={isWebSearching}
+                      >
+                        {isWebSearching ? (
+                          <Loader2 className="h-4 w-4 animate-spin" />
+                        ) : (
+                          "Do AI websearch"
+                        )}
+                      </Button>
+                    </div>
+
+                    {webSearchResults.length > 0 ? (
+                      <div className="space-y-2">
+                        {webSearchResults.map((r) => (
+                          <div key={r.url} className="rounded-lg border p-2">
+                            <div className="text-sm font-medium leading-snug">{r.title}</div>
+                            <div className="text-xs text-muted-foreground mt-1 line-clamp-3">{r.snippet}</div>
+                            <div className="flex items-center gap-2 mt-2">
+                              <a
+                                href={r.url}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="text-xs text-primary hover:underline truncate"
+                              >
+                                {r.url}
+                              </a>
+                              <Button
+                                size="sm"
+                                className="ml-auto"
+                                onClick={() => handleAddSearchResult(r.url)}
+                                disabled={!!isAddingUrl[r.url]}
+                              >
+                                {isAddingUrl[r.url] ? (
+                                  <Loader2 className="h-4 w-4 animate-spin" />
+                                ) : (
+                                  "Add to library"
+                                )}
+                              </Button>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <p className="text-sm text-muted-foreground">
+                        Use AI websearch to find relevant sources and add them to your library.
+                      </p>
                     )}
                   </div>
                 </div>
