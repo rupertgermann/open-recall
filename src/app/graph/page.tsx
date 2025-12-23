@@ -46,6 +46,11 @@ type GraphState = {
 
 const STORAGE_KEY = "open-recall-graph-state";
 
+const CLUSTER_VIEW_SCALE_START = 1.0;
+const CLUSTER_VIEW_SCALE_END = 1.6;
+const CLUSTER_TITLE_MIN_DEGREE = 8;
+const CLUSTER_TITLE_OPACITY = 0.3;
+
 export default function GraphPage() {
   const searchParams = useSearchParams();
   const focusDocumentId = searchParams.get("focus");
@@ -239,19 +244,31 @@ export default function GraphPage() {
   }, [graphData, filterType, searchQuery]);
 
   // Transform data for force graph
-  const forceGraphData = useMemo(() => ({
-    nodes: filteredData.nodes.map((n) => ({
-      id: n.id,
-      name: n.name,
-      type: n.type,
-      val: Math.min(Math.max(5, n.mentionCount * 3 + 5), 50), // Cap at 50 to prevent oversized nodes
-    })),
-    links: filteredData.links.map((l) => ({
-      source: l.source,
-      target: l.target,
-      label: l.relationType,
-    })),
-  }), [filteredData]);
+  const forceGraphData = useMemo(() => {
+    // Calculate node degrees
+    const degrees = new Map<string, number>();
+    filteredData.links.forEach((l) => {
+      const sourceId = typeof l.source === 'object' ? (l.source as any).id : l.source;
+      const targetId = typeof l.target === 'object' ? (l.target as any).id : l.target;
+      degrees.set(sourceId, (degrees.get(sourceId) || 0) + 1);
+      degrees.set(targetId, (degrees.get(targetId) || 0) + 1);
+    });
+
+    return {
+      nodes: filteredData.nodes.map((n) => ({
+        id: n.id,
+        name: n.name,
+        type: n.type,
+        val: Math.min(Math.max(5, n.mentionCount * 3 + 5), 50), // Cap at 50 to prevent oversized nodes
+        degree: degrees.get(n.id) || 0,
+      })),
+      links: filteredData.links.map((l) => ({
+        source: l.source,
+        target: l.target,
+        label: l.relationType,
+      })),
+    };
+  }, [filteredData]);
 
   const handleNodeClick = useCallback((node: { id: string; name: string; type: string }) => {
     const graphNode = graphData.nodes.find((n) => n.id === node.id);
@@ -471,12 +488,18 @@ export default function GraphPage() {
                   onNodeClick={(node) => handleNodeClick(node as any)}
                   onZoomEnd={handleZoomEnd}
                   nodeCanvasObjectMode={() => "replace"}
-                  nodeCanvasObject={(node: { x?: number; y?: number; name?: string; type?: string; val?: number }, ctx: CanvasRenderingContext2D, globalScale: number) => {
+                  nodeCanvasObject={(node: { x?: number; y?: number; name?: string; type?: string; val?: number; degree?: number }, ctx: CanvasRenderingContext2D, globalScale: number) => {
                     const label = node.name || "";
-                    const fontSize = 14 / globalScale; // Increased font size
-                    ctx.font = `${fontSize}px Sans-Serif`;
-                    const textWidth = ctx.measureText(label).width;
-                    const bckgDimensions = [textWidth, fontSize].map(n => n + fontSize * 0.2); // some padding
+
+                    const clamp01 = (v: number) => Math.max(0, Math.min(1, v));
+                    const blendT = clamp01(
+                      (globalScale - CLUSTER_VIEW_SCALE_START) /
+                        (CLUSTER_VIEW_SCALE_END - CLUSTER_VIEW_SCALE_START)
+                    );
+                    const clusterAlpha = 1 - blendT;
+                    const detailAlpha = blendT;
+
+                    const isHighDegree = (node.degree || 0) >= CLUSTER_TITLE_MIN_DEGREE;
 
                     // Draw Node
                     const baseRadius = Math.sqrt(Math.max(0, node.val || 5)) * 0.4; // Reduced by 90% (from *4 to *0.4)
@@ -519,35 +542,57 @@ export default function GraphPage() {
                     ctx.fillStyle = typeColors[(node as any).type || "concept"] || "#888";
                     ctx.fill();
 
-                    // Text Wrapping Logic
-                    const words = label.split(' ');
-                    const maxLineLength = 15; // characters
-                    let lines = [];
-                    let currentLine = words[0];
+                    // Text Rendering Logic
+                    // Cluster overlay (fades out as you zoom in)
+                    if (clusterAlpha > 0.01 && isHighDegree) {
+                      const overlayFontSize = Math.max(12, 24 / globalScale);
 
-                    for (let i = 1; i < words.length; i++) {
-                      if (currentLine.length + words[i].length + 1 < maxLineLength) {
-                        currentLine += ' ' + words[i];
-                      } else {
-                        lines.push(currentLine);
-                        currentLine = words[i];
+                      ctx.save();
+                      ctx.globalAlpha = ctx.globalAlpha * clusterAlpha;
+                      ctx.font = `bold ${overlayFontSize}px Sans-Serif`;
+                      ctx.textAlign = "center";
+                      ctx.textBaseline = "middle";
+                      ctx.fillStyle = `hsl(var(--foreground) / ${CLUSTER_TITLE_OPACITY})`;
+                      ctx.fillText(label, node.x || 0, node.y || 0);
+                      ctx.restore();
+                    }
+
+                    // Detail labels (fade in as you zoom in)
+                    if (detailAlpha > 0.01) {
+                      const fontSize = 14 / globalScale;
+                      ctx.font = `${fontSize}px Sans-Serif`;
+
+                      const words = label.split(" ");
+                      const maxLineLength = 15;
+                      let lines: string[] = [];
+                      let currentLine = words[0] || "";
+
+                      for (let i = 1; i < words.length; i++) {
+                        if (currentLine.length + words[i].length + 1 < maxLineLength) {
+                          currentLine += " " + words[i];
+                        } else {
+                          lines.push(currentLine);
+                          currentLine = words[i];
+                        }
                       }
-                    }
-                    lines.push(currentLine);
-                    if (lines.length > 2) {
-                      lines = lines.slice(0, 2);
-                      lines[1] += "...";
-                    }
+                      lines.push(currentLine);
+                      if (lines.length > 2) {
+                        lines = lines.slice(0, 2);
+                        lines[1] += "...";
+                      }
 
-                    // Draw Text
-                    ctx.textAlign = "center";
-                    ctx.textBaseline = "middle";
-                    ctx.fillStyle = "hsl(var(--foreground))";
+                      ctx.save();
+                      ctx.globalAlpha = ctx.globalAlpha * detailAlpha;
+                      ctx.textAlign = "center";
+                      ctx.textBaseline = "middle";
+                      ctx.fillStyle = "hsl(var(--foreground))";
 
-                    lines.forEach((line, i) => {
-                      const yOffset = r + fontSize + (i * fontSize * 1.2);
-                      ctx.fillText(line, node.x || 0, (node.y || 0) + yOffset);
-                    });
+                      lines.forEach((line, i) => {
+                        const yOffset = r + fontSize + (i * fontSize * 1.2);
+                        ctx.fillText(line, node.x || 0, (node.y || 0) + yOffset);
+                      });
+                      ctx.restore();
+                    }
                   }}
                 />
               )}
