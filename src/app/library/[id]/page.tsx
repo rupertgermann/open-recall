@@ -7,6 +7,8 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Badge } from "@/components/ui/badge";
 import { getDocument } from "@/actions/documents";
 import { DeleteButton } from "./delete-button";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 
 const typeIcons = {
   article: Globe,
@@ -106,9 +108,11 @@ export default async function DocumentDetailPage({
                     <CardTitle>Summary</CardTitle>
                   </CardHeader>
                   <CardContent>
-                    <p className="text-muted-foreground whitespace-pre-wrap">
-                      {document.summary}
-                    </p>
+                    <div className="prose prose-sm max-w-none dark:prose-invert">
+                      <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                        {document.summary}
+                      </ReactMarkdown>
+                    </div>
                   </CardContent>
                 </Card>
               )}

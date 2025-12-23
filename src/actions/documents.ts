@@ -52,9 +52,9 @@ export async function getDocuments(options?: {
       createdAt: documents.createdAt,
       processingStatus: documents.processingStatus,
       entityCount: sql<number>`(
-        SELECT COUNT(DISTINCT ${entityMentions.entityId})
-        FROM ${entityMentions}
-        WHERE ${entityMentions.documentId} = ${documents.id}
+        SELECT COUNT(DISTINCT entity_mentions.entity_id) 
+        FROM entity_mentions 
+        WHERE entity_mentions.document_id = documents.id
       )`.as("entity_count"),
     })
     .from(documents)
@@ -100,7 +100,7 @@ export async function getDocument(id: string) {
     .innerJoin(entityMentions, eq(entityMentions.entityId, entities.id))
     .where(eq(entityMentions.documentId, id));
 
-  // Get relationships involving these entities
+  // Get relationships involving entities mentioned in this document
   const entityIds = docEntities.map((e) => e.id);
   const docRelationships = entityIds.length > 0
     ? await db
@@ -120,10 +120,34 @@ export async function getDocument(id: string) {
         )
     : [];
 
+  // Get all entities involved in these relationships (including those from other documents)
+  const relationshipEntityIds = new Set(
+    docRelationships.flatMap((rel) => [rel.sourceEntityId, rel.targetEntityId])
+  );
+  const relationshipEntities = relationshipEntityIds.size > 0
+    ? await db
+        .select({
+          id: entities.id,
+          name: entities.name,
+          type: entities.type,
+          description: entities.description,
+        })
+        .from(entities)
+        .where(sql`${entities.id} IN ${Array.from(relationshipEntityIds)}`)
+    : [];
+
+  // Combine document entities and relationship entities, removing duplicates
+  const allEntities = [...docEntities];
+  relationshipEntities.forEach((relEntity) => {
+    if (!allEntities.find((e) => e.id === relEntity.id)) {
+      allEntities.push(relEntity);
+    }
+  });
+
   return {
     ...doc,
     chunks: docChunks,
-    entities: docEntities,
+    entities: allEntities,
     relationships: docRelationships,
   };
 }
