@@ -4,7 +4,7 @@ import { useState, useCallback, useMemo, useEffect, useRef } from "react";
 import dynamic from "next/dynamic";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
-import { Search, Loader2, RefreshCw, Focus } from "lucide-react";
+import { Search, Loader2, RefreshCw, Focus, X, RotateCcw } from "lucide-react";
 import { getGraphData, getDocumentGraph, getEntityDetails, type GraphData, type GraphNode } from "@/actions/graph";
 import { Header } from "@/components/layout/header";
 import { Button } from "@/components/ui/button";
@@ -208,6 +208,15 @@ export default function GraphPage() {
       console.error("Failed to refresh graph:", error);
     } finally {
       setIsLoading(false);
+    }
+  };
+
+  const handleReset = () => {
+    setSearchQuery("");
+    setFilterType(null);
+    // Optionally reset view to fit all nodes
+    if (graphRef.current) {
+      graphRef.current.zoomToFit(400);
     }
   };
 
@@ -443,46 +452,64 @@ export default function GraphPage() {
             </CardContent>
           </Card>
 
-          {/* Controls */}
-          <div className="absolute top-4 left-4 flex flex-col gap-2">
-            <div className="flex gap-2">
-              <div className="relative">
+          {/* Header Controls & Stats */}
+          <div className="absolute top-4 left-4 right-4 z-10">
+            <div className="flex flex-wrap items-center gap-2 p-2 rounded-lg bg-background/80 backdrop-blur border shadow-sm">
+              {/* Search */}
+              <div className="relative flex-shrink-0">
                 <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
                 <Input
                   placeholder="Search entities..."
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
-                  className="pl-10 w-56 bg-background"
+                  className="pl-9 pr-8 w-48 md:w-64 bg-background"
                 />
+                {searchQuery && (
+                  <button
+                    onClick={() => setSearchQuery("")}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                  >
+                    <X className="h-4 w-4" />
+                  </button>
+                )}
               </div>
-              <Button variant="outline" size="icon" onClick={handleRefresh} disabled={isLoading}>
-                <RefreshCw className={`h-4 w-4 ${isLoading ? "animate-spin" : ""}`} />
-              </Button>
-            </div>
-            <div className="flex gap-1 flex-wrap">
-              {Object.keys(typeColors).map((type) => (
-                <Button
-                  key={type}
-                  variant={filterType === type ? "default" : "outline"}
-                  size="sm"
-                  onClick={() => setFilterType(filterType === type ? null : type)}
-                  className="capitalize text-xs"
-                  style={{
-                    borderColor: typeColors[type],
-                    color: filterType === type ? "#fff" : typeColors[type],
-                    backgroundColor: filterType === type ? typeColors[type] : "transparent",
-                  }}
-                >
-                  {type}
-                </Button>
-              ))}
-            </div>
-          </div>
 
-          {/* Stats */}
-          <div className="absolute bottom-4 left-4 bg-background/80 backdrop-blur rounded-lg px-3 py-2 text-sm">
-            <span className="font-medium">{filteredData.nodes.length}</span> entities,{" "}
-            <span className="font-medium">{filteredData.links.length}</span> relationships
+              {/* Filters */}
+              <div className="flex gap-1 flex-wrap items-center border-l pl-2 ml-1">
+                {Object.keys(typeColors).map((type) => (
+                  <Button
+                    key={type}
+                    variant={filterType === type ? "default" : "outline"}
+                    size="sm"
+                    onClick={() => setFilterType(filterType === type ? null : type)}
+                    className="capitalize text-xs h-8"
+                    style={{
+                      borderColor: typeColors[type],
+                      color: filterType === type ? "#fff" : typeColors[type],
+                      backgroundColor: filterType === type ? typeColors[type] : "hsl(var(--background))",
+                    }}
+                  >
+                    {type}
+                  </Button>
+                ))}
+              </div>
+
+              {/* Stats */}
+              <div className="flex items-center gap-2 text-sm text-muted-foreground border-l pl-2 ml-1">
+                <span className="whitespace-nowrap"><span className="font-medium text-foreground">{filteredData.nodes.length}</span> entities</span>
+                <span className="whitespace-nowrap"><span className="font-medium text-foreground">{filteredData.links.length}</span> relations</span>
+              </div>
+
+              {/* Actions */}
+              <div className="ml-auto flex items-center gap-1">
+                <Button variant="ghost" size="icon" onClick={handleReset} title="Reset view">
+                   <RotateCcw className="h-4 w-4" />
+                </Button>
+                <Button variant="ghost" size="icon" onClick={handleRefresh} disabled={isLoading} title="Refresh data">
+                  <RefreshCw className={`h-4 w-4 ${isLoading ? "animate-spin" : ""}`} />
+                </Button>
+              </div>
+            </div>
           </div>
         </div>
 
