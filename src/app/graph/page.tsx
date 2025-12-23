@@ -6,6 +6,7 @@ import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { Search, Loader2, RefreshCw, Focus, X, RotateCcw, ZoomIn, ZoomOut } from "lucide-react";
 import { getGraphData, getDocumentGraph, getEntityDetails, type GraphData, type GraphNode } from "@/actions/graph";
+import { getAllTags } from "@/actions/documents";
 import { Header } from "@/components/layout/header";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -63,11 +64,23 @@ export default function GraphPage() {
   const [selectedTypes, setSelectedTypes] = useState<string[]>([]);
   const [selectedTags, setSelectedTags] = useState<string[]>([]);
   const [tagInput, setTagInput] = useState("");
+  const [availableTags, setAvailableTags] = useState<string[]>([]);
   const containerRef = useRef<HTMLDivElement>(null);
   const [dimensions, setDimensions] = useState({ width: 0, height: 0 });
   const graphRef = useRef<any>(null);
   const isInitialized = useRef(false);
   const hasAutoZoomed = useRef(false);
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const t = await getAllTags();
+        setAvailableTags(t);
+      } catch (e) {
+        console.error("Failed to load tags:", e);
+      }
+    })();
+  }, []);
 
   // Save state to local storage
   const saveGraphState = useCallback((newState: Partial<GraphState>) => {
@@ -441,26 +454,50 @@ export default function GraphPage() {
 
                 {/* Tag Filter */}
                 <div className="flex items-center gap-2 border-l pl-2 ml-1">
-                  <Input
-                    placeholder="Filter tags…"
-                    value={tagInput}
-                    onChange={(e) => setTagInput(e.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.key !== "Enter") return;
-                      e.preventDefault();
+                  <div className="relative">
+                    <Input
+                      placeholder="Filter tags…"
+                      value={tagInput}
+                      onChange={(e) => setTagInput(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key !== "Enter") return;
+                        e.preventDefault();
 
-                      const v = tagInput.trim().toLowerCase();
-                      if (!v) return;
-                      if (selectedTags.includes(v)) {
+                        const v = tagInput.trim().toLowerCase();
+                        if (!v) return;
+                        if (selectedTags.includes(v)) {
+                          setTagInput("");
+                          return;
+                        }
+                        setSelectedTags((prev) => [...prev, v]);
                         setTagInput("");
-                        return;
-                      }
-                      setSelectedTags((prev) => [...prev, v]);
-                      setTagInput("");
-                    }}
-                    className="w-40 bg-background"
-                    disabled={!!focusDocumentId}
-                  />
+                      }}
+                      className="w-40 bg-background"
+                      disabled={!!focusDocumentId}
+                    />
+
+                    {!focusDocumentId && tagInput.trim().length > 0 && (
+                      <div className="absolute left-0 right-0 top-full mt-1 z-20 rounded-md border bg-background shadow-sm">
+                        {availableTags
+                          .filter((t) => !selectedTags.includes(t))
+                          .filter((t) => t.includes(tagInput.trim().toLowerCase()))
+                          .slice(0, 8)
+                          .map((t) => (
+                            <button
+                              key={t}
+                              type="button"
+                              onClick={() => {
+                                setSelectedTags((prev) => [...prev, t]);
+                                setTagInput("");
+                              }}
+                              className="w-full px-2 py-1 text-left text-sm hover:bg-muted"
+                            >
+                              {t}
+                            </button>
+                          ))}
+                      </div>
+                    )}
+                  </div>
 
                   {selectedTags.length > 0 && (
                     <div className="flex flex-wrap items-center gap-1">

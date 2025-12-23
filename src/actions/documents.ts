@@ -4,6 +4,7 @@ import { db } from "@/db";
 import { documents, chunks, entities, entityMentions, relationships, tags, documentTags } from "@/db/schema";
 import { eq, desc, like, or, sql, count, inArray } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
+import { generateTagsWithDBConfig } from "@/lib/ai";
 
 export type DocumentWithStats = {
   id: string;
@@ -202,6 +203,39 @@ export async function updateDocumentTags(documentId: string, nextTags: string[])
   revalidatePath(`/library/${documentId}`);
   revalidatePath("/graph");
   return { success: true, tags: normalized };
+}
+
+export async function generateDocumentTags(documentId: string) {
+  const [doc] = await db
+    .select({
+      title: documents.title,
+      summary: documents.summary,
+      content: documents.content,
+    })
+    .from(documents)
+    .where(eq(documents.id, documentId))
+    .limit(1);
+
+  if (!doc) return { success: false, tags: [] as string[] };
+
+  const existing = await db
+    .select({ name: tags.name })
+    .from(tags)
+    .innerJoin(documentTags, eq(documentTags.tagId, tags.id))
+    .where(eq(documentTags.documentId, documentId));
+
+  const aiTags = await generateTagsWithDBConfig({
+    title: doc.title,
+    summary: doc.summary,
+    content: doc.content,
+  });
+
+  if (aiTags.length === 0) {
+    return { success: false, tags: existing.map((t) => t.name) };
+  }
+
+  const merged = Array.from(new Set([...existing.map((t) => t.name), ...aiTags]));
+  return updateDocumentTags(documentId, merged);
 }
 
 /**

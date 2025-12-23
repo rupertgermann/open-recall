@@ -5,7 +5,7 @@ import { X } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { updateDocumentTags } from "@/actions/documents";
+import { generateDocumentTags, updateDocumentTags } from "@/actions/documents";
 
 export function TagsEditor({ documentId, initialTags }: { documentId: string; initialTags: string[] }) {
   const [tags, setTags] = useState<string[]>(initialTags);
@@ -36,6 +36,13 @@ export function TagsEditor({ documentId, initialTags }: { documentId: string; in
     persist(tags.filter((t) => t !== name));
   };
 
+  const generate = () => {
+    startTransition(async () => {
+      const res = await generateDocumentTags(documentId);
+      if (res.tags) setTags(res.tags);
+    });
+  };
+
   return (
     <div className="space-y-2">
       <div className="flex gap-2">
@@ -53,6 +60,9 @@ export function TagsEditor({ documentId, initialTags }: { documentId: string; in
         />
         <Button type="button" variant="outline" onClick={add} disabled={isPending || input.trim().length === 0}>
           Add
+        </Button>
+        <Button type="button" variant="outline" onClick={generate} disabled={isPending}>
+          Generate tags with AI
         </Button>
       </div>
 

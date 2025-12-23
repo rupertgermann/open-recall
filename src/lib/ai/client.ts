@@ -23,6 +23,43 @@ export function createChatClient(config: ChatConfig = defaultChatConfig) {
   });
 }
 
+const tagResultSchema = z.object({
+  tags: z.array(z.string()),
+});
+
+export async function generateTags(
+  input: { title?: string | null; summary?: string | null; content?: string | null },
+  config: ChatConfig = defaultChatConfig
+): Promise<string[]> {
+  const model = getModel(config);
+  const title = input.title || "";
+  const summary = input.summary || "";
+  const content = input.content || "";
+  const text = `${title}\n\n${summary}\n\n${content}`.slice(0, 8000);
+
+  try {
+    const { object } = await generateObject({
+      model,
+      schema: tagResultSchema,
+      system:
+        "Generate short, useful, reusable tags for a personal knowledge base. Tags must be lowercase, concise (1-3 words), and not include punctuation. Return 5 to 12 tags.",
+      prompt: `Generate tags for the following document:\n\n${text}`,
+    });
+
+    const normalized = Array.from(
+      new Set(
+        (object.tags || [])
+          .map((t) => t.trim().toLowerCase())
+          .filter((t) => t.length > 0)
+      )
+    );
+    return normalized;
+  } catch (error) {
+    console.error("Tag generation failed:", error);
+    return [];
+  }
+}
+
 // Create AI client for embeddings
 export function createEmbeddingClient(config: EmbeddingConfig = defaultEmbeddingConfig) {
   return createOpenAI({
@@ -270,6 +307,11 @@ export async function generateSummaryWithDBConfig(content: string): Promise<stri
 export async function extractEntitiesWithDBConfig(content: string): Promise<ExtractionResult> {
   const config = await getChatConfigFromDB();
   return extractEntitiesAndRelationships(content, config);
+}
+
+export async function generateTagsWithDBConfig(input: { title?: string | null; summary?: string | null; content?: string | null }): Promise<string[]> {
+  const config = await getChatConfigFromDB();
+  return generateTags(input, config);
 }
 
 /**
