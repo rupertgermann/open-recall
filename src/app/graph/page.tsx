@@ -60,7 +60,7 @@ export default function GraphPage() {
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedNode, setSelectedNode] = useState<GraphNode | null>(null);
   const [selectedDetails, setSelectedDetails] = useState<EntityDetails | null>(null);
-  const [filterType, setFilterType] = useState<string | null>(null);
+  const [selectedTypes, setSelectedTypes] = useState<string[]>([]);
   const containerRef = useRef<HTMLDivElement>(null);
   const [dimensions, setDimensions] = useState({ width: 0, height: 0 });
   const graphRef = useRef<any>(null);
@@ -218,7 +218,7 @@ export default function GraphPage() {
 
   const handleReset = () => {
     setSearchQuery("");
-    setFilterType(null);
+    setSelectedTypes([]);
     // Optionally reset view to fit all nodes
     if (graphRef.current) {
       graphRef.current.zoomToFit(400);
@@ -226,10 +226,10 @@ export default function GraphPage() {
   };
 
   const filteredData = useMemo(() => {
-    if (!filterType && !searchQuery) return graphData;
+    if (selectedTypes.length === 0 && !searchQuery) return graphData;
 
     const filteredNodes = graphData.nodes.filter((node) => {
-      const matchesType = !filterType || node.type === filterType;
+      const matchesType = selectedTypes.length === 0 || selectedTypes.includes(node.type);
       const matchesSearch = !searchQuery ||
         node.name.toLowerCase().includes(searchQuery.toLowerCase());
       return matchesType && matchesSearch;
@@ -241,7 +241,7 @@ export default function GraphPage() {
     );
 
     return { nodes: filteredNodes, links: filteredLinks };
-  }, [graphData, filterType, searchQuery]);
+  }, [graphData, selectedTypes, searchQuery]);
 
   // Transform data for force graph
   const forceGraphData = useMemo(() => {
@@ -438,14 +438,18 @@ export default function GraphPage() {
                   {Object.keys(typeColors).map((type) => (
                     <Button
                       key={type}
-                      variant={filterType === type ? "default" : "outline"}
+                      variant={selectedTypes.includes(type) ? "default" : "outline"}
                       size="sm"
-                      onClick={() => setFilterType(filterType === type ? null : type)}
+                      onClick={() => {
+                        setSelectedTypes((prev) =>
+                          prev.includes(type) ? prev.filter((t) => t !== type) : [...prev, type]
+                        );
+                      }}
                       className="capitalize text-xs h-8"
                       style={{
                         borderColor: typeColors[type],
-                        color: filterType === type ? "#fff" : typeColors[type],
-                        backgroundColor: filterType === type ? typeColors[type] : "hsl(var(--background))",
+                        color: selectedTypes.includes(type) ? "#fff" : typeColors[type],
+                        backgroundColor: selectedTypes.includes(type) ? typeColors[type] : "hsl(var(--background))",
                       }}
                     >
                       {type}
