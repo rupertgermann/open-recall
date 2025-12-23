@@ -165,7 +165,7 @@ export async function getAllTags() {
   const rows = await db
     .select({ name: tags.name })
     .from(tags)
-    .orderBy(tags.name);
+    .orderBy(desc(tags.createdAt));
   return rows.map((r) => r.name);
 }
 

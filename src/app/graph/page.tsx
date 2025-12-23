@@ -65,6 +65,8 @@ export default function GraphPage() {
   const [selectedTags, setSelectedTags] = useState<string[]>([]);
   const [tagInput, setTagInput] = useState("");
   const [availableTags, setAvailableTags] = useState<string[]>([]);
+  const [isTagDropdownOpen, setIsTagDropdownOpen] = useState(false);
+  const [tagActiveIndex, setTagActiveIndex] = useState(0);
   const containerRef = useRef<HTMLDivElement>(null);
   const [dimensions, setDimensions] = useState({ width: 0, height: 0 });
   const graphRef = useRef<any>(null);
@@ -81,6 +83,10 @@ export default function GraphPage() {
       }
     })();
   }, []);
+
+  useEffect(() => {
+    setTagActiveIndex(0);
+  }, [tagInput, isTagDropdownOpen, selectedTags]);
 
   // Save state to local storage
   const saveGraphState = useCallback((newState: Partial<GraphState>) => {
@@ -459,30 +465,74 @@ export default function GraphPage() {
                       placeholder="Filter tags…"
                       value={tagInput}
                       onChange={(e) => setTagInput(e.target.value)}
+                      onFocus={() => {
+                        if (!focusDocumentId) setIsTagDropdownOpen(true);
+                      }}
+                      onBlur={() => {
+                        setTimeout(() => setIsTagDropdownOpen(false), 120);
+                      }}
                       onKeyDown={(e) => {
+                        const q = tagInput.trim().toLowerCase();
+                        const suggestions = (q.length === 0
+                          ? availableTags
+                              .filter((t) => !selectedTags.includes(t))
+                              .slice(0, 10)
+                          : availableTags
+                              .filter((t) => !selectedTags.includes(t))
+                              .filter((t) => t.includes(q))
+                              .slice(0, 10));
+
+                        if (e.key === "ArrowDown") {
+                          e.preventDefault();
+                          if (suggestions.length === 0) return;
+                          setIsTagDropdownOpen(true);
+                          setTagActiveIndex((i) => (i + 1) % suggestions.length);
+                          return;
+                        }
+
+                        if (e.key === "ArrowUp") {
+                          e.preventDefault();
+                          if (suggestions.length === 0) return;
+                          setIsTagDropdownOpen(true);
+                          setTagActiveIndex((i) => (i - 1 + suggestions.length) % suggestions.length);
+                          return;
+                        }
+
                         if (e.key !== "Enter") return;
                         e.preventDefault();
 
-                        const v = tagInput.trim().toLowerCase();
-                        if (!v) return;
-                        if (selectedTags.includes(v)) {
+                        if (suggestions.length > 0 && isTagDropdownOpen) {
+                          const chosen = suggestions[Math.max(0, Math.min(tagActiveIndex, suggestions.length - 1))];
+                          if (chosen) {
+                            setSelectedTags((prev) => [...prev, chosen]);
+                            setTagInput("");
+                            return;
+                          }
+                        }
+
+                        if (!q) return;
+                        if (selectedTags.includes(q)) {
                           setTagInput("");
                           return;
                         }
-                        setSelectedTags((prev) => [...prev, v]);
+                        setSelectedTags((prev) => [...prev, q]);
                         setTagInput("");
                       }}
                       className="w-40 bg-background"
                       disabled={!!focusDocumentId}
                     />
 
-                    {!focusDocumentId && tagInput.trim().length > 0 && (
+                    {!focusDocumentId && isTagDropdownOpen && (
                       <div className="absolute left-0 right-0 top-full mt-1 z-20 rounded-md border bg-background shadow-sm">
-                        {availableTags
-                          .filter((t) => !selectedTags.includes(t))
-                          .filter((t) => t.includes(tagInput.trim().toLowerCase()))
-                          .slice(0, 8)
-                          .map((t) => (
+                        {(tagInput.trim().length === 0
+                          ? availableTags
+                              .filter((t) => !selectedTags.includes(t))
+                              .slice(0, 10)
+                          : availableTags
+                              .filter((t) => !selectedTags.includes(t))
+                              .filter((t) => t.includes(tagInput.trim().toLowerCase()))
+                              .slice(0, 10)
+                        ).map((t, idx) => (
                             <button
                               key={t}
                               type="button"
@@ -490,7 +540,7 @@ export default function GraphPage() {
                                 setSelectedTags((prev) => [...prev, t]);
                                 setTagInput("");
                               }}
-                              className="w-full px-2 py-1 text-left text-sm hover:bg-muted"
+                              className={`w-full px-2 py-1 text-left text-sm hover:bg-muted ${idx === tagActiveIndex ? "bg-muted" : ""}`}
                             >
                               {t}
                             </button>

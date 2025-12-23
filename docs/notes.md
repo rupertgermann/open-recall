@@ -14,3 +14,4 @@
 - document categorisation/tagging 
 - filter graph by category/tag option
 
+implement ai tagging during document ingestion
