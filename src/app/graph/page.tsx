@@ -77,6 +77,7 @@ export default function GraphPage() {
   const [webSearchAdditionalPromptByEntityId, setWebSearchAdditionalPromptByEntityId] = useState<Record<string, string>>({});
   const [isWebSearching, setIsWebSearching] = useState(false);
   const [isAddingUrl, setIsAddingUrl] = useState<Record<string, boolean>>({});
+  const [filterByEntity, setFilterByEntity] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
   const [dimensions, setDimensions] = useState({ width: 0, height: 0 });
   const graphRef = useRef<any>(null);
@@ -225,6 +226,7 @@ export default function GraphPage() {
         setSelectedDetails(null);
         setWebSearchResults([]);
         setWebSearchAdditionalPrompt("");
+        setFilterByEntity(false);
         return;
       }
       try {
@@ -321,22 +323,45 @@ export default function GraphPage() {
   };
 
   const filteredData = useMemo(() => {
-    if (selectedTypes.length === 0 && !searchQuery) return graphData;
+    const q = searchQuery.trim().toLowerCase();
 
-    const filteredNodes = graphData.nodes.filter((node) => {
-      const matchesType = selectedTypes.length === 0 || selectedTypes.includes(node.type);
-      const matchesSearch = !searchQuery ||
-        node.name.toLowerCase().includes(searchQuery.toLowerCase());
-      return matchesType && matchesSearch;
+    let nodes =
+      selectedTypes.length === 0 && !q
+        ? graphData.nodes
+        : graphData.nodes.filter((node) => {
+            const matchesType = selectedTypes.length === 0 || selectedTypes.includes(node.type);
+            const matchesSearch = !q || node.name.toLowerCase().includes(q);
+            return matchesType && matchesSearch;
+          });
+
+    const nodeIds = new Set(nodes.map((n) => n.id));
+    let links = graphData.links.filter((link) => {
+      const sourceId = typeof link.source === "object" ? (link.source as any).id : (link.source as string);
+      const targetId = typeof link.target === "object" ? (link.target as any).id : (link.target as string);
+      return nodeIds.has(sourceId) && nodeIds.has(targetId);
     });
 
-    const nodeIds = new Set(filteredNodes.map((n) => n.id));
-    const filteredLinks = graphData.links.filter(
-      (link) => nodeIds.has(link.source as string) && nodeIds.has(link.target as string)
-    );
+    if (filterByEntity && selectedNode) {
+      const selectedId = selectedNode.id;
+      const allowedIds = new Set<string>([selectedId]);
 
-    return { nodes: filteredNodes, links: filteredLinks };
-  }, [graphData, selectedTypes, searchQuery]);
+      for (const l of links) {
+        const sourceId = typeof l.source === "object" ? (l.source as any).id : (l.source as string);
+        const targetId = typeof l.target === "object" ? (l.target as any).id : (l.target as string);
+        if (sourceId === selectedId) allowedIds.add(targetId);
+        if (targetId === selectedId) allowedIds.add(sourceId);
+      }
+
+      nodes = nodes.filter((n) => allowedIds.has(n.id));
+      links = links.filter((l) => {
+        const sourceId = typeof l.source === "object" ? (l.source as any).id : (l.source as string);
+        const targetId = typeof l.target === "object" ? (l.target as any).id : (l.target as string);
+        return allowedIds.has(sourceId) && allowedIds.has(targetId);
+      });
+    }
+
+    return { nodes, links };
+  }, [graphData, selectedTypes, searchQuery, filterByEntity, selectedNode]);
 
   // Transform data for force graph
   const forceGraphData = useMemo(() => {
@@ -871,6 +896,18 @@ export default function GraphPage() {
                     className="h-9 w-9"
                   >
                     <ZoomOut className="h-4 w-4" />
+                  </Button>
+                </div>
+              )}
+              {selectedNode && (
+                <div className="flex gap-2 mt-2">
+                  <Button
+                    variant={filterByEntity ? "default" : "outline"}
+                    size="sm"
+                    onClick={() => setFilterByEntity((v) => !v)}
+                    className="w-full"
+                  >
+                    Filter by entity
                   </Button>
                 </div>
               )}
