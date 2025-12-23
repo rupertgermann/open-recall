@@ -270,6 +270,15 @@ export default function GraphPage() {
     };
   }, [filteredData]);
 
+  const maxNodeDegree = useMemo(() => {
+    let max = 1;
+    for (const n of forceGraphData.nodes as any[]) {
+      const d = typeof n.degree === "number" ? n.degree : 0;
+      if (d > max) max = d;
+    }
+    return max;
+  }, [forceGraphData]);
+
   const handleNodeClick = useCallback((node: { id: string; name: string; type: string }) => {
     const graphNode = graphData.nodes.find((n) => n.id === node.id);
     if (graphNode) {
@@ -545,7 +554,11 @@ export default function GraphPage() {
                     // Text Rendering Logic
                     // Cluster overlay (fades out as you zoom in)
                     if (clusterAlpha > 0.01 && isHighDegree) {
-                      const overlayFontSize = Math.max(12, 24 / globalScale);
+                      const overlayBaseFontSize = Math.max(12, 24 / globalScale);
+                      const degree = node.degree || 0;
+                      const degreeT = clamp01(degree / maxNodeDegree);
+                      const sizeMultiplier = 0.5 + 1.5 * Math.sqrt(degreeT);
+                      const overlayFontSize = overlayBaseFontSize * sizeMultiplier;
 
                       ctx.save();
                       ctx.globalAlpha = ctx.globalAlpha * clusterAlpha;
