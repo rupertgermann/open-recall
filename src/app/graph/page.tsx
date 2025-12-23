@@ -49,6 +49,7 @@ const STORAGE_KEY = "open-recall-graph-state";
 export default function GraphPage() {
   const searchParams = useSearchParams();
   const focusDocumentId = searchParams.get("focus");
+  const focusEntityId = searchParams.get("entity");
   const [graphData, setGraphData] = useState<GraphData>({ nodes: [], links: [] });
   const [isLoading, setIsLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState("");
@@ -78,6 +79,17 @@ export default function GraphPage() {
     }
   }, []);
 
+  // Handle entity URL parameter
+  useEffect(() => {
+    if (focusEntityId && graphData.nodes.length > 0 && !isLoading) {
+      const node = graphData.nodes.find(n => n.id === focusEntityId);
+      if (node) {
+        setSelectedNode(node);
+        saveGraphState({ selectedNodeId: node.id });
+      }
+    }
+  }, [focusEntityId, graphData.nodes, isLoading, saveGraphState]);
+
   // Restore state on mount
   useEffect(() => {
     if (isInitialized.current) return;
@@ -85,6 +97,12 @@ export default function GraphPage() {
     // If URL has focus param, prioritize that and clear saved focus
     if (focusDocumentId) {
       saveGraphState({ focusDocumentId });
+      return;
+    }
+
+    // Skip localStorage restoration if entity param is present
+    if (focusEntityId) {
+      isInitialized.current = true;
       return;
     }
 
@@ -109,7 +127,7 @@ export default function GraphPage() {
       console.error("Failed to restore graph state:", e);
     }
     isInitialized.current = true;
-  }, [focusDocumentId, graphData.nodes, saveGraphState]);
+  }, [focusDocumentId, focusEntityId, graphData.nodes, saveGraphState]);
 
   // Save camera state on zoom/pan end
   const handleEngineStop = useCallback(() => {

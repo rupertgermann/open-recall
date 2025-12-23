@@ -181,13 +181,14 @@ export default async function DocumentDetailPage({
                   {document.entities.length > 0 ? (
                     <div className="flex flex-wrap gap-2">
                       {document.entities.map((entity) => (
-                        <Badge
-                          key={entity.id}
-                          variant="outline"
-                          className={entityTypeColors[entity.type] || entityTypeColors.other}
-                        >
-                          {entity.name}
-                        </Badge>
+                        <Link key={entity.id} href={`/graph?entity=${entity.id}`}>
+                          <Badge
+                            variant="outline"
+                            className={`cursor-pointer hover:opacity-80 transition-opacity ${entityTypeColors[entity.type] || entityTypeColors.other}`}
+                          >
+                            {entity.name}
+                          </Badge>
+                        </Link>
                       ))}
                     </div>
                   ) : (
