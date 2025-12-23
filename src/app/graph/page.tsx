@@ -325,7 +325,7 @@ export default function GraphPage() {
         </div>
 
         {/* Sidebar */}
-        <div className="w-80 flex-shrink-0">
+        <div className="w-96 flex-shrink-0">
           <Card className="h-[calc(100vh-12rem)] overflow-auto">
             <CardHeader>
               <CardTitle>
@@ -362,7 +362,7 @@ export default function GraphPage() {
                   <div>
                     <h4 className="text-sm font-medium mb-2">Connected Entities</h4>
                     {selectedDetails.connectedEntities.length > 0 ? (
-                      <div className="space-y-2 max-h-40 overflow-y-auto">
+                      <div className="space-y-2 max-h-60 overflow-y-auto">
                         {selectedDetails.connectedEntities.map((entity, idx) => (
                           <div
                             key={`${entity.id}-${idx}`}
