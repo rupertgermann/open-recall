@@ -59,6 +59,7 @@ export default function GraphPage() {
   const [dimensions, setDimensions] = useState({ width: 0, height: 0 });
   const graphRef = useRef<any>(null);
   const isInitialized = useRef(false);
+  const hasAutoZoomed = useRef(false);
 
   // Save state to local storage
   const saveGraphState = useCallback((newState: Partial<GraphState>) => {
@@ -248,8 +249,8 @@ export default function GraphPage() {
           if (node) setSelectedNode(node);
         }
 
-        // Restore camera if graph ref exists and we haven't restored yet
-        if (state.camera && graphRef.current && !isInitialized.current) {
+        // Only restore camera if there's no selected node (auto-zoom will handle it otherwise)
+        if (state.camera && graphRef.current && !isInitialized.current && !state.selectedNodeId) {
           // Add a small delay to ensure graph is ready
           setTimeout(() => {
              if (graphRef.current) {
@@ -284,6 +285,28 @@ export default function GraphPage() {
       graphInstance.zoom(5, 500);
     }
   }, [selectedNode, forceGraphData]);
+
+  // Auto-zoom to selected node on page load
+  useEffect(() => {
+    if (!selectedNode || !graphRef.current || isLoading || hasAutoZoomed.current) return;
+    
+    // Wait for the graph to stabilize and node positions to be calculated
+    const timer = setTimeout(() => {
+      if (!graphRef.current) return;
+      
+      const graphInstance = graphRef.current;
+      const internalData = (graphInstance as any)._graphData || forceGraphData;
+      const internalNode = internalData.nodes.find((n: any) => n.id === selectedNode.id);
+      
+      if (internalNode && internalNode.x !== undefined && internalNode.y !== undefined) {
+        graphInstance.centerAt(internalNode.x, internalNode.y, 500);
+        graphInstance.zoom(5, 500);
+        hasAutoZoomed.current = true;
+      }
+    }, 800);
+    
+    return () => clearTimeout(timer);
+  }, [selectedNode, isLoading, forceGraphData]);
 
   return (
     <div className="min-h-screen flex flex-col">

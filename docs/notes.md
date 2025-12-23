@@ -8,3 +8,10 @@
 
 ## refactor library page layout:
 - add a reset input function to the search input
+
+
+
+
+
+## features
+add a button "do websearch" to the entity sidebar. this function should create a search query, execute it and return some document previews that can be added to the library
