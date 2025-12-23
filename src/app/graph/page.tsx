@@ -38,6 +38,14 @@ const typeColors: Record<string, string> = {
   organization: "#8b5cf6",
 };
 
+type GraphState = {
+  selectedNodeId: string | null;
+  camera: { x: number; y: number; k: number } | null;
+  focusDocumentId: string | null;
+};
+
+const STORAGE_KEY = "open-recall-graph-state";
+
 export default function GraphPage() {
   const searchParams = useSearchParams();
   const focusDocumentId = searchParams.get("focus");
@@ -50,6 +58,65 @@ export default function GraphPage() {
   const containerRef = useRef<HTMLDivElement>(null);
   const [dimensions, setDimensions] = useState({ width: 0, height: 0 });
   const graphRef = useRef<any>(null);
+  const isInitialized = useRef(false);
+
+  // Save state to local storage
+  const saveGraphState = useCallback((newState: Partial<GraphState>) => {
+    try {
+      const saved = localStorage.getItem(STORAGE_KEY);
+      const current: GraphState = saved ? JSON.parse(saved) : {
+        selectedNodeId: null,
+        camera: null,
+        focusDocumentId: null
+      };
+      
+      const updated = { ...current, ...newState };
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(updated));
+    } catch (e) {
+      console.error("Failed to save graph state:", e);
+    }
+  }, []);
+
+  // Restore state on mount
+  useEffect(() => {
+    if (isInitialized.current) return;
+    
+    // If URL has focus param, prioritize that and clear saved focus
+    if (focusDocumentId) {
+      saveGraphState({ focusDocumentId });
+      return;
+    }
+
+    try {
+      const saved = localStorage.getItem(STORAGE_KEY);
+      if (saved) {
+        const state: GraphState = JSON.parse(saved);
+        
+        // Restore selected node if we have data
+        if (state.selectedNodeId && graphData.nodes.length > 0) {
+          const node = graphData.nodes.find(n => n.id === state.selectedNodeId);
+          if (node) setSelectedNode(node);
+        }
+
+        // Restore camera if graph ref exists
+        if (state.camera && graphRef.current) {
+          graphRef.current.centerAt(state.camera.x, state.camera.y, 0);
+          graphRef.current.zoom(state.camera.k, 0);
+        }
+      }
+    } catch (e) {
+      console.error("Failed to restore graph state:", e);
+    }
+    isInitialized.current = true;
+  }, [focusDocumentId, graphData.nodes, saveGraphState]);
+
+  // Save camera state on zoom/pan end
+  const handleEngineStop = useCallback(() => {
+    if (graphRef.current) {
+      const { x, y, k } = graphRef.current.cameraPosition();
+      saveGraphState({ camera: { x, y, k } });
+    }
+  }, [saveGraphState]);
 
   useEffect(() => {
     if (!containerRef.current) return;
@@ -162,8 +229,46 @@ export default function GraphPage() {
     const graphNode = graphData.nodes.find((n) => n.id === node.id);
     if (graphNode) {
       setSelectedNode(graphNode);
+      saveGraphState({ selectedNodeId: graphNode.id });
     }
-  }, [graphData.nodes]);
+  }, [graphData.nodes, saveGraphState]);
+
+  // Restore state when data loads
+  useEffect(() => {
+    if (isLoading || graphData.nodes.length === 0) return;
+
+    try {
+      const saved = localStorage.getItem(STORAGE_KEY);
+      if (saved) {
+        const state: GraphState = JSON.parse(saved);
+        
+        // Restore selected node if not already selected
+        if (state.selectedNodeId && !selectedNode) {
+          const node = graphData.nodes.find(n => n.id === state.selectedNodeId);
+          if (node) setSelectedNode(node);
+        }
+
+        // Restore camera if graph ref exists and we haven't restored yet
+        if (state.camera && graphRef.current && !isInitialized.current) {
+          // Add a small delay to ensure graph is ready
+          setTimeout(() => {
+             if (graphRef.current) {
+                graphRef.current.centerAt(state.camera!.x, state.camera!.y, 0);
+                graphRef.current.zoom(state.camera!.k, 0);
+             }
+          }, 100);
+          isInitialized.current = true;
+        }
+      }
+    } catch (e) {
+      console.error("Failed to restore graph state:", e);
+    }
+  }, [isLoading, graphData.nodes, selectedNode, saveGraphState]);
+
+  // Save camera state handler
+  const handleZoomEnd = useCallback((transform: { k: number; x: number; y: number }) => {
+    saveGraphState({ camera: transform });
+  }, [saveGraphState]);
 
   return (
     <div className="min-h-screen flex flex-col">
@@ -197,6 +302,7 @@ export default function GraphPage() {
                   linkColor={() => "#888"}
                   linkWidth={1}
                   onNodeClick={(node) => handleNodeClick(node as any)}
+                  onZoomEnd={handleZoomEnd}
                   nodeCanvasObjectMode={() => "replace"}
                   nodeCanvasObject={(node: { x?: number; y?: number; name?: string; type?: string; val?: number }, ctx: CanvasRenderingContext2D, globalScale: number) => {
                     const label = node.name || "";
@@ -371,6 +477,7 @@ export default function GraphPage() {
                               const node = graphData.nodes.find((n) => n.id === entity.id);
                               if (node && graphRef.current) {
                                 setSelectedNode(node);
+                                saveGraphState({ selectedNodeId: node.id });
                                 // Get the current zoom level
                                 const currentZoom = graphRef.current.zoom();
                                 
