@@ -46,7 +46,7 @@ type GraphState = {
 
 const STORAGE_KEY = "open-recall-graph-state";
 
-const CLUSTER_VIEW_SCALE_START = 1.4;
+const CLUSTER_VIEW_SCALE_START = 1.2;
 const CLUSTER_VIEW_SCALE_END = 2.4;
 const CLUSTER_TITLE_MIN_DEGREE = 8;
 const CLUSTER_TITLE_OPACITY = 0.3;
