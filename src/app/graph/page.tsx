@@ -336,14 +336,74 @@ export default function GraphPage() {
   }, [selectedNode, isLoading, forceGraphData]);
 
   return (
-    <div className="min-h-screen flex flex-col">
+    <div className="h-screen flex flex-col overflow-hidden">
       <Header />
 
-      <main className="flex-1 flex gap-1 px-1 py-1">
+      <main className="flex-1 flex gap-4 p-4 overflow-hidden">
         {/* Graph Canvas */}
-        <div className="flex-1 relative">
-          <Card className="h-[calc(100vh-12rem)]">
-            <CardContent ref={containerRef} className="p-0 h-full overflow-hidden">
+        <div className="flex-1 h-full min-w-0">
+          <Card className="h-full relative overflow-hidden flex flex-col">
+            {/* Header Controls & Stats */}
+            <div className="absolute top-0 left-0 right-0 z-10 border-b bg-background/40 backdrop-blur-sm">
+              <div className="flex flex-wrap items-center gap-2 p-2">
+                {/* Search */}
+                <div className="relative flex-shrink-0">
+                  <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                  <Input
+                    placeholder="Search entities..."
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                    className="pl-9 pr-8 w-48 md:w-64 bg-background"
+                  />
+                  {searchQuery && (
+                    <button
+                      onClick={() => setSearchQuery("")}
+                      className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                    >
+                      <X className="h-4 w-4" />
+                    </button>
+                  )}
+                </div>
+
+                {/* Filters */}
+                <div className="flex gap-1 flex-wrap items-center border-l pl-2 ml-1">
+                  {Object.keys(typeColors).map((type) => (
+                    <Button
+                      key={type}
+                      variant={filterType === type ? "default" : "outline"}
+                      size="sm"
+                      onClick={() => setFilterType(filterType === type ? null : type)}
+                      className="capitalize text-xs h-8"
+                      style={{
+                        borderColor: typeColors[type],
+                        color: filterType === type ? "#fff" : typeColors[type],
+                        backgroundColor: filterType === type ? typeColors[type] : "hsl(var(--background))",
+                      }}
+                    >
+                      {type}
+                    </Button>
+                  ))}
+                </div>
+
+                {/* Stats */}
+                <div className="flex items-center gap-2 text-sm text-muted-foreground border-l pl-2 ml-1">
+                  <span className="whitespace-nowrap"><span className="font-medium text-foreground">{filteredData.nodes.length}</span> entities</span>
+                  <span className="whitespace-nowrap"><span className="font-medium text-foreground">{filteredData.links.length}</span> relations</span>
+                </div>
+
+                {/* Actions */}
+                <div className="ml-auto flex items-center gap-1">
+                  <Button variant="ghost" size="icon" onClick={handleReset} title="Reset view">
+                    <RotateCcw className="h-4 w-4" />
+                  </Button>
+                  <Button variant="ghost" size="icon" onClick={handleRefresh} disabled={isLoading} title="Refresh data">
+                    <RefreshCw className={`h-4 w-4 ${isLoading ? "animate-spin" : ""}`} />
+                  </Button>
+                </div>
+              </div>
+            </div>
+
+            <CardContent ref={containerRef} className="p-0 flex-1 relative overflow-hidden">
               {isLoading ? (
                 <div className="flex items-center justify-center h-full">
                   <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
@@ -451,72 +511,12 @@ export default function GraphPage() {
               )}
             </CardContent>
           </Card>
-
-          {/* Header Controls & Stats */}
-          <div className="absolute top-0 left-0 right-0 z-10 border-b bg-background/40 backdrop-blur-sm">
-            <div className="flex flex-wrap items-center gap-2 p-2">
-              {/* Search */}
-              <div className="relative flex-shrink-0">
-                <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-                <Input
-                  placeholder="Search entities..."
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                  className="pl-9 pr-8 w-48 md:w-64 bg-background"
-                />
-                {searchQuery && (
-                  <button
-                    onClick={() => setSearchQuery("")}
-                    className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
-                  >
-                    <X className="h-4 w-4" />
-                  </button>
-                )}
-              </div>
-
-              {/* Filters */}
-              <div className="flex gap-1 flex-wrap items-center border-l pl-2 ml-1">
-                {Object.keys(typeColors).map((type) => (
-                  <Button
-                    key={type}
-                    variant={filterType === type ? "default" : "outline"}
-                    size="sm"
-                    onClick={() => setFilterType(filterType === type ? null : type)}
-                    className="capitalize text-xs h-8"
-                    style={{
-                      borderColor: typeColors[type],
-                      color: filterType === type ? "#fff" : typeColors[type],
-                      backgroundColor: filterType === type ? typeColors[type] : "hsl(var(--background))",
-                    }}
-                  >
-                    {type}
-                  </Button>
-                ))}
-              </div>
-
-              {/* Stats */}
-              <div className="flex items-center gap-2 text-sm text-muted-foreground border-l pl-2 ml-1">
-                <span className="whitespace-nowrap"><span className="font-medium text-foreground">{filteredData.nodes.length}</span> entities</span>
-                <span className="whitespace-nowrap"><span className="font-medium text-foreground">{filteredData.links.length}</span> relations</span>
-              </div>
-
-              {/* Actions */}
-              <div className="ml-auto flex items-center gap-1">
-                <Button variant="ghost" size="icon" onClick={handleReset} title="Reset view">
-                   <RotateCcw className="h-4 w-4" />
-                </Button>
-                <Button variant="ghost" size="icon" onClick={handleRefresh} disabled={isLoading} title="Refresh data">
-                  <RefreshCw className={`h-4 w-4 ${isLoading ? "animate-spin" : ""}`} />
-                </Button>
-              </div>
-            </div>
-          </div>
         </div>
 
         {/* Sidebar */}
-        <div className="w-96 flex-shrink-0">
-          <Card className="h-[calc(100vh-12rem)] overflow-auto">
-            <CardHeader>
+        <div className="w-96 flex-shrink-0 h-full">
+          <Card className="h-full flex flex-col overflow-hidden">
+            <CardHeader className="flex-shrink-0">
               <CardTitle>
                 {selectedNode ? selectedNode.name : "Knowledge Graph"}
               </CardTitle>
@@ -537,7 +537,7 @@ export default function GraphPage() {
                 </Button>
               )}
             </CardHeader>
-            <CardContent>
+            <CardContent className="flex-1 overflow-y-auto">
               {selectedNode && selectedDetails ? (
                 <div className="space-y-4">
                   <div>
