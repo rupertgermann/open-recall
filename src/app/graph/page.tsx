@@ -4,7 +4,7 @@ import { useState, useCallback, useMemo, useEffect, useRef } from "react";
 import dynamic from "next/dynamic";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
-import { Search, Loader2, RefreshCw, Focus, X, RotateCcw } from "lucide-react";
+import { Search, Loader2, RefreshCw, Focus, X, RotateCcw, ZoomIn, ZoomOut } from "lucide-react";
 import { getGraphData, getDocumentGraph, getEntityDetails, type GraphData, type GraphNode } from "@/actions/graph";
 import { Header } from "@/components/layout/header";
 import { Button } from "@/components/ui/button";
@@ -298,6 +298,20 @@ export default function GraphPage() {
     saveGraphState({ camera: transform });
   }, [saveGraphState]);
 
+  const handleZoomIn = useCallback(() => {
+    if (graphRef.current) {
+      const currentZoom = graphRef.current.zoom();
+      graphRef.current.zoom(currentZoom * 1.2, 400);
+    }
+  }, []);
+
+  const handleZoomOut = useCallback(() => {
+    if (graphRef.current) {
+      const currentZoom = graphRef.current.zoom();
+      graphRef.current.zoom(currentZoom / 1.2, 400);
+    }
+  }, []);
+
   // Zoom to and center on the selected node
   const handleZoomToNode = useCallback(() => {
     if (!selectedNode || !graphRef.current) return;
@@ -526,15 +540,35 @@ export default function GraphPage() {
                   : "Click on a node to see details"}
               </CardDescription>
               {selectedNode && (
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={handleZoomToNode}
-                  className="mt-2 gap-2"
-                >
-                  <Focus className="h-4 w-4" />
-                  Zoom to Node
-                </Button>
+                <div className="flex gap-2 mt-2">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={handleZoomToNode}
+                    className="gap-2 flex-1"
+                  >
+                    <Focus className="h-4 w-4" />
+                    Zoom to Node
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="icon"
+                    onClick={handleZoomIn}
+                    title="Zoom In"
+                    className="h-9 w-9"
+                  >
+                    <ZoomIn className="h-4 w-4" />
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="icon"
+                    onClick={handleZoomOut}
+                    title="Zoom Out"
+                    className="h-9 w-9"
+                  >
+                    <ZoomOut className="h-4 w-4" />
+                  </Button>
+                </div>
               )}
             </CardHeader>
             <CardContent className="flex-1 overflow-y-auto">
