@@ -14,4 +14,6 @@
 
 
 ## features
-add a button "do websearch" to the entity sidebar. this function should create a search query, execute it and return some document previews that can be added to the library
+- add a button "do websearch" to the entity sidebar. this function should create a search query, execute it and return some document previews that can be added to the library
+- document categorisation/tagging 
+- filter graph by category/tag option

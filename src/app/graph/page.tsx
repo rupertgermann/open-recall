@@ -453,7 +453,7 @@ export default function GraphPage() {
           </Card>
 
           {/* Header Controls & Stats */}
-          <div className="absolute top-0 left-0 right-0 z-10 border-b bg-background/80 backdrop-blur">
+          <div className="absolute top-0 left-0 right-0 z-10 border-b bg-background/40 backdrop-blur-sm">
             <div className="flex flex-wrap items-center gap-2 p-2">
               {/* Search */}
               <div className="relative flex-shrink-0">
