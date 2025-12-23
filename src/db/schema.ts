@@ -8,6 +8,7 @@ import {
   jsonb,
   index,
   uniqueIndex,
+  primaryKey,
 } from "drizzle-orm/pg-core";
 import { relations } from "drizzle-orm";
 
@@ -83,6 +84,36 @@ export const documents = pgTable(
     typeIdx: index("documents_type_idx").on(table.type),
     statusIdx: index("documents_status_idx").on(table.processingStatus),
     contentHashIdx: index("documents_content_hash_idx").on(table.contentHash),
+  })
+);
+
+export const tags = pgTable(
+  "tags",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    name: text("name").notNull(),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+  },
+  (table) => ({
+    nameIdx: uniqueIndex("tags_name_idx").on(table.name),
+  })
+);
+
+export const documentTags = pgTable(
+  "document_tags",
+  {
+    documentId: uuid("document_id")
+      .notNull()
+      .references(() => documents.id, { onDelete: "cascade" }),
+    tagId: uuid("tag_id")
+      .notNull()
+      .references(() => tags.id, { onDelete: "cascade" }),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+  },
+  (table) => ({
+    pk: primaryKey({ columns: [table.documentId, table.tagId] }),
+    documentIdx: index("document_tags_document_idx").on(table.documentId),
+    tagIdx: index("document_tags_tag_idx").on(table.tagId),
   })
 );
 
@@ -278,6 +309,22 @@ export const documentsRelations = relations(documents, ({ many }) => ({
   chunks: many(chunks),
   entityMentions: many(entityMentions),
   srsItems: many(srsItems),
+  documentTags: many(documentTags),
+}));
+
+export const tagsRelations = relations(tags, ({ many }) => ({
+  documentTags: many(documentTags),
+}));
+
+export const documentTagsRelations = relations(documentTags, ({ one }) => ({
+  document: one(documents, {
+    fields: [documentTags.documentId],
+    references: [documents.id],
+  }),
+  tag: one(tags, {
+    fields: [documentTags.tagId],
+    references: [tags.id],
+  }),
 }));
 
 export const chunksRelations = relations(chunks, ({ one, many }) => ({
@@ -349,6 +396,10 @@ export const chatMessagesRelations = relations(chatMessages, ({ one }) => ({
 // ============================================================================
 export type Document = typeof documents.$inferSelect;
 export type NewDocument = typeof documents.$inferInsert;
+export type Tag = typeof tags.$inferSelect;
+export type NewTag = typeof tags.$inferInsert;
+export type DocumentTag = typeof documentTags.$inferSelect;
+export type NewDocumentTag = typeof documentTags.$inferInsert;
 export type Chunk = typeof chunks.$inferSelect;
 export type NewChunk = typeof chunks.$inferInsert;
 export type Entity = typeof entities.$inferSelect;

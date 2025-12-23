@@ -7,6 +7,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Badge } from "@/components/ui/badge";
 import { getDocument } from "@/actions/documents";
 import { DeleteButton } from "./delete-button";
+import { TagsEditor } from "./tags-editor";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 
@@ -101,6 +102,15 @@ export default async function DocumentDetailPage({
           <div className="grid gap-6 lg:grid-cols-3">
             {/* Main Content */}
             <div className="lg:col-span-2 space-y-6">
+              <Card>
+                <CardHeader>
+                  <CardTitle>Tags</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <TagsEditor documentId={document.id} initialTags={(document as any).tags || []} />
+                </CardContent>
+              </Card>
+
               {/* Summary */}
               {document.summary && (
                 <Card>

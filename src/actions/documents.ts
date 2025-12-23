@@ -1,8 +1,8 @@
 "use server";
 
 import { db } from "@/db";
-import { documents, chunks, entities, entityMentions, relationships } from "@/db/schema";
-import { eq, desc, like, or, sql, count } from "drizzle-orm";
+import { documents, chunks, entities, entityMentions, relationships, tags, documentTags } from "@/db/schema";
+import { eq, desc, like, or, sql, count, inArray } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 
 export type DocumentWithStats = {
@@ -88,6 +88,13 @@ export async function getDocument(id: string) {
     .where(eq(chunks.documentId, id))
     .orderBy(chunks.chunkIndex);
 
+  const docTags = await db
+    .select({ name: tags.name })
+    .from(tags)
+    .innerJoin(documentTags, eq(documentTags.tagId, tags.id))
+    .where(eq(documentTags.documentId, id))
+    .orderBy(tags.name);
+
   // Get entities mentioned in this document
   const docEntities = await db
     .selectDistinct({
@@ -147,9 +154,54 @@ export async function getDocument(id: string) {
   return {
     ...doc,
     chunks: docChunks,
+    tags: docTags.map((t) => t.name),
     entities: allEntities,
     relationships: docRelationships,
   };
+}
+
+export async function getAllTags() {
+  const rows = await db
+    .select({ name: tags.name })
+    .from(tags)
+    .orderBy(tags.name);
+  return rows.map((r) => r.name);
+}
+
+export async function updateDocumentTags(documentId: string, nextTags: string[]) {
+  const normalized = Array.from(
+    new Set(
+      nextTags
+        .map((t) => t.trim().toLowerCase())
+        .filter((t) => t.length > 0)
+    )
+  );
+
+  if (normalized.length > 0) {
+    await db
+      .insert(tags)
+      .values(normalized.map((name) => ({ name })))
+      .onConflictDoNothing();
+  }
+
+  const tagRows = normalized.length > 0
+    ? await db
+        .select({ id: tags.id, name: tags.name })
+        .from(tags)
+        .where(inArray(tags.name, normalized))
+    : [];
+
+  await db.delete(documentTags).where(eq(documentTags.documentId, documentId));
+
+  if (tagRows.length > 0) {
+    await db.insert(documentTags).values(
+      tagRows.map((t) => ({ documentId, tagId: t.id }))
+    );
+  }
+
+  revalidatePath(`/library/${documentId}`);
+  revalidatePath("/graph");
+  return { success: true, tags: normalized };
 }
 
 /**

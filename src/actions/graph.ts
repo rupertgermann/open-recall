@@ -1,7 +1,7 @@
 "use server";
 
 import { db } from "@/db";
-import { entities, relationships, entityMentions, documents } from "@/db/schema";
+import { entities, relationships, entityMentions, documents, tags, documentTags } from "@/db/schema";
 import { eq, sql, desc, count } from "drizzle-orm";
 
 export type GraphNode = {
@@ -28,7 +28,26 @@ export type GraphData = {
 /**
  * Get the full knowledge graph
  */
-export async function getGraphData(): Promise<GraphData> {
+export async function getGraphData(options?: { tags?: string[] }): Promise<GraphData> {
+  const requestedTags = Array.from(
+    new Set((options?.tags || []).map((t) => t.trim().toLowerCase()).filter(Boolean))
+  );
+
+  const entityFilterSql = requestedTags.length === 0
+    ? undefined
+    : sql`${entities.id} IN (
+        SELECT DISTINCT ${entityMentions.entityId}
+        FROM ${entityMentions}
+        WHERE ${entityMentions.documentId} IN (
+          SELECT ${documentTags.documentId}
+          FROM ${documentTags}
+          INNER JOIN ${tags} ON ${tags.id} = ${documentTags.tagId}
+          WHERE ${tags.name} IN ${requestedTags}
+          GROUP BY ${documentTags.documentId}
+          HAVING COUNT(DISTINCT ${tags.name}) = ${requestedTags.length}
+        )
+      )`;
+
   // Get all entities with mention counts
   const entitiesWithCounts = await db
     .select({
@@ -41,7 +60,8 @@ export async function getGraphData(): Promise<GraphData> {
         WHERE ${entityMentions.entityId} = ${entities.id}
       )`.as("mention_count"),
     })
-    .from(entities);
+    .from(entities)
+    .where(entityFilterSql);
 
   // Get all relationships
   const allRelationships = await db
@@ -54,12 +74,27 @@ export async function getGraphData(): Promise<GraphData> {
     })
     .from(relationships);
 
+  if (requestedTags.length === 0) {
+    return {
+      nodes: entitiesWithCounts.map((e) => ({
+        ...e,
+        mentionCount: Number(e.mentionCount) || 0,
+      })),
+      links: allRelationships,
+    };
+  }
+
+  const allowedEntityIds = new Set(entitiesWithCounts.map((e) => e.id));
+  const filteredLinks = allRelationships.filter(
+    (l) => allowedEntityIds.has(l.source) && allowedEntityIds.has(l.target)
+  );
+
   return {
     nodes: entitiesWithCounts.map((e) => ({
       ...e,
       mentionCount: Number(e.mentionCount) || 0,
     })),
-    links: allRelationships,
+    links: filteredLinks,
   };
 }
 

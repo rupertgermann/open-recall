@@ -61,6 +61,8 @@ export default function GraphPage() {
   const [selectedNode, setSelectedNode] = useState<GraphNode | null>(null);
   const [selectedDetails, setSelectedDetails] = useState<EntityDetails | null>(null);
   const [selectedTypes, setSelectedTypes] = useState<string[]>([]);
+  const [selectedTags, setSelectedTags] = useState<string[]>([]);
+  const [tagInput, setTagInput] = useState("");
   const containerRef = useRef<HTMLDivElement>(null);
   const [dimensions, setDimensions] = useState({ width: 0, height: 0 });
   const graphRef = useRef<any>(null);
@@ -168,7 +170,7 @@ export default function GraphPage() {
       try {
         const data = focusDocumentId 
           ? await getDocumentGraph(focusDocumentId)
-          : await getGraphData();
+          : await getGraphData({ tags: selectedTags });
         setGraphData(data);
       } catch (error) {
         console.error("Failed to fetch graph:", error);
@@ -177,7 +179,7 @@ export default function GraphPage() {
       }
     }
     fetchGraph();
-  }, [focusDocumentId]);
+  }, [focusDocumentId, focusEntityId, selectedTags]);
 
   // Center graph when focused data loads
   useEffect(() => {
@@ -207,7 +209,9 @@ export default function GraphPage() {
   const handleRefresh = async () => {
     setIsLoading(true);
     try {
-      const data = await getGraphData();
+      const data = focusDocumentId
+        ? await getDocumentGraph(focusDocumentId)
+        : await getGraphData({ tags: selectedTags });
       setGraphData(data);
     } catch (error) {
       console.error("Failed to refresh graph:", error);
@@ -219,6 +223,8 @@ export default function GraphPage() {
   const handleReset = () => {
     setSearchQuery("");
     setSelectedTypes([]);
+    setSelectedTags([]);
+    setTagInput("");
     // Optionally reset view to fit all nodes
     if (graphRef.current) {
       graphRef.current.zoomToFit(400);
@@ -430,6 +436,46 @@ export default function GraphPage() {
                     >
                       <X className="h-4 w-4" />
                     </button>
+                  )}
+                </div>
+
+                {/* Tag Filter */}
+                <div className="flex items-center gap-2 border-l pl-2 ml-1">
+                  <Input
+                    placeholder="Filter tags…"
+                    value={tagInput}
+                    onChange={(e) => setTagInput(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key !== "Enter") return;
+                      e.preventDefault();
+
+                      const v = tagInput.trim().toLowerCase();
+                      if (!v) return;
+                      if (selectedTags.includes(v)) {
+                        setTagInput("");
+                        return;
+                      }
+                      setSelectedTags((prev) => [...prev, v]);
+                      setTagInput("");
+                    }}
+                    className="w-40 bg-background"
+                    disabled={!!focusDocumentId}
+                  />
+
+                  {selectedTags.length > 0 && (
+                    <div className="flex flex-wrap items-center gap-1">
+                      {selectedTags.map((t) => (
+                        <Badge
+                          key={t}
+                          variant="secondary"
+                          className="gap-1 cursor-pointer"
+                          onClick={() => setSelectedTags((prev) => prev.filter((x) => x !== t))}
+                        >
+                          {t}
+                          <X className="h-3 w-3" />
+                        </Badge>
+                      ))}
+                    </div>
                   )}
                 </div>
 
