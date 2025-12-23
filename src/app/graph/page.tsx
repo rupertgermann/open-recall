@@ -339,7 +339,23 @@ export default function GraphPage() {
                             className="flex items-center gap-2 p-2 rounded-lg bg-muted cursor-pointer hover:bg-muted/80"
                             onClick={() => {
                               const node = graphData.nodes.find((n) => n.id === entity.id);
-                              if (node) setSelectedNode(node);
+                              if (node && graphRef.current) {
+                                setSelectedNode(node);
+                                // Get the current zoom level
+                                const currentZoom = graphRef.current.zoom();
+                                
+                                // Use the force graph's internal data structure
+                                const graphInstance = graphRef.current;
+                                // Access the graph's current state through the internal _graphData property
+                                const internalData = (graphInstance as any)._graphData || forceGraphData;
+                                const internalNode = internalData.nodes.find((n: any) => n.id === entity.id);
+                                
+                                if (internalNode && internalNode.x !== undefined && internalNode.y !== undefined) {
+                                  // Center the graph on this node while preserving current zoom
+                                  graphInstance.centerAt(internalNode.x, internalNode.y, 400);
+                                  graphInstance.zoom(currentZoom, 400);
+                                }
+                              }
                             }}
                           >
                             <div
