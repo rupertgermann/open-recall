@@ -5,6 +5,8 @@ import { documents, chunks, entities, entityMentions, relationships, tags, docum
 import { eq, desc, like, or, sql, count, inArray } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { generateTagsWithDBConfig } from "@/lib/ai";
+import { extractFromUrl, detectContentType } from "@/lib/content/extractor";
+import { reprocessDocument } from "@/actions/ingest";
 
 export type DocumentWithStats = {
   id: string;
@@ -236,6 +238,53 @@ export async function generateDocumentTags(documentId: string) {
 
   const merged = Array.from(new Set([...existing.map((t) => t.name), ...aiTags]));
   return updateDocumentTags(documentId, merged);
+}
+
+export async function updateDocumentFromSource(documentId: string) {
+  const [doc] = await db
+    .select({ id: documents.id, url: documents.url })
+    .from(documents)
+    .where(eq(documents.id, documentId))
+    .limit(1);
+
+  if (!doc) {
+    return { success: false, error: "Document not found" };
+  }
+
+  if (!doc.url) {
+    return { success: false, error: "Document has no source URL" };
+  }
+
+  const contentType = detectContentType(doc.url);
+  const extracted = await extractFromUrl(doc.url);
+  if (!extracted) {
+    return { success: false, error: "Failed to extract content from URL" };
+  }
+
+  await db
+    .update(documents)
+    .set({
+      title: extracted.title,
+      type: contentType === "youtube" ? "youtube" : "article",
+      content: extracted.content,
+      processingStatus: "processing",
+      updatedAt: new Date(),
+    })
+    .where(eq(documents.id, documentId));
+
+  // Reprocess document content and regenerate derived data
+  await reprocessDocument(documentId, extracted.content);
+
+  await db
+    .update(documents)
+    .set({ processingStatus: "completed", updatedAt: new Date() })
+    .where(eq(documents.id, documentId));
+
+  revalidatePath("/library");
+  revalidatePath(`/library/${documentId}`);
+  revalidatePath("/graph");
+
+  return { success: true };
 }
 
 /**

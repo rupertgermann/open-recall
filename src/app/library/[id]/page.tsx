@@ -7,6 +7,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Badge } from "@/components/ui/badge";
 import { getDocument } from "@/actions/documents";
 import { DeleteButton } from "./delete-button";
+import { UpdateFromSourceButton } from "./update-from-source-button";
 import { TagsEditor } from "./tags-editor";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -96,7 +97,16 @@ export default async function DocumentDetailPage({
                 </a>
               )}
             </div>
-            <DeleteButton documentId={document.id} />
+            <div className="flex items-center gap-2">
+              <Link href={`/graph?focus=${id}`} className="w-full">
+                <Button variant="outline">View in Graph</Button>
+              </Link>
+              <Link href={`/chat?context=${id}`} className="w-full">
+                <Button variant="outline">Chat about this</Button>
+              </Link>
+              {document.url && <UpdateFromSourceButton documentId={document.id} />}
+              <DeleteButton documentId={document.id} />
+            </div>
           </div>
 
           <div className="grid gap-6 lg:grid-cols-3">
@@ -253,24 +263,6 @@ export default async function DocumentDetailPage({
                 </CardContent>
               </Card>
 
-              {/* Actions */}
-              <Card>
-                <CardHeader>
-                  <CardTitle>Actions</CardTitle>
-                </CardHeader>
-                <CardContent className="space-y-2">
-                  <Link href={`/graph?focus=${id}`} className="w-full">
-                    <Button variant="outline" className="w-full">
-                      View in Graph
-                    </Button>
-                  </Link>
-                  <Link href={`/chat?context=${id}`} className="w-full">
-                    <Button variant="outline" className="w-full">
-                      Chat about this
-                    </Button>
-                  </Link>
-                </CardContent>
-              </Card>
             </div>
           </div>
         </div>

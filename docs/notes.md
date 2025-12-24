@@ -10,3 +10,6 @@
 
 
 ## features
+- format unformatted markdown in document cards correctly. currently is see "**What it is:**" (see markdown formatting in document detail view)
+
+- modal to show the complete content of all chunks of a document

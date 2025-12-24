@@ -35,6 +35,12 @@ export type IngestResult = {
   error?: string;
 };
 
+export async function reprocessDocument(documentId: string, content: string): Promise<void> {
+  // Clear existing chunks (and cascaded entity mentions) to avoid duplicates and unique hash conflicts.
+  await db.delete(chunks).where(eq(chunks.documentId, documentId));
+  await processDocument(documentId, content);
+}
+
 /**
  * Ingest content from a URL
  */
@@ -183,7 +189,12 @@ async function processDocument(documentId: string, content: string): Promise<voi
 
     try {
       const tagText = (summary || content).slice(0, 8000);
-      const aiTags = await generateTagsWithDBConfig({ title: document.title, summary, content: tagText });
+      const [docRow] = await db
+        .select({ title: documents.title })
+        .from(documents)
+        .where(eq(documents.id, documentId))
+        .limit(1);
+      const aiTags = await generateTagsWithDBConfig({ title: docRow?.title, summary, content: tagText });
       if (aiTags.length > 0) {
         await updateDocumentTags(documentId, aiTags);
       }

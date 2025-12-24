@@ -3,7 +3,7 @@
 import { useState, useEffect, useTransition } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { FileText, Video, Globe, Search, MoreVertical, Trash2, ExternalLink, Loader2, RefreshCw } from "lucide-react";
+import { FileText, Video, Globe, Search, MoreVertical, Trash2, ExternalLink, Loader2, RefreshCw, X } from "lucide-react";
 import { Header } from "@/components/layout/header";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -26,7 +26,7 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { useToast } from "@/hooks/use-toast";
-import { getDocuments, deleteDocument, type DocumentWithStats } from "@/actions/documents";
+import { getDocuments, deleteDocument, updateDocumentFromSource, type DocumentWithStats } from "@/actions/documents";
 
 const typeIcons = {
   article: Globe,
@@ -52,6 +52,10 @@ export default function LibraryPage() {
   const [filterType, setFilterType] = useState<string | null>(null);
   const [debouncedSearch, setDebouncedSearch] = useState("");
   const [documentToDelete, setDocumentToDelete] = useState<string | null>(null);
+  const [documentToUpdate, setDocumentToUpdate] = useState<string | null>(null);
+  const [pageSize] = useState(30);
+  const [offset, setOffset] = useState(0);
+  const [hasMore, setHasMore] = useState(true);
 
   // Debounce search
   useEffect(() => {
@@ -69,8 +73,12 @@ export default function LibraryPage() {
         const docs = await getDocuments({
           search: debouncedSearch || undefined,
           type: filterType || undefined,
+          limit: pageSize,
+          offset: 0,
         });
         setDocuments(docs);
+        setOffset(docs.length);
+        setHasMore(docs.length === pageSize);
       } catch (error) {
         console.error("Failed to fetch documents:", error);
       } finally {
@@ -78,7 +86,50 @@ export default function LibraryPage() {
       }
     }
     fetchDocuments();
-  }, [debouncedSearch, filterType]);
+  }, [debouncedSearch, filterType, pageSize]);
+
+  const loadMore = async () => {
+    if (isLoading || !hasMore) return;
+    setIsLoading(true);
+    try {
+      const more = await getDocuments({
+        search: debouncedSearch || undefined,
+        type: filterType || undefined,
+        limit: pageSize,
+        offset,
+      });
+      setDocuments((prev) => [...prev, ...more]);
+      setOffset((prev) => prev + more.length);
+      setHasMore(more.length === pageSize);
+    } catch (error) {
+      console.error("Failed to fetch more documents:", error);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleUpdateFromSource = async (id: string) => {
+    setDocumentToUpdate(id);
+    try {
+      const res = await updateDocumentFromSource(id);
+      if (!res.success) {
+        throw new Error(res.error || "Failed to update document");
+      }
+      toast({
+        title: "Updated from source",
+        description: "The document was refreshed.",
+      });
+      setDebouncedSearch(searchQuery);
+    } catch (error) {
+      toast({
+        title: "Update failed",
+        description: error instanceof Error ? error.message : "Unknown error",
+        variant: "destructive",
+      });
+    } finally {
+      setDocumentToUpdate(null);
+    }
+  };
 
   const handleDeleteClick = (id: string) => {
     setDocumentToDelete(id);
@@ -143,11 +194,24 @@ export default function LibraryPage() {
                 placeholder="Search documents..."
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                className="pl-10"
+                className="pl-10 pr-10"
               />
+              {searchQuery && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSearchQuery("");
+                    setDebouncedSearch("");
+                  }}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                  aria-label="Clear search"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              )}
             </div>
             <div className="flex gap-2">
-              {["article", "youtube", "pdf"].map((type) => (
+              {["article", "youtube", "pdf", "note"].map((type) => (
                 <Button
                   key={type}
                   variant={filterType === type ? "secondary" : "outline"}
@@ -155,7 +219,7 @@ export default function LibraryPage() {
                   onClick={() => setFilterType(filterType === type ? null : type)}
                   className="capitalize"
                 >
-                  {type}
+                  {type === "note" ? "text" : type}
                 </Button>
               ))}
             </div>
@@ -201,6 +265,15 @@ export default function LibraryPage() {
                                   <ExternalLink className="h-4 w-4 mr-2" />
                                   Open Original
                                 </a>
+                              </DropdownMenuItem>
+                            )}
+                            {doc.url && (
+                              <DropdownMenuItem
+                                onClick={() => handleUpdateFromSource(doc.id)}
+                                disabled={isPending || documentToUpdate === doc.id}
+                              >
+                                <RefreshCw className={`h-4 w-4 mr-2 ${documentToUpdate === doc.id ? "animate-spin" : ""}`} />
+                                Update from source
                               </DropdownMenuItem>
                             )}
                             <DropdownMenuItem
@@ -255,6 +328,14 @@ export default function LibraryPage() {
               <Link href="/add">
                 <Button variant="link">Add your first document</Button>
               </Link>
+            </div>
+          )}
+
+          {!isLoading && documents.length > 0 && hasMore && (
+            <div className="flex justify-center pt-4">
+              <Button variant="outline" onClick={loadMore}>
+                Load more
+              </Button>
             </div>
           )}
         </div>
