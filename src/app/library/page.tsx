@@ -9,6 +9,8 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -290,8 +292,10 @@ export default function LibraryPage() {
                       <CardTitle className="text-lg line-clamp-2 mt-2">
                         {doc.title}
                       </CardTitle>
-                      <CardDescription className="line-clamp-2">
-                        {doc.summary}
+                      <CardDescription className="line-clamp-2 prose prose-sm max-w-none dark:prose-invert">
+                        <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                          {doc.summary}
+                        </ReactMarkdown>
                       </CardDescription>
                     </CardHeader>
                     <CardContent>
