@@ -195,7 +195,7 @@ export default function ChatPage() {
     <div className="min-h-screen flex flex-col">
       <Header />
 
-      <main className="flex-1 container mx-auto px-4 py-6 max-w-6xl">
+      <main className="flex-1 container mx-auto px-4 py-6">
         <div className="grid grid-cols-1 md:grid-cols-[280px_1fr] gap-4">
           <aside className="rounded-lg border bg-card">
             <div className="p-3 border-b flex items-center justify-between">
