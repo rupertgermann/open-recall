@@ -32,6 +32,11 @@ export function getDocumentStarterPrompts(documentTitle?: string): StarterPrompt
       id: "application",
       text: `How can I apply the concepts from ${title} in practice?`,
       description: "Get practical applications and implementation ideas"
+    },
+    {
+      id: "critique",
+      text: `What are potential limitations or criticisms of the content in ${title}?`,
+      description: "Explore critical perspectives and counterarguments"
     }
   ];
 }
@@ -55,6 +60,11 @@ export function getEntityStarterPrompts(entityName?: string, entityType?: string
       id: "relationships",
       text: `What is ${name} related to and how does it connect to other concepts?`,
       description: "Understand relationships and connections"
+    },
+    {
+      id: "evolution",
+      text: `How has ${name} evolved or changed over time?`,
+      description: "Learn about historical development and changes"
     }
   ];
 
@@ -111,5 +121,5 @@ export function getEntityStarterPrompts(entityName?: string, entityType?: string
 
   const additionalPrompts = typeSpecificPrompts[type as keyof typeof typeSpecificPrompts] || typeSpecificPrompts.concept;
   
-  return [...basePrompts, ...additionalPrompts.slice(0, 2)];
+  return [...basePrompts, ...additionalPrompts];
 }

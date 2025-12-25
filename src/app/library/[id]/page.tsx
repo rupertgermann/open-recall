@@ -197,6 +197,9 @@ export default async function DocumentDetailPage({
 
             {/* Sidebar */}
             <div className="space-y-6">
+              {/* Related Chats */}
+              <RelatedChats documentId={document.id} />
+
               {/* Entities */}
               <Card>
                 <CardHeader>
@@ -273,9 +276,6 @@ export default async function DocumentDetailPage({
                   )}
                 </CardContent>
               </Card>
-
-              {/* Related Chats */}
-              <RelatedChats documentId={document.id} />
 
             </div>
           </div>

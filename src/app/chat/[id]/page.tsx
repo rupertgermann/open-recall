@@ -64,9 +64,13 @@ export default function ChatThreadPage() {
 
   const getStarterPrompts = (chat: LoadedChat): StarterPrompt[] => {
     if (chat.thread.category === "document") {
-      return getDocumentStarterPrompts(chat.thread.title);
+      // Remove "Chat about " prefix to get the original document title
+      const originalTitle = chat.thread.title.replace(/^Chat about\s+/, "");
+      return getDocumentStarterPrompts(originalTitle);
     } else if (chat.thread.category === "entity") {
-      return getEntityStarterPrompts(chat.thread.title, "entity"); // We could enhance this to get actual entity type
+      // Remove "Chat about " prefix to get the original entity name
+      const originalName = chat.thread.title.replace(/^Chat about\s+/, "");
+      return getEntityStarterPrompts(originalName, "entity"); // We could enhance this to get actual entity type
     }
     return [];
   };
@@ -202,63 +206,56 @@ export default function ChatThreadPage() {
           <div className="text-sm text-destructive">{error}</div>
         ) : (
           <div className="flex flex-col gap-4">
-            {/* Show starter prompts for new context-specific chats */}
-            {(() => {
-              console.log('Debug - messages.length:', messages.length, 'starterPrompts.length:', starterPrompts.length, 'loaded?.thread.category:', loaded?.thread.category);
-              // Show starter prompts for context-specific chats that only have the welcome message
-              const hasOnlyWelcomeMessage = messages.length === 1 && loaded?.thread.category !== 'general';
-              return hasOnlyWelcomeMessage && starterPrompts.length > 0;
-            })() && (
-              <div className="bg-muted/50 rounded-lg p-4">
-                <div className="flex items-center gap-2 mb-3">
-                  <Lightbulb className="h-4 w-4 text-muted-foreground" />
-                  <h3 className="text-sm font-medium text-muted-foreground">
-                    Starter prompts for this {loaded?.thread.category === "document" ? "document" : "entity"}
-                  </h3>
-                </div>
-                <div className="grid gap-2">
-                  {starterPrompts.map((prompt) => (
-                    <button
-                      key={prompt.id}
-                      onClick={() => handleStarterPrompt(prompt.text)}
-                      className="text-left p-3 rounded-md bg-background hover:bg-accent border transition-colors"
-                      disabled={status !== "ready"}
-                    >
-                      <div className="text-sm font-medium">{prompt.text}</div>
-                      {prompt.description && (
-                        <div className="text-xs text-muted-foreground mt-1">{prompt.description}</div>
-                      )}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            )}
-
             <Conversation className="rounded-lg border h-[60vh]">
               <ConversationContent>
-                {messages.length === 0 ? (
+                {messages.map((m, index) => (
+                  <Message from={m.role} key={m.id}>
+                    <MessageContent>
+                      {m.parts.map((part, i) => {
+                        if (part.type === "text") {
+                          return (
+                            <MessageResponse key={`${m.id}-text-${i}`}>
+                              {part.text}
+                            </MessageResponse>
+                          );
+                        }
+                        return null;
+                      })}
+                    </MessageContent>
+                    {/* Show starter prompts after the first welcome message */}
+                    {index === 0 && loaded?.thread.category !== 'general' && starterPrompts.length > 0 && (
+                      <div className="mt-3">
+                        <div className="flex items-center gap-2 mb-2">
+                          <Lightbulb className="h-3 w-3 text-muted-foreground" />
+                          <h3 className="text-xs font-medium text-muted-foreground">
+                            Starter prompts
+                          </h3>
+                        </div>
+                        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
+                          {starterPrompts.map((prompt) => (
+                            <button
+                              key={prompt.id}
+                              onClick={() => handleStarterPrompt(prompt.text)}
+                              className="text-left p-2 rounded-md bg-background hover:bg-accent border transition-colors text-xs"
+                              disabled={status !== "ready"}
+                            >
+                              <div className="font-medium leading-tight">{prompt.text}</div>
+                              {prompt.description && (
+                                <div className="text-muted-foreground mt-1 leading-tight">{prompt.description}</div>
+                              )}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </Message>
+                ))}
+                {messages.length === 0 && (
                   <ConversationEmptyState
                     title="No messages"
                     description="Start chatting to see messages here"
                     icon={<MessageSquareIcon className="size-6" />}
                   />
-                ) : (
-                  messages.map((m) => (
-                    <Message from={m.role} key={m.id}>
-                      <MessageContent>
-                        {m.parts.map((part, i) => {
-                          if (part.type === "text") {
-                            return (
-                              <MessageResponse key={`${m.id}-text-${i}`}>
-                                {part.text}
-                              </MessageResponse>
-                            );
-                          }
-                          return null;
-                        })}
-                      </MessageContent>
-                    </Message>
-                  ))
                 )}
               </ConversationContent>
               <ConversationScrollButton />
