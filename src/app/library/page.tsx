@@ -73,7 +73,7 @@ function DocumentListItem({
             <Icon className="h-5 w-5" />
           </div>
           <div className="flex-1 min-w-0">
-            <h3 className="font-semibold text-lg line-clamp-1 mb-1">{doc.title}</h3>
+            <h3 className="font-semibold text-lg line-clamp-1 mt-1">{doc.title}</h3>
             {doc.summary && (
               <div className="text-sm text-muted-foreground line-clamp-2 mb-2 prose prose-sm max-w-none dark:prose-invert">
                 <ReactMarkdown remarkPlugins={[remarkGfm]}>
