@@ -5,7 +5,6 @@ import { useRouter } from "next/navigation";
 import { RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/hooks/use-toast";
-import { updateDocumentFromSource } from "@/actions/documents";
 
 export function UpdateFromSourceButton({ documentId }: { documentId: string }) {
   const router = useRouter();
@@ -15,18 +14,11 @@ export function UpdateFromSourceButton({ documentId }: { documentId: string }) {
   const onClick = () => {
     startTransition(async () => {
       try {
-        const res = await updateDocumentFromSource(documentId);
-        if (!res.success) {
-          throw new Error(res.error || "Failed to update document");
-        }
-        toast({
-          title: "Updated from source",
-          description: "The document was refreshed.",
-        });
-        router.refresh();
+        // Navigate to add module with update parameters
+        router.push(`/add?update=${documentId}&start=1`);
       } catch (e) {
         toast({
-          title: "Update failed",
+          title: "Navigation failed",
           description: e instanceof Error ? e.message : "Unknown error",
           variant: "destructive",
         });

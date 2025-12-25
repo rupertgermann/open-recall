@@ -11,6 +11,4 @@
 
 ## features
 
-- modal to show the complete content of all chunks of a document
-
-- list/card view switch in library
+- favicon
