@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 
 type Provider = "local" | "openai";
 type ConnectionStatus = "connected" | "disconnected" | "testing";
@@ -25,10 +26,14 @@ export default function SettingsPage() {
   const [chatConnectionError, setChatConnectionError] = useState<string | null>(null);
   const [chatAvailableModels, setChatAvailableModels] = useState<string[]>([
     "llama3.2:8b",
-    "mistral:7b",
+    "mistral:7b", 
     "qwen2.5:7b",
-    "gpt-5",
   ]);
+
+  // OpenAI-specific chat settings
+  const [reasoningEffort, setReasoningEffort] = useState("medium");
+  const [verbosity, setVerbosity] = useState("medium");
+  const [webSearchEnabled, setWebSearchEnabled] = useState(false);
 
   // Embedding provider settings
   const [embeddingProvider, setEmbeddingProvider] = useState<Provider>("local");
@@ -39,8 +44,6 @@ export default function SettingsPage() {
   const [embeddingAvailableModels, setEmbeddingAvailableModels] = useState<string[]>([
     "nomic-embed-text",
     "mxbai-embed-large",
-    "text-embedding-3-small",
-    "text-embedding-3-large",
   ]);
 
   const [isSaving, setIsSaving] = useState(false);
@@ -90,14 +93,17 @@ export default function SettingsPage() {
       if (result.success) {
         setChatConnectionStatus("connected");
         if (result.models && result.models.length > 0) {
-          const openaiModels = result.models
-            .filter((m: string) => !m.startsWith("text-embedding-"))
-            .filter((m: string) => !m.includes("embedding"));
-          const localModels = result.models.filter((m: string) => !m.includes("embed"));
-
-          const gpt5Models = openaiModels.filter((m: string) => m.startsWith("gpt-5"));
-
-          let models = chatProvider === "openai" ? gpt5Models : localModels;
+          let models: string[] = [];
+          
+          if (chatProvider === "openai") {
+            // For OpenAI, show only chat models (non-embedding models)
+            models = result.models
+              .filter((m: string) => !m.startsWith("text-embedding-"))
+              .filter((m: string) => !m.includes("embedding"));
+          } else {
+            // For local providers, show non-embedding models
+            models = result.models.filter((m: string) => !m.includes("embed"));
+          }
           
           // Always include the currently configured model in the list
           if (chatModel && !models.includes(chatModel)) {
@@ -165,12 +171,19 @@ export default function SettingsPage() {
           baseUrl: chatProvider === "openai" ? openaiBaseUrl : chatBaseUrl,
           model: chatModel,
           apiKey: chatProvider === "openai" ? sharedKey : undefined,
+          // Only include OpenAI-specific options for OpenAI provider
+          ...(chatProvider === "openai" && {
+            reasoningEffort: reasoningEffort as "low" | "medium" | "high",
+            verbosity: verbosity as "low" | "medium" | "high",
+            webSearchEnabled: webSearchEnabled,
+          }),
         },
         embedding: {
           provider: embeddingProvider,
           baseUrl: embeddingProvider === "openai" ? openaiBaseUrl : embeddingBaseUrl,
           model: embeddingModel,
           apiKey: embeddingProvider === "openai" ? sharedKey : undefined,
+          // Embeddings don't use reasoning or web search
         },
       });
       setSaved(true);
@@ -185,13 +198,47 @@ export default function SettingsPage() {
   // Apply OpenAI defaults when switching provider
   useEffect(() => {
     if (chatProvider === "openai") {
-      setChatModel((prev) => (prev === "llama3.2:8b" ? "gpt-5" : prev));
+      setChatModel((prev) => (prev === "llama3.2:8b" ? "gpt-5.2" : prev));
+      // Set default OpenAI models until connection test
+      setChatAvailableModels([
+        "gpt-5.2",
+        "gpt-5-nano",
+        "gpt-5-mini",
+      ]);
+      setChatConnectionStatus("disconnected");
+      setChatConnectionError(null);
+    } else {
+      setChatModel((prev) => (prev.startsWith("gpt-") ? "llama3.2:8b" : prev));
+      // Reset to local models
+      setChatAvailableModels([
+        "llama3.2:8b",
+        "mistral:7b", 
+        "qwen2.5:7b",
+      ]);
+      setChatConnectionStatus("disconnected");
+      setChatConnectionError(null);
     }
   }, [chatProvider]);
 
   useEffect(() => {
     if (embeddingProvider === "openai") {
       setEmbeddingModel((prev) => (prev === "nomic-embed-text" ? "text-embedding-3-small" : prev));
+      // Set default OpenAI embedding models until connection test
+      setEmbeddingAvailableModels([
+        "text-embedding-3-small",
+        "text-embedding-3-large",
+      ]);
+      setEmbeddingConnectionStatus("disconnected");
+      setEmbeddingConnectionError(null);
+    } else {
+      setEmbeddingModel((prev) => (prev.startsWith("text-embedding-") ? "nomic-embed-text" : prev));
+      // Reset to local models
+      setEmbeddingAvailableModels([
+        "nomic-embed-text",
+        "mxbai-embed-large",
+      ]);
+      setEmbeddingConnectionStatus("disconnected");
+      setEmbeddingConnectionError(null);
     }
   }, [embeddingProvider]);
 
@@ -224,6 +271,14 @@ export default function SettingsPage() {
     connectionError,
     availableModels,
     testConnection,
+    // OpenAI-specific props (only used for chat provider)
+    reasoningEffort,
+    setReasoningEffort,
+    verbosity,
+    setVerbosity,
+    webSearchEnabled,
+    setWebSearchEnabled,
+    isChatProvider = false,
   }: {
     title: string;
     description: string;
@@ -238,6 +293,13 @@ export default function SettingsPage() {
     connectionError: string | null;
     availableModels: string[];
     testConnection: () => void;
+    reasoningEffort?: string;
+    setReasoningEffort?: (value: "low" | "medium" | "high") => void;
+    verbosity?: string;
+    setVerbosity?: (value: "low" | "medium" | "high") => void;
+    webSearchEnabled?: boolean;
+    setWebSearchEnabled?: (value: boolean) => void;
+    isChatProvider?: boolean;
   }) => (
     <Card>
       <CardHeader>
@@ -324,6 +386,70 @@ export default function SettingsPage() {
               ))}
             </select>
           </div>
+
+          {/* OpenAI-specific options */}
+          {provider === "openai" && isChatProvider && (
+            <div className="space-y-4 pt-4 border-t">
+              <div className="space-y-2">
+                <label className="text-sm font-medium">Reasoning Effort</label>
+                <Select 
+                  value={reasoningEffort} 
+                  onValueChange={(value: "low" | "medium" | "high") => setReasoningEffort?.(value)}
+                >
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="low">Low</SelectItem>
+                    <SelectItem value="medium">Medium</SelectItem>
+                    <SelectItem value="high">High</SelectItem>
+                  </SelectContent>
+                </Select>
+                <p className="text-xs text-muted-foreground">
+                  Controls the reasoning effort level for response generation
+                </p>
+              </div>
+
+              <div className="space-y-2">
+                <label className="text-sm font-medium">Verbosity</label>
+                <Select 
+                  value={verbosity} 
+                  onValueChange={(value: "low" | "medium" | "high") => setVerbosity?.(value)}
+                >
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="low">Low</SelectItem>
+                    <SelectItem value="medium">Medium</SelectItem>
+                    <SelectItem value="high">High</SelectItem>
+                  </SelectContent>
+                </Select>
+                <p className="text-xs text-muted-foreground">
+                  Constrains response verbosity (low, medium, high)
+                </p>
+              </div>
+
+              <div className="space-y-2">
+                <label className="text-sm font-medium">Web Search</label>
+                <div className="flex items-center space-x-2">
+                  <input
+                    type="checkbox"
+                    id="web-search"
+                    checked={webSearchEnabled}
+                    onChange={(e) => setWebSearchEnabled?.(e.target.checked)}
+                    className="rounded"
+                  />
+                  <label htmlFor="web-search" className="text-sm">
+                    Enable web search for responses
+                  </label>
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  Allow the model to search the web for current information
+                </p>
+              </div>
+            </div>
+          )}
         </div>
       </CardContent>
     </Card>
@@ -381,6 +507,14 @@ export default function SettingsPage() {
             connectionError={chatConnectionError}
             availableModels={chatAvailableModels}
             testConnection={testChatConnection}
+            // OpenAI-specific options for chat
+            reasoningEffort={reasoningEffort}
+            setReasoningEffort={setReasoningEffort}
+            verbosity={verbosity}
+            setVerbosity={setVerbosity}
+            webSearchEnabled={webSearchEnabled}
+            setWebSearchEnabled={setWebSearchEnabled}
+            isChatProvider={true}
           />
 
           {/* Embedding Provider */}
@@ -398,6 +532,8 @@ export default function SettingsPage() {
             connectionError={embeddingConnectionError}
             availableModels={embeddingAvailableModels}
             testConnection={testEmbeddingConnection}
+            // Embedding provider doesn't use OpenAI-specific options
+            isChatProvider={false}
           />
 
           {/* Database Status */}
