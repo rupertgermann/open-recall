@@ -382,16 +382,21 @@ export default function LibraryPage() {
                     onClick={() => router.push(`/library/${doc.id}`)}
                   >
                     <CardHeader className="pb-3">
-                      <div className="flex items-start justify-between">
-                        <div className={`p-2 rounded-lg ${colorClass}`}>
-                          <Icon className="h-5 w-5" />
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-3 min-w-0 flex-1">
+                          <div className={`p-2 rounded-lg ${colorClass} flex-shrink-0`}>
+                            <Icon className="h-5 w-5" />
+                          </div>
+                          <CardTitle className="text-lg line-clamp-1 m-0">
+                            {doc.title}
+                          </CardTitle>
                         </div>
                         <DropdownMenu>
                           <DropdownMenuTrigger asChild>
                             <Button 
                               variant="ghost" 
                               size="icon" 
-                              className="opacity-0 group-hover:opacity-100 transition-opacity"
+                              className="opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0"
                               onClick={(e) => e.stopPropagation()}
                             >
                               <MoreVertical className="h-4 w-4" />
@@ -426,10 +431,7 @@ export default function LibraryPage() {
                           </DropdownMenuContent>
                         </DropdownMenu>
                       </div>
-                      <CardTitle className="text-lg line-clamp-2 mt-2">
-                        {doc.title}
-                      </CardTitle>
-                      <CardDescription className="line-clamp-2 prose prose-sm max-w-none dark:prose-invert">
+                      <CardDescription className="line-clamp-2 prose prose-sm max-w-none dark:prose-invert mt-3">
                         <ReactMarkdown remarkPlugins={[remarkGfm]}>
                           {doc.summary}
                         </ReactMarkdown>
