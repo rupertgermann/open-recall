@@ -220,6 +220,17 @@ export async function POST(req: Request) {
         
         const entityIdMap = new Map<string, string>();
 
+        const resolveEntityIdByName = (name: string): string | undefined => {
+          let foundId: string | undefined;
+          for (const [key, id] of entityIdMap.entries()) {
+            const [keyName] = key.split("||");
+            if (keyName !== name) continue;
+            if (foundId && foundId !== id) return undefined;
+            foundId = id;
+          }
+          return foundId;
+        };
+
         // Dedupe extracted entities within this ingestion run to avoid inserting the
         // same (name,type) multiple times.
         const uniqueExtractedEntities: typeof extractedData.entities = [];
@@ -241,7 +252,7 @@ export async function POST(req: Request) {
             .limit(1);
 
           if (existing.length > 0) {
-            entityIdMap.set(entity.name, existing[0].id);
+            entityIdMap.set(`${entity.name}||${entity.type}`, existing[0].id);
           } else {
             newEntities.push(entity);
           }
@@ -273,7 +284,7 @@ export async function POST(req: Request) {
               .returning();
 
             if (inserted.length > 0) {
-              entityIdMap.set(entity.name, inserted[0].id);
+              entityIdMap.set(`${entity.name}||${entity.type}`, inserted[0].id);
             } else {
               const existing = await db
                 .select({ id: entities.id })
@@ -282,7 +293,7 @@ export async function POST(req: Request) {
                 .limit(1);
 
               if (existing.length > 0) {
-                entityIdMap.set(entity.name, existing[0].id);
+                entityIdMap.set(`${entity.name}||${entity.type}`, existing[0].id);
               }
             }
           }
@@ -313,8 +324,8 @@ export async function POST(req: Request) {
         controller.enqueue(encoder.encode(createSSEMessage("saving", "Saving relationships...", 90)));
         
         for (const rel of extractedData.relationships) {
-          const sourceId = entityIdMap.get(rel.source);
-          const targetId = entityIdMap.get(rel.target);
+          const sourceId = resolveEntityIdByName(rel.source);
+          const targetId = resolveEntityIdByName(rel.target);
 
           if (sourceId && targetId) {
             await db.insert(relationships).values({

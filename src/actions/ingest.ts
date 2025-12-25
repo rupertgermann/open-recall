@@ -247,6 +247,17 @@ async function processDocument(documentId: string, content: string): Promise<voi
     // Process entities with graph embeddings (Phase 4)
     const entityIdMap = new Map<string, string>();
 
+    const resolveEntityIdByName = (name: string): string | undefined => {
+      let foundId: string | undefined;
+      for (const [key, id] of entityIdMap.entries()) {
+        const [keyName] = key.split("||");
+        if (keyName !== name) continue;
+        if (foundId && foundId !== id) return undefined;
+        foundId = id;
+      }
+      return foundId;
+    };
+
     // Dedupe extracted entities within this ingestion run to avoid inserting the
     // same (name,type) multiple times.
     const uniqueExtractedEntities: ExtractedEntity[] = [];
@@ -267,7 +278,7 @@ async function processDocument(documentId: string, content: string): Promise<voi
         .limit(1);
 
       if (existing.length > 0) {
-        entityIdMap.set(entity.name, existing[0].id);
+        entityIdMap.set(`${entity.name}||${entity.type}`, existing[0].id);
       } else {
         newEntities.push(entity);
       }
@@ -298,7 +309,7 @@ async function processDocument(documentId: string, content: string): Promise<voi
           .returning();
 
         if (inserted.length > 0) {
-          entityIdMap.set(entity.name, inserted[0].id);
+          entityIdMap.set(`${entity.name}||${entity.type}`, inserted[0].id);
         } else {
           // Likely a concurrent insert (or a previously missed row). Fetch the existing entity id.
           const existing = await db
@@ -308,7 +319,7 @@ async function processDocument(documentId: string, content: string): Promise<voi
             .limit(1);
 
           if (existing.length > 0) {
-            entityIdMap.set(entity.name, existing[0].id);
+            entityIdMap.set(`${entity.name}||${entity.type}`, existing[0].id);
           }
         }
       }
@@ -335,8 +346,8 @@ async function processDocument(documentId: string, content: string): Promise<voi
 
     // Save relationships
     for (const rel of extractedData.relationships) {
-      const sourceId = entityIdMap.get(rel.source);
-      const targetId = entityIdMap.get(rel.target);
+      const sourceId = resolveEntityIdByName(rel.source);
+      const targetId = resolveEntityIdByName(rel.target);
 
       if (sourceId && targetId) {
         await db.insert(relationships).values({
