@@ -148,25 +148,10 @@ export default function AddPage() {
       setIsUpdateMode(true);
       setUpdateDocumentId(qpUpdate);
       setContentType("url");
-      
-      if (qpStart === "1" && !hasAutoStartedRef.current) {
-        hasAutoStartedRef.current = true;
-        setError(null);
-        setIsProcessing(true);
-        setCompletedSteps(new Set());
-        setCurrentStatus(null);
 
-        // Do not rely on React state being updated yet; call the update endpoint directly.
-        runIngestRequest("/api/update-document", {
-          documentId: qpUpdate,
-          maxEntities: entityBudget.maxEntities,
-          maxRelationships: entityBudget.maxRelationships,
-        }).catch((err) => {
-          if (err instanceof Error && err.name !== "AbortError") {
-            setError(err.message);
-          }
-          setIsProcessing(false);
-        });
+      // Do not auto-start processing. Let the user adjust settings (e.g. entity detail) first.
+      if (qpStart === "1") {
+        hasAutoStartedRef.current = true;
       }
       return;
     }
@@ -177,15 +162,9 @@ export default function AddPage() {
     setContentType("url");
     setUrl(qpUrl);
 
-    if (qpStart === "1" && !hasAutoStartedRef.current) {
+    // Do not auto-start processing. Let the user adjust settings (e.g. entity detail) first.
+    if (qpStart === "1") {
       hasAutoStartedRef.current = true;
-      // Let state update settle before submitting.
-      setTimeout(() => {
-        const form = document.querySelector("form");
-        if (form) {
-          form.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
-        }
-      }, 0);
     }
   }, [searchParams]);
 

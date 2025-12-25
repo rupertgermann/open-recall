@@ -279,7 +279,7 @@ export default function GraphPage() {
     async (url: string) => {
       setIsAddingUrl((prev) => ({ ...prev, [url]: true }));
       try {
-        const qs = new URLSearchParams({ url, start: "1" });
+        const qs = new URLSearchParams({ url });
         router.push(`/add?${qs.toString()}`);
       } catch (e) {
         toast({

@@ -15,7 +15,7 @@ export function UpdateFromSourceButton({ documentId }: { documentId: string }) {
     startTransition(async () => {
       try {
         // Navigate to add module with update parameters
-        router.push(`/add?update=${documentId}&start=1`);
+        router.push(`/add?update=${documentId}`);
       } catch (e) {
         toast({
           title: "Navigation failed",

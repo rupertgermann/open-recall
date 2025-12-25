@@ -1,6 +1,6 @@
 import { notFound } from "next/navigation";
 import Link from "next/link";
-import { ArrowLeft, ExternalLink, FileText, Video, Globe, Network, Calendar, Hash } from "lucide-react";
+import { ArrowLeft, ExternalLink, FileText, Video, Globe, Network, Calendar, Hash, MessageSquare } from "lucide-react";
 import { Header } from "@/components/layout/header";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -100,10 +100,16 @@ export default async function DocumentDetailPage({
             </div>
             <div className="flex items-center gap-2">
               <Link href={`/graph?focus=${id}`} className="w-full">
-                <Button variant="outline">View in Graph</Button>
+                <Button variant="outline" size="sm" className="gap-2">
+                  <Network className="h-4 w-4" />
+                  View in Graph
+                </Button>
               </Link>
               <Link href={`/chat?context=${id}`} className="w-full">
-                <Button variant="outline">Chat about this</Button>
+                <Button variant="outline" size="sm" className="gap-2">
+                  <MessageSquare className="h-4 w-4" />
+                  Chat about this
+                </Button>
               </Link>
               {document.url && <UpdateFromSourceButton documentId={document.id} />}
               <DeleteButton documentId={document.id} />

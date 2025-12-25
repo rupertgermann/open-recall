@@ -12,3 +12,4 @@
 ## features
 
 - favicon
+- card header: put title in the same line as the icon. 
