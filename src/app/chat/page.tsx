@@ -4,11 +4,12 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useChat } from "@ai-sdk/react";
 import { DefaultChatTransport } from "ai";
 import Link from "next/link";
-import { Loader2, MessageSquareIcon, Plus, Trash2, Filter } from "lucide-react";
+import { Loader2, MessageSquareIcon, Plus, Trash2, Filter, Search } from "lucide-react";
 import { Header } from "@/components/layout/header";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Input } from "@/components/ui/input";
 import {
   Conversation,
   ConversationContent,
@@ -42,6 +43,9 @@ export default function ChatPage() {
   const [threadsLoading, setThreadsLoading] = useState(true);
   const [selectedThreadId, setSelectedThreadId] = useState<string | null>(null);
   const [categoryFilter, setCategoryFilter] = useState<string>("all");
+  const [searchQuery, setSearchQuery] = useState<string>("");
+  const [searchSuggestions, setSearchSuggestions] = useState<typeof threads>([]);
+  const [showSuggestions, setShowSuggestions] = useState(false);
 
   const [loadedMessages, setLoadedMessages] = useState<
     Array<{ id: string; role: "user" | "assistant"; content: string }>
@@ -57,6 +61,53 @@ export default function ChatPage() {
   });
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
+
+  // Debounced search function
+  const searchTimeoutRef = useRef<NodeJS.Timeout>();
+  
+  const fetchSearchSuggestions = async (query: string) => {
+    if (query.length < 2) {
+      setSearchSuggestions([]);
+      setShowSuggestions(false);
+      return;
+    }
+
+    try {
+      const url = categoryFilter === "all" 
+        ? `/api/chats/search?q=${encodeURIComponent(query)}`
+        : `/api/chats/search?q=${encodeURIComponent(query)}&category=${categoryFilter}`;
+      
+      const res = await fetch(url);
+      if (res.ok) {
+        const data = await res.json();
+        setSearchSuggestions(data.suggestions);
+        setShowSuggestions(true);
+      }
+    } catch (error) {
+      console.error("Failed to fetch search suggestions:", error);
+      setSearchSuggestions([]);
+      setShowSuggestions(false);
+    }
+  };
+
+  const handleSearchChange = (value: string) => {
+    setSearchQuery(value);
+    
+    if (searchTimeoutRef.current) {
+      clearTimeout(searchTimeoutRef.current);
+    }
+    
+    searchTimeoutRef.current = setTimeout(() => {
+      fetchSearchSuggestions(value);
+    }, 300);
+  };
+
+  const selectSuggestion = (thread: typeof threads[0]) => {
+    setSelectedThreadId(thread.id);
+    setSearchQuery("");
+    setShowSuggestions(false);
+    setSearchSuggestions([]);
+  };
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -251,6 +302,48 @@ export default function ChatPage() {
               </div>
             </div>
 
+            <div className="p-3 border-b relative">
+              <div className="relative">
+                <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                <Input
+                  placeholder="Search chats..."
+                  value={searchQuery}
+                  onChange={(e) => handleSearchChange(e.target.value)}
+                  onFocus={() => searchQuery.length >= 2 && setShowSuggestions(true)}
+                  onBlur={() => setTimeout(() => setShowSuggestions(false), 200)}
+                  className="pl-10"
+                />
+              </div>
+              
+              {showSuggestions && searchSuggestions.length > 0 && (
+                <div className="absolute top-full left-0 right-0 mt-1 bg-background border rounded-md shadow-lg z-10 max-h-60 overflow-y-auto">
+                  {searchSuggestions.map((suggestion) => (
+                    <div
+                      key={suggestion.id}
+                      className="p-2 hover:bg-accent cursor-pointer border-b last:border-b-0"
+                      onClick={() => selectSuggestion(suggestion)}
+                    >
+                      <div className="flex items-center gap-2">
+                        <div className="text-sm font-medium truncate max-w-[180px]" title={suggestion.title}>
+                          {suggestion.title.length > 25 ? `${suggestion.title.slice(0, 25)}...` : suggestion.title}
+                        </div>
+                        <div className={cn(
+                          "text-xs px-1.5 py-0.5 rounded flex-shrink-0",
+                          suggestion.category === "general" && "bg-blue-100 text-blue-700",
+                          suggestion.category === "entity" && "bg-green-100 text-green-700", 
+                          suggestion.category === "document" && "bg-orange-100 text-orange-700"
+                        )}>
+                          {suggestion.category === "general" && "General"}
+                          {suggestion.category === "entity" && "Entity"}
+                          {suggestion.category === "document" && "Document"}
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
             <ScrollArea className="h-[85vh]">
               <div className="p-2">
                 {threadsLoading ? (
@@ -276,9 +369,11 @@ export default function ChatPage() {
                           type="button"
                         >
                           <div className="flex items-center gap-2">
-                            <div className="text-sm font-medium truncate">{t.title}</div>
+                            <div className="text-sm font-medium truncate max-w-[180px]" title={t.title}>
+                              {t.title.length > 25 ? `${t.title.slice(0, 25)}...` : t.title}
+                            </div>
                             <div className={cn(
-                              "text-xs px-1.5 py-0.5 rounded",
+                              "text-xs px-1.5 py-0.5 rounded flex-shrink-0",
                               t.category === "general" && "bg-blue-100 text-blue-700",
                               t.category === "entity" && "bg-green-100 text-green-700", 
                               t.category === "document" && "bg-orange-100 text-orange-700"
