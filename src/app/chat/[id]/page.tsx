@@ -20,8 +20,9 @@ import {
   PromptInputTextarea,
 } from "@/components/ai-elements/prompt-input";
 import { Button } from "@/components/ui/button";
-import { Loader2, MessageSquareIcon, Trash2, ArrowLeft } from "lucide-react";
+import { Loader2, MessageSquareIcon, Trash2, ArrowLeft, Lightbulb } from "lucide-react";
 import Link from "next/link";
+import { getDocumentStarterPrompts, getEntityStarterPrompts, type StarterPrompt } from "@/lib/chat/starter-prompts";
 
 type LoadedChat = {
   thread: {
@@ -59,6 +60,16 @@ export default function ChatThreadPage() {
   const [loaded, setLoaded] = useState<LoadedChat | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [starterPrompts, setStarterPrompts] = useState<StarterPrompt[]>([]);
+
+  const getStarterPrompts = (chat: LoadedChat): StarterPrompt[] => {
+    if (chat.thread.category === "document") {
+      return getDocumentStarterPrompts(chat.thread.title);
+    } else if (chat.thread.category === "entity") {
+      return getEntityStarterPrompts(chat.thread.title, "entity"); // We could enhance this to get actual entity type
+    }
+    return [];
+  };
 
   useEffect(() => {
     let cancelled = false;
@@ -72,7 +83,10 @@ export default function ChatThreadPage() {
           throw new Error(`Failed to load chat (${res.status})`);
         }
         const data = (await res.json()) as LoadedChat;
-        if (!cancelled) setLoaded(data);
+        if (!cancelled) {
+          setLoaded(data);
+          setStarterPrompts(getStarterPrompts(data));
+        }
       } catch (e) {
         if (!cancelled) setError(e instanceof Error ? e.message : String(e));
       } finally {
@@ -127,6 +141,20 @@ export default function ChatThreadPage() {
     router.push("/chat");
   };
 
+  const handleStarterPrompt = async (prompt: string) => {
+    setText(prompt);
+    // Auto-submit the starter prompt
+    await sendMessage(
+      { text: prompt },
+      {
+        body: {
+          threadId,
+        },
+      }
+    );
+    setText("");
+  };
+
   return (
     <div className="min-h-screen flex flex-col">
       <Header />
@@ -174,6 +202,38 @@ export default function ChatThreadPage() {
           <div className="text-sm text-destructive">{error}</div>
         ) : (
           <div className="flex flex-col gap-4">
+            {/* Show starter prompts for new context-specific chats */}
+            {(() => {
+              console.log('Debug - messages.length:', messages.length, 'starterPrompts.length:', starterPrompts.length, 'loaded?.thread.category:', loaded?.thread.category);
+              // Show starter prompts for context-specific chats that only have the welcome message
+              const hasOnlyWelcomeMessage = messages.length === 1 && loaded?.thread.category !== 'general';
+              return hasOnlyWelcomeMessage && starterPrompts.length > 0;
+            })() && (
+              <div className="bg-muted/50 rounded-lg p-4">
+                <div className="flex items-center gap-2 mb-3">
+                  <Lightbulb className="h-4 w-4 text-muted-foreground" />
+                  <h3 className="text-sm font-medium text-muted-foreground">
+                    Starter prompts for this {loaded?.thread.category === "document" ? "document" : "entity"}
+                  </h3>
+                </div>
+                <div className="grid gap-2">
+                  {starterPrompts.map((prompt) => (
+                    <button
+                      key={prompt.id}
+                      onClick={() => handleStarterPrompt(prompt.text)}
+                      className="text-left p-3 rounded-md bg-background hover:bg-accent border transition-colors"
+                      disabled={status !== "ready"}
+                    >
+                      <div className="text-sm font-medium">{prompt.text}</div>
+                      {prompt.description && (
+                        <div className="text-xs text-muted-foreground mt-1">{prompt.description}</div>
+                      )}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+
             <Conversation className="rounded-lg border h-[60vh]">
               <ConversationContent>
                 {messages.length === 0 ? (
