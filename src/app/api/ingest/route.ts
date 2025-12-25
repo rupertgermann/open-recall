@@ -219,10 +219,21 @@ export async function POST(req: Request) {
         controller.enqueue(encoder.encode(createSSEMessage("saving", "Saving entities to knowledge graph...", 82)));
         
         const entityIdMap = new Map<string, string>();
+
+        // Dedupe extracted entities within this ingestion run to avoid inserting the
+        // same (name,type) multiple times.
+        const uniqueExtractedEntities: typeof extractedData.entities = [];
+        const seenEntityKeys = new Set<string>();
+        for (const entity of extractedData.entities) {
+          const key = `${entity.name}||${entity.type}`;
+          if (seenEntityKeys.has(key)) continue;
+          seenEntityKeys.add(key);
+          uniqueExtractedEntities.push(entity);
+        }
         
         // First, check which entities already exist
         const newEntities: typeof extractedData.entities = [];
-        for (const entity of extractedData.entities) {
+        for (const entity of uniqueExtractedEntities) {
           const existing = await db
             .select()
             .from(entities)
@@ -250,7 +261,7 @@ export async function POST(req: Request) {
           // Insert new entities
           for (let i = 0; i < newEntities.length; i++) {
             const entity = newEntities[i];
-            const [newEntity] = await db
+            const inserted = await db
               .insert(entities)
               .values({
                 name: entity.name,
@@ -258,8 +269,22 @@ export async function POST(req: Request) {
                 description: entity.description,
                 embedding: entityEmbeddingResult.embeddings[i] ?? null,
               })
+              .onConflictDoNothing({ target: [entities.name, entities.type] })
               .returning();
-            entityIdMap.set(entity.name, newEntity.id);
+
+            if (inserted.length > 0) {
+              entityIdMap.set(entity.name, inserted[0].id);
+            } else {
+              const existing = await db
+                .select({ id: entities.id })
+                .from(entities)
+                .where(and(eq(entities.name, entity.name), eq(entities.type, entity.type)))
+                .limit(1);
+
+              if (existing.length > 0) {
+                entityIdMap.set(entity.name, existing[0].id);
+              }
+            }
           }
         }
 

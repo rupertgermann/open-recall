@@ -246,9 +246,20 @@ async function processDocument(documentId: string, content: string): Promise<voi
 
     // Process entities with graph embeddings (Phase 4)
     const entityIdMap = new Map<string, string>();
-    
-    const newEntities: ExtractedEntity[] = [];
+
+    // Dedupe extracted entities within this ingestion run to avoid inserting the
+    // same (name,type) multiple times.
+    const uniqueExtractedEntities: ExtractedEntity[] = [];
+    const seenEntityKeys = new Set<string>();
     for (const entity of extractedData.entities) {
+      const key = `${entity.name}||${entity.type}`;
+      if (seenEntityKeys.has(key)) continue;
+      seenEntityKeys.add(key);
+      uniqueExtractedEntities.push(entity);
+    }
+
+    const newEntities: ExtractedEntity[] = [];
+    for (const entity of uniqueExtractedEntities) {
       const existing = await db
         .select()
         .from(entities)
@@ -275,7 +286,7 @@ async function processDocument(documentId: string, content: string): Promise<voi
 
       for (let i = 0; i < newEntities.length; i++) {
         const entity = newEntities[i];
-        const [newEntity] = await db
+        const inserted = await db
           .insert(entities)
           .values({
             name: entity.name,
@@ -283,8 +294,23 @@ async function processDocument(documentId: string, content: string): Promise<voi
             description: entity.description,
             embedding: entityEmbeddingResult.embeddings[i] ?? null,
           })
+          .onConflictDoNothing({ target: [entities.name, entities.type] })
           .returning();
-        entityIdMap.set(entity.name, newEntity.id);
+
+        if (inserted.length > 0) {
+          entityIdMap.set(entity.name, inserted[0].id);
+        } else {
+          // Likely a concurrent insert (or a previously missed row). Fetch the existing entity id.
+          const existing = await db
+            .select({ id: entities.id })
+            .from(entities)
+            .where(and(eq(entities.name, entity.name), eq(entities.type, entity.type)))
+            .limit(1);
+
+          if (existing.length > 0) {
+            entityIdMap.set(entity.name, existing[0].id);
+          }
+        }
       }
     }
 
