@@ -9,6 +9,7 @@ import { getDocument } from "@/actions/documents";
 import { DeleteButton } from "./delete-button";
 import { UpdateFromSourceButton } from "./update-from-source-button";
 import { TagsEditor } from "./tags-editor";
+import { ChunksModal } from "./chunks-modal";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 
@@ -140,13 +141,20 @@ export default async function DocumentDetailPage({
               {/* Chunks */}
               <Card>
                 <CardHeader>
-                  <CardTitle className="flex items-center gap-2">
-                    <Hash className="h-5 w-5" />
-                    Content Chunks
-                  </CardTitle>
-                  <CardDescription>
-                    {document.chunks.length} chunks extracted from this document
-                  </CardDescription>
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <CardTitle className="flex items-center gap-2">
+                        <Hash className="h-5 w-5" />
+                        Content Chunks
+                      </CardTitle>
+                      <CardDescription>
+                        {document.chunks.length} chunks extracted from this document
+                      </CardDescription>
+                    </div>
+                    {document.chunks.length > 0 && (
+                      <ChunksModal document={{ title: document.title, chunks: document.chunks }} />
+                    )}
+                  </div>
                 </CardHeader>
                 <CardContent>
                   {document.chunks.length > 0 ? (
