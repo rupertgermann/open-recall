@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/db";
-import { chatThreads } from "@/db/schema";
+import { chatThreads, chatMessages, entities, documents } from "@/db/schema";
 import { eq } from "drizzle-orm";
 
 export async function POST(req: NextRequest) {
@@ -33,6 +33,54 @@ export async function POST(req: NextRequest) {
         documentId: documentId || null,
       })
       .returning();
+
+    // Add contextual welcome message for entity/document chats
+    if (category !== "general") {
+      let welcomeMessage = "";
+      
+      if (category === "entity" && entityId) {
+        const [entity] = await db
+          .select({
+            name: entities.name,
+            type: entities.type,
+            description: entities.description,
+          })
+          .from(entities)
+          .where(eq(entities.id, entityId))
+          .limit(1);
+          
+        if (entity) {
+          welcomeMessage = `I'm ready to help you learn more about **${entity.name}** (${entity.type}). ${
+            entity.description ? `Here's what I know: ${entity.description}` : ""
+          }\n\nWhat would you like to know about ${entity.name}?`;
+        }
+      } else if (category === "document" && documentId) {
+        const [doc] = await db
+          .select({
+            title: documents.title,
+            summary: documents.summary,
+          })
+          .from(documents)
+          .where(eq(documents.id, documentId))
+          .limit(1);
+          
+        if (doc) {
+          welcomeMessage = `I'm ready to discuss **${doc.title}** with you. ${
+            doc.summary ? `Here's a summary: ${doc.summary}` : ""
+          }\n\nWhat questions do you have about this document?`;
+        }
+      }
+
+      if (welcomeMessage) {
+        await db
+          .insert(chatMessages)
+          .values({
+            threadId: thread.id,
+            role: "assistant",
+            content: welcomeMessage,
+          });
+      }
+    }
 
     return NextResponse.json({ thread }, { status: 201 });
   } catch (error) {

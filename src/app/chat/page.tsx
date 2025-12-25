@@ -196,7 +196,7 @@ export default function ChatPage() {
       <Header />
 
       <main className="flex-1 container mx-auto px-4 py-6">
-        <div className="grid grid-cols-1 md:grid-cols-[280px_1fr] gap-4">
+        <div className="grid grid-cols-1 md:grid-cols-[380px_1fr] gap-4">
           <aside className="rounded-lg border bg-card">
             <div className="p-3 border-b flex items-center justify-between">
               <div className="text-sm font-semibold">Chats</div>
@@ -206,7 +206,7 @@ export default function ChatPage() {
               </Button>
             </div>
 
-            <ScrollArea className="h-[60vh]">
+            <ScrollArea className="h-[85vh]">
               <div className="p-2">
                 {threadsLoading ? (
                   <div className="flex items-center gap-2 text-sm text-muted-foreground p-2">
