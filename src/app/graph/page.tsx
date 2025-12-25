@@ -886,7 +886,7 @@ export default function GraphPage() {
               </CardTitle>
               <CardDescription>
                 {selectedNode
-                  ? `Type: ${selectedNode.type}`
+                  ? ``
                   : "Click on a node to see details"}
               </CardDescription>
               {selectedNode && (
@@ -926,16 +926,20 @@ export default function GraphPage() {
                     variant={filterByEntity ? "default" : "outline"}
                     size="sm"
                     onClick={() => setFilterByEntity((v) => !v)}
-                    className="w-full"
+                    className="flex-1"
                   >
                     Filter by entity
                   </Button>
+                  <ChatAboutButton entityId={selectedNode.id} entityName={selectedNode.name} />
                 </div>
               )}
             </CardHeader>
             <CardContent className="flex-1 overflow-y-auto">
               {selectedNode && selectedDetails ? (
                 <div className="space-y-4">
+                  {/* Related Chats - moved to top */}
+                  <RelatedChats entityId={selectedNode.id} />
+
                   <div>
                     <h4 className="text-sm font-medium mb-2">Entity Type</h4>
                     <Badge
@@ -948,8 +952,6 @@ export default function GraphPage() {
                       {selectedNode.type}
                     </Badge>
                   </div>
-
-                  <ChatAboutButton entityId={selectedNode.id} entityName={selectedNode.name} />
 
                   {selectedDetails.description && (
                     <div>
@@ -1095,9 +1097,6 @@ export default function GraphPage() {
                       </p>
                     )}
                   </div>
-
-                  {/* Related Chats */}
-                  <RelatedChats entityId={selectedNode.id} />
                 </div>
               ) : selectedNode ? (
                 <div className="flex items-center justify-center py-8">
