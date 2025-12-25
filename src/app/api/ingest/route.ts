@@ -25,6 +25,8 @@ type IngestRequest = {
   url?: string;
   title?: string;
   content?: string;
+  maxEntities?: number;
+  maxRelationships?: number;
 };
 
 function createSSEMessage(step: string, message: string, progress?: number, error?: boolean) {
@@ -47,7 +49,28 @@ export async function POST(req: Request) {
         let contentType: string;
 
         if (body.type === "url") {
-          url = body.url!;
+          url = body.url ?? null;
+          if (!url || url.trim().length === 0) {
+            controller.enqueue(encoder.encode(createSSEMessage("error", "URL is required", 0, true)));
+            controller.close();
+            return;
+          }
+
+          try {
+            const parsed = new URL(url);
+            if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+              controller.enqueue(
+                encoder.encode(createSSEMessage("error", `Unsupported URL scheme: ${parsed.protocol}`, 0, true))
+              );
+              controller.close();
+              return;
+            }
+          } catch {
+            controller.enqueue(encoder.encode(createSSEMessage("error", "Invalid URL", 0, true)));
+            controller.close();
+            return;
+          }
+
           controller.enqueue(encoder.encode(createSSEMessage("fetching", `Extracting content from ${url}...`, 10)));
           
           const extracted = await extractFromUrl(url);
@@ -150,7 +173,10 @@ export async function POST(req: Request) {
         
         const extractStart = Date.now();
         try {
-          extractedData = await extractEntitiesWithDBConfig(content.slice(0, 8000));
+          extractedData = await extractEntitiesWithDBConfig(content.slice(0, 8000), {
+            maxEntities: body.maxEntities,
+            maxRelationships: body.maxRelationships,
+          });
           const extractMs = Date.now() - extractStart;
           controller.enqueue(encoder.encode(createSSEMessage(
             "extracting",

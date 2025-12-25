@@ -38,6 +38,7 @@ export default function AddPage() {
   const [url, setUrl] = useState("");
   const [text, setText] = useState("");
   const [title, setTitle] = useState("");
+  const [maxEntities, setMaxEntities] = useState(200);
   const [isProcessing, setIsProcessing] = useState(false);
   const [currentStatus, setCurrentStatus] = useState<StepStatus | null>(null);
   const [completedSteps, setCompletedSteps] = useState<Set<string>>(new Set());
@@ -47,6 +48,86 @@ export default function AddPage() {
   const abortControllerRef = useRef<AbortController | null>(null);
 
   const hasAutoStartedRef = useRef(false);
+
+  const runIngestRequest = async (endpoint: string, body: unknown) => {
+    abortControllerRef.current = new AbortController();
+
+    const response = await fetch(endpoint, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+      signal: abortControllerRef.current.signal,
+    });
+
+    if (!response.ok) {
+      throw new Error("Failed to start processing");
+    }
+
+    const reader = response.body?.getReader();
+    if (!reader) throw new Error("No response stream");
+
+    const decoder = new TextDecoder();
+    let buffer = "";
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split("\n");
+      buffer = lines.pop() || "";
+
+      for (const line of lines) {
+        if (!line.startsWith("data: ")) continue;
+
+        try {
+          const data = JSON.parse(line.slice(6));
+
+          if (data.step === "done") {
+            if (endpoint === "/api/update-document" && typeof (body as any)?.documentId === "string") {
+              setTimeout(() => setIsProcessing(false), 500);
+            } else {
+              setTimeout(() => router.push("/library"), 500);
+            }
+            return;
+          }
+
+          if (data.error) {
+            setError(data.message);
+            setIsProcessing(false);
+            return;
+          }
+
+          setCurrentStatus({
+            step: data.step,
+            message: data.message,
+            progress: data.progress || 0,
+          });
+
+          const currentIndex = STEP_ORDER.indexOf(data.step);
+          if (currentIndex > 0) {
+            setCompletedSteps((prev) => {
+              const newSet = new Set(prev);
+              for (let i = 0; i < currentIndex; i++) {
+                newSet.add(STEP_ORDER[i]);
+              }
+              return newSet;
+            });
+          }
+
+          if (data.step === "complete") {
+            setCompletedSteps((prev) => {
+              const newSet = new Set(prev);
+              STEP_ORDER.forEach((s) => newSet.add(s));
+              return newSet;
+            });
+          }
+        } catch {
+          // Ignore parse errors
+        }
+      }
+    }
+  };
 
   useEffect(() => {
     const qpUrl = searchParams.get("url");
@@ -61,10 +142,18 @@ export default function AddPage() {
       
       if (qpStart === "1" && !hasAutoStartedRef.current) {
         hasAutoStartedRef.current = true;
-        // Let state update settle before submitting
-        setTimeout(() => {
-          handleSubmit(new Event("submit") as any);
-        }, 0);
+        setError(null);
+        setIsProcessing(true);
+        setCompletedSteps(new Set());
+        setCurrentStatus(null);
+
+        // Do not rely on React state being updated yet; call the update endpoint directly.
+        runIngestRequest("/api/update-document", { documentId: qpUpdate }).catch((err) => {
+          if (err instanceof Error && err.name !== "AbortError") {
+            setError(err.message);
+          }
+          setIsProcessing(false);
+        });
       }
       return;
     }
@@ -94,92 +183,15 @@ export default function AddPage() {
     setCompletedSteps(new Set());
     setCurrentStatus(null);
 
-    abortControllerRef.current = new AbortController();
-
     try {
       const endpoint = isUpdateMode ? "/api/update-document" : "/api/ingest";
       const body = isUpdateMode 
         ? { documentId: updateDocumentId }
         : contentType === "url"
-          ? { type: "url", url }
-          : { type: "text", title, content: text };
+          ? { type: "url", url, maxEntities }
+          : { type: "text", title, content: text, maxEntities };
 
-      const response = await fetch(endpoint, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
-        signal: abortControllerRef.current.signal,
-      });
-
-      if (!response.ok) {
-        throw new Error("Failed to start processing");
-      }
-
-      const reader = response.body?.getReader();
-      if (!reader) throw new Error("No response stream");
-
-      const decoder = new TextDecoder();
-      let buffer = "";
-
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-
-        buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split("\n");
-        buffer = lines.pop() || "";
-
-        for (const line of lines) {
-          if (line.startsWith("data: ")) {
-            try {
-              const data = JSON.parse(line.slice(6));
-
-              if (data.step === "done") {
-                if (isUpdateMode && updateDocumentId) {
-                  // Show completion state with back to doc link
-                  setTimeout(() => setIsProcessing(false), 500);
-                } else {
-                  setTimeout(() => router.push("/library"), 500);
-                }
-                return;
-              }
-
-              if (data.error) {
-                setError(data.message);
-                setIsProcessing(false);
-                return;
-              }
-
-              setCurrentStatus({
-                step: data.step,
-                message: data.message,
-                progress: data.progress || 0,
-              });
-
-              const currentIndex = STEP_ORDER.indexOf(data.step);
-              if (currentIndex > 0) {
-                setCompletedSteps((prev) => {
-                  const newSet = new Set(prev);
-                  for (let i = 0; i < currentIndex; i++) {
-                    newSet.add(STEP_ORDER[i]);
-                  }
-                  return newSet;
-                });
-              }
-
-              if (data.step === "complete") {
-                setCompletedSteps((prev) => {
-                  const newSet = new Set(prev);
-                  STEP_ORDER.forEach((s) => newSet.add(s));
-                  return newSet;
-                });
-              }
-            } catch {
-              // Ignore parse errors
-            }
-          }
-        }
-      }
+      await runIngestRequest(endpoint, body);
     } catch (error) {
       if (error instanceof Error && error.name !== "AbortError") {
         setError(error.message);
@@ -298,6 +310,26 @@ export default function AddPage() {
                   </div>
                 </>
               )}
+
+              <div className="space-y-2">
+                <div className="flex items-center justify-between gap-4">
+                  <label className="text-sm font-medium">Entities to extract</label>
+                  <span className="text-sm text-muted-foreground tabular-nums">{maxEntities}</span>
+                </div>
+                <input
+                  type="range"
+                  min={20}
+                  max={200}
+                  step={10}
+                  value={maxEntities}
+                  onChange={(e) => setMaxEntities(Number(e.target.value))}
+                  disabled={isProcessing}
+                  className="w-full"
+                />
+                <p className="text-xs text-muted-foreground">
+                  Lower values extract only the most important entities.
+                </p>
+              </div>
 
               <div className="flex gap-2">
                 {isProcessing ? (

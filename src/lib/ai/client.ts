@@ -155,11 +155,26 @@ export type ExtractedEntity = z.infer<typeof entitySchema>;
 export type ExtractedRelationship = z.infer<typeof relationshipSchema>;
 export type ExtractionResult = z.infer<typeof extractionResultSchema>;
 
+ export type EntityExtractionOptions = {
+  maxEntities?: number;
+  maxRelationships?: number;
+ };
+
 export async function extractEntitiesAndRelationships(
   content: string,
-  config: ChatConfig = defaultChatConfig
+  config: ChatConfig = defaultChatConfig,
+  options: EntityExtractionOptions = {}
 ): Promise<ExtractionResult> {
   const model = getModel(config);
+
+  const maxEntities =
+    typeof options.maxEntities === "number" && Number.isFinite(options.maxEntities)
+      ? Math.max(1, Math.floor(options.maxEntities))
+      : undefined;
+  const maxRelationships =
+    typeof options.maxRelationships === "number" && Number.isFinite(options.maxRelationships)
+      ? Math.max(0, Math.floor(options.maxRelationships))
+      : undefined;
 
   try {
     const { object } = await generateObject({
@@ -171,11 +186,37 @@ Your task is to identify:
 2. Relationships between these entities
 
 Be thorough but precise. Only extract entities and relationships that are clearly present in the text.
-For relationships, use descriptive types like "created_by", "part_of", "related_to", "used_by", etc.`,
-      prompt: `Extract all entities and their relationships from the following text:\n\n${content}`,
+For relationships, use descriptive types like "created_by", "part_of", "related_to", "used_by", etc.
+
+Important: Order entities by importance (most important first). Do not invent entities.
+If an entity limit is provided, return at most that many entities.
+Only include relationships that connect entities you returned.`,
+      prompt: `Extract entities and their relationships from the following text.
+
+Constraints:
+- Return entities ordered by importance (descending)
+- Max entities: ${maxEntities ?? "no limit"}
+- Max relationships: ${maxRelationships ?? "no limit"}
+
+Text:
+${content}`,
     });
 
-    return object;
+    const limitedEntities = maxEntities ? object.entities.slice(0, maxEntities) : object.entities;
+    const keptEntityNames = new Set(limitedEntities.map((e) => e.name));
+
+    let limitedRelationships = object.relationships.filter(
+      (r) => keptEntityNames.has(r.source) && keptEntityNames.has(r.target)
+    );
+
+    if (maxRelationships !== undefined) {
+      limitedRelationships = limitedRelationships.slice(0, maxRelationships);
+    }
+
+    return {
+      entities: limitedEntities,
+      relationships: limitedRelationships,
+    };
   } catch (error) {
     console.error("Entity extraction failed:", error);
     // Return empty result on failure (graceful degradation)
@@ -304,9 +345,12 @@ export async function generateSummaryWithDBConfig(content: string): Promise<stri
 /**
  * Extract entities and relationships using database-stored AI settings
  */
-export async function extractEntitiesWithDBConfig(content: string): Promise<ExtractionResult> {
+export async function extractEntitiesWithDBConfig(
+  content: string,
+  options: EntityExtractionOptions = {}
+): Promise<ExtractionResult> {
   const config = await getChatConfigFromDB();
-  return extractEntitiesAndRelationships(content, config);
+  return extractEntitiesAndRelationships(content, config, options);
 }
 
 export async function generateTagsWithDBConfig(input: { title?: string | null; summary?: string | null; content?: string | null }): Promise<string[]> {
