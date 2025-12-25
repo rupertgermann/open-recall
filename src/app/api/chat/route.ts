@@ -47,7 +47,53 @@ function getLastUserText(messages: UIMessage[]): string | null {
   return null;
 }
 
-async function ensureThread(threadId?: string | null): Promise<string> {
+async function detectChatCategory(lastUserText: string | null): Promise<{
+  category: string;
+  entityId?: string;
+  documentId?: string;
+}> {
+  if (!lastUserText) {
+    return { category: 'general' };
+  }
+
+  try {
+    // Retrieve context to determine if this is entity or document specific
+    const retrievedData = await retrieveContext(lastUserText, 5);
+    
+    // Check if there's a dominant entity in the context
+    if (retrievedData.entities.length > 0) {
+      // Use the highest scoring/most relevant entity
+      const topEntity = retrievedData.entities[0];
+      return { 
+        category: 'entity', 
+        entityId: topEntity.id 
+      };
+    }
+    
+    // Check if there's a dominant document in the context
+    if (retrievedData.chunks.length > 0) {
+      // Group chunks by document and find the most referenced one
+      const documentCounts = retrievedData.chunks.reduce((acc, chunk) => {
+        acc[chunk.documentId] = (acc[chunk.documentId] || 0) + 1;
+        return acc;
+      }, {} as Record<string, number>);
+      
+      const topDocumentId = Object.entries(documentCounts)
+        .sort(([,a], [,b]) => b - a)[0][0];
+      
+      return { 
+        category: 'document', 
+        documentId: topDocumentId 
+      };
+    }
+  } catch (error) {
+    console.error("Failed to detect chat category:", error);
+  }
+  
+  return { category: 'general' };
+}
+
+async function ensureThread(threadId?: string | null, category?: string, entityId?: string, documentId?: string): Promise<string> {
   if (threadId) {
     const existing = await db
       .select({ id: chatThreads.id })
@@ -59,7 +105,11 @@ async function ensureThread(threadId?: string | null): Promise<string> {
 
   const [created] = await db
     .insert(chatThreads)
-    .values({})
+    .values({
+      category: category || 'general',
+      entityId: entityId || null,
+      documentId: documentId || null,
+    })
     .returning({ id: chatThreads.id });
   return created.id;
 }
@@ -73,14 +123,22 @@ export async function POST(req: Request) {
     threadId?: string;
   } = await req.json();
 
-  const effectiveThreadId = await ensureThread(threadId);
+  const lastUserText = getLastUserText(messages);
+  
+  // For new threads, detect category automatically
+  let category, entityId, documentId;
+  if (!threadId) {
+    const detectedCategory = await detectChatCategory(lastUserText);
+    category = detectedCategory.category;
+    entityId = detectedCategory.entityId;
+    documentId = detectedCategory.documentId;
+  }
+
+  const effectiveThreadId = await ensureThread(threadId, category, entityId, documentId);
 
   // Load chat configuration from database
   const chatConfig = await getChatConfigFromDB();
 
-  // Get the latest user message for retrieval
-  const lastUserText = getLastUserText(messages);
-  
   // Retrieve relevant context using hybrid search
   let contextString = "";
   let retrievedData: Awaited<ReturnType<typeof retrieveContext>> = { 

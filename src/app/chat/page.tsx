@@ -4,10 +4,11 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useChat } from "@ai-sdk/react";
 import { DefaultChatTransport } from "ai";
 import Link from "next/link";
-import { Loader2, MessageSquareIcon, Plus, Trash2 } from "lucide-react";
+import { Loader2, MessageSquareIcon, Plus, Trash2, Filter } from "lucide-react";
 import { Header } from "@/components/layout/header";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import {
   Conversation,
   ConversationContent,
@@ -30,6 +31,9 @@ export default function ChatPage() {
     Array<{
       id: string;
       title: string;
+      category: string;
+      entityId?: string;
+      documentId?: string;
       createdAt: string;
       updatedAt: string;
       lastMessageAt: string;
@@ -37,6 +41,7 @@ export default function ChatPage() {
   >([]);
   const [threadsLoading, setThreadsLoading] = useState(true);
   const [selectedThreadId, setSelectedThreadId] = useState<string | null>(null);
+  const [categoryFilter, setCategoryFilter] = useState<string>("all");
 
   const [loadedMessages, setLoadedMessages] = useState<
     Array<{ id: string; role: "user" | "assistant"; content: string }>
@@ -66,7 +71,8 @@ export default function ChatPage() {
     async function loadThreads() {
       try {
         setThreadsLoading(true);
-        const res = await fetch("/api/chats");
+        const url = categoryFilter === "all" ? "/api/chats" : `/api/chats?category=${categoryFilter}`;
+        const res = await fetch(url);
         if (!res.ok) throw new Error("Failed to load chats");
         const data = (await res.json()) as { threads: typeof threads };
         if (!cancelled) {
@@ -81,10 +87,11 @@ export default function ChatPage() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [categoryFilter]);
 
-  const refreshThreads = async (): Promise<Array<{ id: string; title: string; createdAt: string; updatedAt: string; lastMessageAt: string }>> => {
-    const res = await fetch("/api/chats");
+  const refreshThreads = async (): Promise<Array<{ id: string; title: string; category: string; entityId?: string; documentId?: string; createdAt: string; updatedAt: string; lastMessageAt: string }>> => {
+    const url = categoryFilter === "all" ? "/api/chats" : `/api/chats?category=${categoryFilter}`;
+    const res = await fetch(url);
     if (!res.ok) throw new Error("Failed to load chats");
     const data = (await res.json()) as { threads: typeof threads };
     setThreads(data.threads);
@@ -176,7 +183,28 @@ export default function ChatPage() {
     [threads, selectedThreadId]
   );
 
-  const startNewChat = () => {
+  const startNewChat = async (category?: string, entityId?: string, documentId?: string) => {
+    if (category && (entityId || documentId)) {
+      // Create a context-specific chat
+      try {
+        const res = await fetch("/api/chats/context", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ category, entityId, documentId }),
+        });
+        
+        if (res.ok) {
+          const { thread } = await res.json();
+          setSelectedThreadId(thread.id);
+          await refreshThreads();
+          return;
+        }
+      } catch (error) {
+        console.error("Failed to create context-specific chat:", error);
+      }
+    }
+    
+    // Fallback to general chat
     setSelectedThreadId(null);
     setLoadedMessages([]);
     setMessages([]);
@@ -200,10 +228,27 @@ export default function ChatPage() {
           <aside className="rounded-lg border bg-card">
             <div className="p-3 border-b flex items-center justify-between">
               <div className="text-sm font-semibold">Chats</div>
-              <Button size="sm" variant="secondary" onClick={startNewChat}>
+              <Button size="sm" variant="secondary" onClick={() => startNewChat()}>
                 <Plus className="h-4 w-4 mr-2" />
                 New
               </Button>
+            </div>
+
+            <div className="p-3 border-b">
+              <div className="flex items-center gap-2">
+                <Filter className="h-4 w-4 text-muted-foreground" />
+                <Select value={categoryFilter} onValueChange={setCategoryFilter}>
+                  <SelectTrigger className="flex-1">
+                    <SelectValue placeholder="Filter by category" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All Chats</SelectItem>
+                    <SelectItem value="general">General</SelectItem>
+                    <SelectItem value="entity">Entity-specific</SelectItem>
+                    <SelectItem value="document">Document-specific</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
             </div>
 
             <ScrollArea className="h-[85vh]">
@@ -230,7 +275,19 @@ export default function ChatPage() {
                           onClick={() => setSelectedThreadId(t.id)}
                           type="button"
                         >
-                          <div className="text-sm font-medium truncate">{t.title}</div>
+                          <div className="flex items-center gap-2">
+                            <div className="text-sm font-medium truncate">{t.title}</div>
+                            <div className={cn(
+                              "text-xs px-1.5 py-0.5 rounded",
+                              t.category === "general" && "bg-blue-100 text-blue-700",
+                              t.category === "entity" && "bg-green-100 text-green-700", 
+                              t.category === "document" && "bg-orange-100 text-orange-700"
+                            )}>
+                              {t.category === "general" && "General"}
+                              {t.category === "entity" && "Entity"}
+                              {t.category === "document" && "Document"}
+                            </div>
+                          </div>
                         </button>
                         <Link href={`/chat/${t.id}`} className="shrink-0">
                           <Button size="icon-sm" variant="ghost" aria-label="Open">
