@@ -50,6 +50,56 @@ export default function SettingsPage() {
   const [saved, setSaved] = useState(false);
   const [dbStats, setDbStats] = useState({ documents: 0, entities: 0, relationships: 0 });
 
+  // Auto-save function with debouncing
+  const autoSave = React.useCallback(
+    debounce(async () => {
+      setIsSaving(true);
+      try {
+        const openaiBaseUrl = "https://api.openai.com/v1";
+        const sharedKey = openaiApiKey || undefined;
+
+        await saveAISettings({
+          openaiApiKey: sharedKey,
+          chat: {
+            provider: chatProvider,
+            baseUrl: chatProvider === "openai" ? openaiBaseUrl : chatBaseUrl,
+            model: chatModel,
+            apiKey: chatProvider === "openai" ? sharedKey : undefined,
+            // Only include OpenAI-specific options for OpenAI provider
+            ...(chatProvider === "openai" && {
+              reasoningEffort: reasoningEffort as "low" | "medium" | "high",
+              verbosity: verbosity as "low" | "medium" | "high",
+              webSearchEnabled: webSearchEnabled,
+            }),
+          },
+          embedding: {
+            provider: embeddingProvider,
+            baseUrl: embeddingProvider === "openai" ? openaiBaseUrl : embeddingBaseUrl,
+            model: embeddingModel,
+            apiKey: embeddingProvider === "openai" ? sharedKey : undefined,
+            // Embeddings don't use reasoning or web search
+          },
+        });
+        setSaved(true);
+        setTimeout(() => setSaved(false), 2000);
+      } catch (error) {
+        console.error("Failed to auto-save settings:", error);
+      } finally {
+        setIsSaving(false);
+      }
+    }, 1000), // 1 second debounce
+    [chatProvider, chatBaseUrl, chatModel, reasoningEffort, verbosity, webSearchEnabled, embeddingProvider, embeddingBaseUrl, embeddingModel, openaiApiKey]
+  );
+
+  // Simple debounce function
+  function debounce<T extends (...args: any[]) => any>(func: T, wait: number): T {
+    let timeout: NodeJS.Timeout;
+    return ((...args: any[]) => {
+      clearTimeout(timeout);
+      timeout = setTimeout(() => func(...args), wait);
+    }) as T;
+  }
+
   // Load settings on mount
   useEffect(() => {
     async function loadSettings() {
@@ -62,6 +112,10 @@ export default function SettingsPage() {
         setChatProvider(settings.chat.provider);
         setChatBaseUrl(settings.chat.baseUrl);
         setChatModel(settings.chat.model);
+        // OpenAI-specific chat settings
+        setReasoningEffort(settings.chat.reasoningEffort || "medium");
+        setVerbosity(settings.chat.verbosity || "medium");
+        setWebSearchEnabled(settings.chat.webSearchEnabled || false);
         // Embedding settings
         setEmbeddingProvider(settings.embedding.provider);
         setEmbeddingBaseUrl(settings.embedding.baseUrl);
@@ -80,6 +134,11 @@ export default function SettingsPage() {
     }
     loadSettings();
   }, []);
+
+  // Auto-save when any setting changes
+  useEffect(() => {
+    autoSave();
+  }, [chatProvider, chatBaseUrl, chatModel, reasoningEffort, verbosity, webSearchEnabled, embeddingProvider, embeddingBaseUrl, embeddingModel, openaiApiKey]);
 
   const testChatConnection = async () => {
     setChatConnectionStatus("testing");
@@ -155,43 +214,6 @@ export default function SettingsPage() {
     } catch (error) {
       setEmbeddingConnectionStatus("disconnected");
       setEmbeddingConnectionError(error instanceof Error ? error.message : "Connection failed");
-    }
-  };
-
-  const handleSave = async () => {
-    setIsSaving(true);
-    try {
-      const openaiBaseUrl = "https://api.openai.com/v1";
-      const sharedKey = openaiApiKey || undefined;
-
-      await saveAISettings({
-        openaiApiKey: sharedKey,
-        chat: {
-          provider: chatProvider,
-          baseUrl: chatProvider === "openai" ? openaiBaseUrl : chatBaseUrl,
-          model: chatModel,
-          apiKey: chatProvider === "openai" ? sharedKey : undefined,
-          // Only include OpenAI-specific options for OpenAI provider
-          ...(chatProvider === "openai" && {
-            reasoningEffort: reasoningEffort as "low" | "medium" | "high",
-            verbosity: verbosity as "low" | "medium" | "high",
-            webSearchEnabled: webSearchEnabled,
-          }),
-        },
-        embedding: {
-          provider: embeddingProvider,
-          baseUrl: embeddingProvider === "openai" ? openaiBaseUrl : embeddingBaseUrl,
-          model: embeddingModel,
-          apiKey: embeddingProvider === "openai" ? sharedKey : undefined,
-          // Embeddings don't use reasoning or web search
-        },
-      });
-      setSaved(true);
-      setTimeout(() => setSaved(false), 2000);
-    } catch (error) {
-      console.error("Failed to save settings:", error);
-    } finally {
-      setIsSaving(false);
     }
   };
 
@@ -468,6 +490,26 @@ export default function SettingsPage() {
             </p>
           </div>
 
+          {/* Auto-save Status */}
+          <div className="flex items-center justify-center p-4 bg-muted/50 rounded-lg">
+            {isSaving ? (
+              <>
+                <Loader2 className="mr-2 h-4 w-4 animate-spin text-muted-foreground" />
+                <span className="text-sm text-muted-foreground">Auto-saving...</span>
+              </>
+            ) : saved ? (
+              <>
+                <CheckCircle className="mr-2 h-4 w-4 text-green-500" />
+                <span className="text-sm text-green-500">All changes saved</span>
+              </>
+            ) : (
+              <>
+                <div className="mr-2 h-4 w-4 rounded-full bg-muted" />
+                <span className="text-sm text-muted-foreground">Changes auto-save automatically</span>
+              </>
+            )}
+          </div>
+
           {(chatProvider === "openai" || embeddingProvider === "openai") && (
             <Card>
               <CardHeader>
@@ -576,26 +618,6 @@ export default function SettingsPage() {
               </div>
             </CardContent>
           </Card>
-
-          {/* Save Button */}
-          <Button onClick={handleSave} disabled={isSaving} className="w-full">
-            {isSaving ? (
-              <>
-                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                Saving...
-              </>
-            ) : saved ? (
-              <>
-                <CheckCircle className="mr-2 h-4 w-4" />
-                Saved!
-              </>
-            ) : (
-              <>
-                <Save className="mr-2 h-4 w-4" />
-                Save Settings
-              </>
-            )}
-          </Button>
         </div>
       </main>
     </div>
