@@ -54,6 +54,25 @@ const CLUSTER_VIEW_SCALE_END = 2.4;
 const CLUSTER_TITLE_MIN_DEGREE = 8;
 const CLUSTER_TITLE_OPACITY = 0.3;
 
+function getContrastTextColor(hexColor: string) {
+  let hex = hexColor.replace("#", "").trim();
+  if (hex.length === 3) hex = hex.split("").map((c) => c + c).join("");
+
+  if (hex.length !== 6) return "#ffffff";
+
+  const r = parseInt(hex.slice(0, 2), 16) / 255;
+  const g = parseInt(hex.slice(2, 4), 16) / 255;
+  const b = parseInt(hex.slice(4, 6), 16) / 255;
+
+  const toLinear = (c: number) => (c <= 0.03928 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4));
+  const R = toLinear(r);
+  const G = toLinear(g);
+  const B = toLinear(b);
+  const L = 0.2126 * R + 0.7152 * G + 0.0722 * B;
+
+  return L > 0.6 ? "#111111" : "#ffffff";
+}
+
 export default function GraphPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -918,8 +937,11 @@ export default function GraphPage() {
                   <div>
                     <h4 className="text-sm font-medium mb-2">Entity Type</h4>
                     <Badge
-                      style={{ backgroundColor: typeColors[selectedNode.type] }}
-                      className="capitalize text-white"
+                      style={{
+                        backgroundColor: typeColors[selectedNode.type] || "#888888",
+                        color: getContrastTextColor(typeColors[selectedNode.type] || "#888888"),
+                      }}
+                      className="capitalize"
                     >
                       {selectedNode.type}
                     </Badge>
