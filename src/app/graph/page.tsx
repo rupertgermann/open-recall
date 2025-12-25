@@ -4,7 +4,7 @@ import { useState, useCallback, useMemo, useEffect, useRef } from "react";
 import dynamic from "next/dynamic";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
-import { Search, Loader2, RefreshCw, Focus, X, RotateCcw, ZoomIn, ZoomOut } from "lucide-react";
+import { Search, Loader2, RefreshCw, Focus, X, RotateCcw, ZoomIn, ZoomOut, MessageSquare } from "lucide-react";
 import { getGraphData, getDocumentGraph, getEntityDetails, type GraphData, type GraphNode } from "@/actions/graph";
 import { getAllTags } from "@/actions/documents";
 import { aiWebSearchForEntity, type WebSearchResult } from "@/actions/websearch";
@@ -945,6 +945,43 @@ export default function GraphPage() {
                     >
                       {selectedNode.type}
                     </Badge>
+                  </div>
+
+                  <div>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={async () => {
+                        try {
+                          const response = await fetch("/api/chats/context", {
+                            method: "POST",
+                            headers: { "Content-Type": "application/json" },
+                            body: JSON.stringify({
+                              category: "entity",
+                              entityId: selectedNode.id,
+                              title: `Chat about ${selectedNode.name}`,
+                            }),
+                          });
+                          
+                          if (response.ok) {
+                            const { thread } = await response.json();
+                            router.push(`/chat/${thread.id}`);
+                          } else {
+                            throw new Error("Failed to create chat");
+                          }
+                        } catch (error) {
+                          toast({
+                            title: "Error",
+                            description: "Failed to create chat. Please try again.",
+                            variant: "destructive",
+                          });
+                        }
+                      }}
+                      className="w-full"
+                    >
+                      <MessageSquare className="h-4 w-4 mr-2" />
+                      Chat about this
+                    </Button>
                   </div>
 
                   {selectedDetails.description && (

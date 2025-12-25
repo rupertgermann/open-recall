@@ -20,12 +20,16 @@ import {
   PromptInputTextarea,
 } from "@/components/ai-elements/prompt-input";
 import { Button } from "@/components/ui/button";
-import { Loader2, MessageSquareIcon, Trash2 } from "lucide-react";
+import { Loader2, MessageSquareIcon, Trash2, ArrowLeft } from "lucide-react";
+import Link from "next/link";
 
 type LoadedChat = {
   thread: {
     id: string;
     title: string;
+    category: string;
+    entityId: string | null;
+    documentId: string | null;
     createdAt: string;
     updatedAt: string;
     lastMessageAt: string;
@@ -129,7 +133,17 @@ export default function ChatThreadPage() {
 
       <main className="flex-1 container mx-auto px-4 py-6 max-w-5xl">
         <div className="flex items-start justify-between gap-4 mb-4">
-          <div>
+          <div className="flex-1">
+            <div className="flex items-center gap-2 mb-2">
+              {loaded?.thread.category !== "general" && (
+                <Link href={loaded?.thread.category === "entity" ? "/graph" : "/library"}>
+                  <Button variant="ghost" size="sm" className="text-muted-foreground hover:text-foreground">
+                    <ArrowLeft className="h-4 w-4 mr-1" />
+                    Back to {loaded?.thread.category === "entity" ? "graph" : "library"}
+                  </Button>
+                </Link>
+              )}
+            </div>
             <h1 className="text-2xl font-bold">{loaded?.thread.title ?? "Chat"}</h1>
             <p className="text-sm text-muted-foreground">Saved conversation</p>
           </div>

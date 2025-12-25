@@ -3,7 +3,7 @@ import { createOpenAI } from "@ai-sdk/openai";
 import { retrieveContext, buildPromptContext } from "@/actions/chat";
 import { getChatConfigFromDB, type ChatConfig } from "@/lib/ai/config";
 import { db } from "@/db";
-import { chatMessages, chatThreads } from "@/db/schema";
+import { chatMessages, chatThreads, entities, documents } from "@/db/schema";
 import { eq } from "drizzle-orm";
 
 // Helper to create AI client from config
@@ -88,10 +88,87 @@ export async function POST(req: Request) {
     entities: [], 
     graphContext: "" 
   };
+
+  // Check if this is a context-specific chat
+  let threadContext = null;
+  if (effectiveThreadId) {
+    const [thread] = await db
+      .select({
+        category: chatThreads.category,
+        entityId: chatThreads.entityId,
+        documentId: chatThreads.documentId,
+      })
+      .from(chatThreads)
+      .where(eq(chatThreads.id, effectiveThreadId))
+      .limit(1);
+    
+    threadContext = thread;
+  }
   
   if (lastUserText) {
     try {
-      retrievedData = await retrieveContext(lastUserText, 5);
+      // For entity-specific chats, prioritize that entity in retrieval
+      if (threadContext?.category === "entity" && threadContext.entityId) {
+        // Get entity details for context
+        const entityResult = await db
+          .select({
+            name: entities.name,
+            type: entities.type,
+            description: entities.description,
+          })
+          .from(entities)
+          .where(eq(entities.id, threadContext.entityId))
+          .limit(1);
+
+        if (entityResult.length > 0) {
+          const entity = entityResult[0];
+          // Add entity context to the query for better retrieval
+          const enhancedQuery = `${lastUserText} ${entity.name} ${entity.description || ""}`;
+          retrievedData = await retrieveContext(enhancedQuery, 5);
+          
+          // Ensure the specific entity is included in results
+          if (!retrievedData.entities.some(e => e.id === threadContext.entityId)) {
+            retrievedData.entities.push({
+              id: threadContext.entityId,
+              name: entity.name,
+              type: entity.type,
+              description: entity.description,
+            });
+          }
+        } else {
+          retrievedData = await retrieveContext(lastUserText, 5);
+        }
+      } else if (threadContext?.category === "document" && threadContext.documentId) {
+        // For document-specific chats, prioritize that document
+        const docResult = await db
+          .select({
+            title: documents.title,
+            content: documents.content,
+          })
+          .from(documents)
+          .where(eq(documents.id, threadContext.documentId))
+          .limit(1);
+
+        if (docResult.length > 0) {
+          const doc = docResult[0];
+          // Add document context to the query
+          const enhancedQuery = `${lastUserText} ${doc.title} ${doc.content || ""}`;
+          retrievedData = await retrieveContext(enhancedQuery, 5);
+          
+          // Prioritize chunks from this document
+          retrievedData.chunks.sort((a, b) => {
+            if (a.documentId === threadContext.documentId && b.documentId !== threadContext.documentId) return -1;
+            if (a.documentId !== threadContext.documentId && b.documentId === threadContext.documentId) return 1;
+            return b.score - a.score;
+          });
+        } else {
+          retrievedData = await retrieveContext(lastUserText, 5);
+        }
+      } else {
+        // General chat - use standard retrieval
+        retrievedData = await retrieveContext(lastUserText, 5);
+      }
+      
       contextString = await buildPromptContext(retrievedData);
     } catch (error) {
       console.error("Context retrieval failed:", error);

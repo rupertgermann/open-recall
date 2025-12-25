@@ -12,6 +12,9 @@ export async function GET(
     .select({
       id: chatThreads.id,
       title: chatThreads.title,
+      category: chatThreads.category,
+      entityId: chatThreads.entityId,
+      documentId: chatThreads.documentId,
       createdAt: chatThreads.createdAt,
       updatedAt: chatThreads.updatedAt,
       lastMessageAt: chatThreads.lastMessageAt,

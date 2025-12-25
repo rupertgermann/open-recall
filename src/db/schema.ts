@@ -272,12 +272,18 @@ export const chatThreads = pgTable(
   {
     id: uuid("id").primaryKey().defaultRandom(),
     title: text("title").notNull().default("New chat"),
+    category: text("category").notNull().default("general"), // 'general', 'entity', 'document'
+    entityId: uuid("entity_id").references(() => entities.id, { onDelete: "set null" }),
+    documentId: uuid("document_id").references(() => documents.id, { onDelete: "set null" }),
     createdAt: timestamp("created_at").defaultNow().notNull(),
     updatedAt: timestamp("updated_at").defaultNow().notNull(),
     lastMessageAt: timestamp("last_message_at").defaultNow().notNull(),
   },
   (table) => ({
     lastMessageIdx: index("chat_threads_last_message_idx").on(table.lastMessageAt),
+    entityIdx: index("chat_threads_entity_idx").on(table.entityId),
+    documentIdx: index("chat_threads_document_idx").on(table.documentId),
+    categoryIdx: index("chat_threads_category_idx").on(table.category),
   })
 );
 
@@ -380,8 +386,16 @@ export const srsItemsRelations = relations(srsItems, ({ one }) => ({
   }),
 }));
 
-export const chatThreadsRelations = relations(chatThreads, ({ many }) => ({
+export const chatThreadsRelations = relations(chatThreads, ({ many, one }) => ({
   messages: many(chatMessages),
+  entity: one(entities, {
+    fields: [chatThreads.entityId],
+    references: [entities.id],
+  }),
+  document: one(documents, {
+    fields: [chatThreads.documentId],
+    references: [documents.id],
+  }),
 }));
 
 export const chatMessagesRelations = relations(chatMessages, ({ one }) => ({
