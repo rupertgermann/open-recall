@@ -23,6 +23,8 @@ export const dynamic = "force-dynamic";
 
 type UpdateRequest = {
   documentId: string;
+  maxEntities?: number;
+  maxRelationships?: number;
 };
 
 function createSSEMessage(step: string, message: string, progress?: number, error?: boolean) {
@@ -119,7 +121,10 @@ export async function POST(req: Request) {
         // Step 6: Entity extraction
         controller.enqueue(encoder.encode(createSSEMessage("extracting", "Extracting entities and relationships...", 55)));
 
-        const extractedData = await extractEntitiesWithDBConfig(extracted.content);
+        const extractedData = await extractEntitiesWithDBConfig(extracted.content, {
+          maxEntities: body.maxEntities,
+          maxRelationships: body.maxRelationships,
+        });
         const uniqueExtractedEntities = Array.from(
           new Map(extractedData.entities.map(e => [`${e.name}||${e.type}`, e])).values()
         );

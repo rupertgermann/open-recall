@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useMemo } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { FileText, Link as LinkIcon, Loader2, CheckCircle, AlertCircle, Circle } from "lucide-react";
@@ -38,7 +38,7 @@ export default function AddPage() {
   const [url, setUrl] = useState("");
   const [text, setText] = useState("");
   const [title, setTitle] = useState("");
-  const [maxEntities, setMaxEntities] = useState(200);
+  const [entityDetail, setEntityDetail] = useState(100);
   const [isProcessing, setIsProcessing] = useState(false);
   const [currentStatus, setCurrentStatus] = useState<StepStatus | null>(null);
   const [completedSteps, setCompletedSteps] = useState<Set<string>>(new Set());
@@ -48,6 +48,15 @@ export default function AddPage() {
   const abortControllerRef = useRef<AbortController | null>(null);
 
   const hasAutoStartedRef = useRef(false);
+
+  const entityBudget = useMemo(() => {
+    const t = Math.max(0, Math.min(1, entityDetail / 100));
+    // Quadratic curve: low detail stays low, high detail ramps up.
+    // 0% -> ~25 entities, 100% -> ~300 entities
+    const maxEntities = Math.round(25 + t * t * 275);
+    const maxRelationships = Math.round(maxEntities * 2);
+    return { maxEntities, maxRelationships };
+  }, [entityDetail]);
 
   const runIngestRequest = async (endpoint: string, body: unknown) => {
     abortControllerRef.current = new AbortController();
@@ -148,7 +157,11 @@ export default function AddPage() {
         setCurrentStatus(null);
 
         // Do not rely on React state being updated yet; call the update endpoint directly.
-        runIngestRequest("/api/update-document", { documentId: qpUpdate }).catch((err) => {
+        runIngestRequest("/api/update-document", {
+          documentId: qpUpdate,
+          maxEntities: entityBudget.maxEntities,
+          maxRelationships: entityBudget.maxRelationships,
+        }).catch((err) => {
           if (err instanceof Error && err.name !== "AbortError") {
             setError(err.message);
           }
@@ -186,10 +199,14 @@ export default function AddPage() {
     try {
       const endpoint = isUpdateMode ? "/api/update-document" : "/api/ingest";
       const body = isUpdateMode 
-        ? { documentId: updateDocumentId }
+        ? {
+            documentId: updateDocumentId,
+            maxEntities: entityBudget.maxEntities,
+            maxRelationships: entityBudget.maxRelationships,
+          }
         : contentType === "url"
-          ? { type: "url", url, maxEntities }
-          : { type: "text", title, content: text, maxEntities };
+          ? { type: "url", url, maxEntities: entityBudget.maxEntities, maxRelationships: entityBudget.maxRelationships }
+          : { type: "text", title, content: text, maxEntities: entityBudget.maxEntities, maxRelationships: entityBudget.maxRelationships };
 
       await runIngestRequest(endpoint, body);
     } catch (error) {
@@ -313,21 +330,21 @@ export default function AddPage() {
 
               <div className="space-y-2">
                 <div className="flex items-center justify-between gap-4">
-                  <label className="text-sm font-medium">Entities to extract</label>
-                  <span className="text-sm text-muted-foreground tabular-nums">{maxEntities}</span>
+                  <label className="text-sm font-medium">Entity detail</label>
+                  <span className="text-sm text-muted-foreground tabular-nums">~{entityBudget.maxEntities}</span>
                 </div>
                 <input
                   type="range"
-                  min={20}
-                  max={200}
-                  step={10}
-                  value={maxEntities}
-                  onChange={(e) => setMaxEntities(Number(e.target.value))}
+                  min={0}
+                  max={100}
+                  step={5}
+                  value={entityDetail}
+                  onChange={(e) => setEntityDetail(Number(e.target.value))}
                   disabled={isProcessing}
                   className="w-full"
                 />
                 <p className="text-xs text-muted-foreground">
-                  Lower values extract only the most important entities.
+                  Left: only highest-priority entities. Right: extract many more.
                 </p>
               </div>
 
