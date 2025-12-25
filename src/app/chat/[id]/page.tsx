@@ -135,6 +135,12 @@ export default function ChatThreadPage() {
         <div className="flex items-start justify-between gap-4 mb-4">
           <div className="flex-1">
             <div className="flex items-center gap-2 mb-2">
+              <Link href="/chat">
+                <Button variant="ghost" size="sm" className="text-muted-foreground hover:text-foreground">
+                  <ArrowLeft className="h-4 w-4 mr-1" />
+                  Back to chat module
+                </Button>
+              </Link>
               {loaded?.thread.category !== "general" && (
                 <Link 
                   href={
@@ -145,7 +151,7 @@ export default function ChatThreadPage() {
                 >
                   <Button variant="ghost" size="sm" className="text-muted-foreground hover:text-foreground">
                     <ArrowLeft className="h-4 w-4 mr-1" />
-                    Back to {loaded?.thread.category === "entity" ? "entity" : "document"}
+                    Back to {loaded?.thread.category === "entity" ? "entity" : "doc"}
                   </Button>
                 </Link>
               )}

@@ -296,7 +296,7 @@ export default function ChatPage() {
                     <SelectItem value="all">All Chats</SelectItem>
                     <SelectItem value="general">General</SelectItem>
                     <SelectItem value="entity">Entity-specific</SelectItem>
-                    <SelectItem value="document">Document-specific</SelectItem>
+                    <SelectItem value="document">Doc-specific</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
@@ -335,7 +335,7 @@ export default function ChatPage() {
                         )}>
                           {suggestion.category === "general" && "General"}
                           {suggestion.category === "entity" && "Entity"}
-                          {suggestion.category === "document" && "Document"}
+                          {suggestion.category === "document" && "Doc"}
                         </div>
                       </div>
                     </div>
@@ -344,7 +344,7 @@ export default function ChatPage() {
               )}
             </div>
 
-            <ScrollArea className="h-[85vh]">
+            <ScrollArea className="h-[75vh]">
               <div className="p-2">
                 {threadsLoading ? (
                   <div className="flex items-center gap-2 text-sm text-muted-foreground p-2">
@@ -380,7 +380,7 @@ export default function ChatPage() {
                             )}>
                               {t.category === "general" && "General"}
                               {t.category === "entity" && "Entity"}
-                              {t.category === "document" && "Document"}
+                              {t.category === "document" && "Doc"}
                             </div>
                           </div>
                         </button>
