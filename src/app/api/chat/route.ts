@@ -122,8 +122,9 @@ export async function POST(req: Request) {
 
         if (entityResult.length > 0) {
           const entity = entityResult[0];
-          // Add entity context to the query for better retrieval
-          const enhancedQuery = `${lastUserText} ${entity.name} ${entity.description || ""}`;
+          // Add entity context to the query for better retrieval (truncate description)
+          const truncatedDescription = entity.description ? entity.description.slice(0, 200) : "";
+          const enhancedQuery = `${lastUserText} ${entity.name} ${truncatedDescription}`;
           retrievedData = await retrieveContext(enhancedQuery, 3); // Reduced from 5 to 3
           
           // Ensure the specific entity is included in results
@@ -143,7 +144,7 @@ export async function POST(req: Request) {
         const docResult = await db
           .select({
             title: documents.title,
-            content: documents.content,
+            summary: documents.summary,
           })
           .from(documents)
           .where(eq(documents.id, threadContext.documentId))
@@ -151,8 +152,9 @@ export async function POST(req: Request) {
 
         if (docResult.length > 0) {
           const doc = docResult[0];
-          // Add document context to the query
-          const enhancedQuery = `${lastUserText} ${doc.title} ${doc.content || ""}`;
+          // Add document context to the query (only title and summary, not full content)
+          const truncatedSummary = doc.summary ? doc.summary.slice(0, 200) : "";
+          const enhancedQuery = `${lastUserText} ${doc.title} ${truncatedSummary}`;
           retrievedData = await retrieveContext(enhancedQuery, 3); // Reduced from 5 to 3
           
           // Prioritize chunks from this document

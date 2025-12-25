@@ -136,10 +136,16 @@ export default function ChatThreadPage() {
           <div className="flex-1">
             <div className="flex items-center gap-2 mb-2">
               {loaded?.thread.category !== "general" && (
-                <Link href={loaded?.thread.category === "entity" ? "/graph" : "/library"}>
+                <Link 
+                  href={
+                    loaded?.thread.category === "entity" 
+                      ? `/graph?entity=${loaded?.thread.entityId}`
+                      : `/library/${loaded?.thread.documentId}`
+                  }
+                >
                   <Button variant="ghost" size="sm" className="text-muted-foreground hover:text-foreground">
                     <ArrowLeft className="h-4 w-4 mr-1" />
-                    Back to {loaded?.thread.category === "entity" ? "graph" : "library"}
+                    Back to {loaded?.thread.category === "entity" ? "entity" : "document"}
                   </Button>
                 </Link>
               )}

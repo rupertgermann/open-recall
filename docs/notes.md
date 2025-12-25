@@ -15,3 +15,7 @@
 - make sure all "chat about this" buttons create and open a new chat in the chat module and hand over the relevant context (document or entity) to the new chat
 - add a "back to doc/entity" link to chats opened from doc/entity
 - add chat categories for doc/entity/normal-chat
+
+
+- dynamic starter prompt suggestions for chat-about -doc/entity 
+- make sure data retrieval from local sources for chat context follows best practices (function calling?)

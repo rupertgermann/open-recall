@@ -6,6 +6,7 @@ import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Search, Loader2, RefreshCw, Focus, X, RotateCcw, ZoomIn, ZoomOut, MessageSquare } from "lucide-react";
 import { ChatAboutButton } from "@/app/library/chat-about-button";
+import { RelatedChats } from "@/components/related-chats";
 import { getGraphData, getDocumentGraph, getEntityDetails, type GraphData, type GraphNode } from "@/actions/graph";
 import { getAllTags } from "@/actions/documents";
 import { aiWebSearchForEntity, type WebSearchResult } from "@/actions/websearch";
@@ -1094,6 +1095,9 @@ export default function GraphPage() {
                       </p>
                     )}
                   </div>
+
+                  {/* Related Chats */}
+                  <RelatedChats entityId={selectedNode.id} />
                 </div>
               ) : selectedNode ? (
                 <div className="flex items-center justify-center py-8">

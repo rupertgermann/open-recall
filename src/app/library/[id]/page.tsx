@@ -10,6 +10,7 @@ import { DeleteButton } from "./delete-button";
 import { UpdateFromSourceButton } from "./update-from-source-button";
 import { TagsEditor } from "./tags-editor";
 import { ChunksModal } from "./chunks-modal";
+import { RelatedChats } from "@/components/related-chats";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { ChatAboutButton } from "@/app/library/chat-about-button";
@@ -272,6 +273,9 @@ export default async function DocumentDetailPage({
                   )}
                 </CardContent>
               </Card>
+
+              {/* Related Chats */}
+              <RelatedChats documentId={document.id} />
 
             </div>
           </div>
