@@ -12,6 +12,7 @@ import { TagsEditor } from "./tags-editor";
 import { ChunksModal } from "./chunks-modal";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import { ChatAboutButton } from "@/app/library/chat-about-button";
 
 const typeIcons = {
   article: Globe,
@@ -105,12 +106,7 @@ export default async function DocumentDetailPage({
                   View in Graph
                 </Button>
               </Link>
-              <Link href={`/chat?context=${id}`} className="w-full">
-                <Button variant="outline" size="sm" className="gap-2">
-                  <MessageSquare className="h-4 w-4" />
-                  Chat about this
-                </Button>
-              </Link>
+              <ChatAboutButton documentId={document.id} documentTitle={document.title} />
               {document.url && <UpdateFromSourceButton documentId={document.id} />}
               <DeleteButton documentId={document.id} />
             </div>

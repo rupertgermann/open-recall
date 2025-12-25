@@ -124,7 +124,7 @@ export async function POST(req: Request) {
           const entity = entityResult[0];
           // Add entity context to the query for better retrieval
           const enhancedQuery = `${lastUserText} ${entity.name} ${entity.description || ""}`;
-          retrievedData = await retrieveContext(enhancedQuery, 5);
+          retrievedData = await retrieveContext(enhancedQuery, 3); // Reduced from 5 to 3
           
           // Ensure the specific entity is included in results
           if (!retrievedData.entities.some(e => e.id === threadContext.entityId)) {
@@ -136,7 +136,7 @@ export async function POST(req: Request) {
             });
           }
         } else {
-          retrievedData = await retrieveContext(lastUserText, 5);
+          retrievedData = await retrieveContext(lastUserText, 3); // Reduced from 5 to 3
         }
       } else if (threadContext?.category === "document" && threadContext.documentId) {
         // For document-specific chats, prioritize that document
@@ -153,7 +153,7 @@ export async function POST(req: Request) {
           const doc = docResult[0];
           // Add document context to the query
           const enhancedQuery = `${lastUserText} ${doc.title} ${doc.content || ""}`;
-          retrievedData = await retrieveContext(enhancedQuery, 5);
+          retrievedData = await retrieveContext(enhancedQuery, 3); // Reduced from 5 to 3
           
           // Prioritize chunks from this document
           retrievedData.chunks.sort((a, b) => {
@@ -162,11 +162,11 @@ export async function POST(req: Request) {
             return b.score - a.score;
           });
         } else {
-          retrievedData = await retrieveContext(lastUserText, 5);
+          retrievedData = await retrieveContext(lastUserText, 3); // Reduced from 5 to 3
         }
       } else {
         // General chat - use standard retrieval
-        retrievedData = await retrieveContext(lastUserText, 5);
+        retrievedData = await retrieveContext(lastUserText, 3); // Reduced from 5 to 3
       }
       
       contextString = await buildPromptContext(retrievedData);
@@ -176,16 +176,16 @@ export async function POST(req: Request) {
   }
 
   const systemPrompt = `You are a helpful AI assistant with access to the user's personal knowledge base.
-Your role is to answer questions accurately based on the retrieved context from their documents.
+Answer questions based on the retrieved context.
 
-${contextString ? `Here is the relevant context from the knowledge base:\n\n${contextString}` : "No relevant context was found in the knowledge base."}
+${contextString ? `Context:\n${contextString}` : "No relevant context found."}
 
 Guidelines:
-- If the context contains relevant information, use it to answer the question accurately.
-- If the context doesn't contain enough information, say so clearly and provide general knowledge if appropriate.
-- Always cite which documents or entities your information comes from when possible.
-- Be concise but thorough in your responses.
-- If you're unsure about something, acknowledge the uncertainty.`;
+- Use context to answer accurately
+- If context insufficient, say so and provide general knowledge
+- Cite sources when possible
+- Be concise
+- Acknowledge uncertainty when unsure`;
 
   // Get model from DB-backed config
   const model = getModelFromConfig(chatConfig);
@@ -225,10 +225,6 @@ Guidelines:
   return result.toUIMessageStreamResponse({
     headers: {
       "X-Chat-Thread-Id": effectiveThreadId,
-      "X-Retrieved-Sources": JSON.stringify(
-        retrievedData.chunks.map((c) => ({ title: c.documentTitle, id: c.documentId }))
-      ),
-      "X-Retrieved-Entities": JSON.stringify(retrievedData.entities.map((e) => e.name)),
     },
     originalMessages: messages,
     onFinish: async ({ messages: responseMessages }) => {
