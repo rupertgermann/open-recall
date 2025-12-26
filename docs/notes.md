@@ -1,5 +1,6 @@
 # notes
 
+- it seems that the streaming of the chat response is not working anymore. check the docs to make sure we are using the correct API for straming 
 
 
 ## features

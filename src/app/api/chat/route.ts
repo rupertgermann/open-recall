@@ -24,14 +24,7 @@ function fallbackTitleFromUserText(text: string): string {
 function getModelFromConfig(config: ChatConfig) {
   const client = createAIClient(config);
   
-  // Use responses API for OpenAI, default for others
-  if (config.provider === "openai") {
-    const anyClient = client as unknown as { responses?: (modelId: string) => unknown };
-    if (typeof anyClient.responses === "function") {
-      return anyClient.responses(config.model);
-    }
-  }
-  
+  // Use standard client for all providers
   return client(config.model);
 }
 
