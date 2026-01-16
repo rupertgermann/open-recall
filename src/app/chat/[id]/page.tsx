@@ -20,12 +20,17 @@ import {
   PromptInputTextarea,
 } from "@/components/ai-elements/prompt-input";
 import { Button } from "@/components/ui/button";
-import { Loader2, MessageSquareIcon, Trash2 } from "lucide-react";
+import { Loader2, MessageSquareIcon, Trash2, ArrowLeft, Lightbulb } from "lucide-react";
+import Link from "next/link";
+import { getDocumentStarterPrompts, getEntityStarterPrompts, type StarterPrompt } from "@/lib/chat/starter-prompts";
 
 type LoadedChat = {
   thread: {
     id: string;
     title: string;
+    category: string;
+    entityId: string | null;
+    documentId: string | null;
     createdAt: string;
     updatedAt: string;
     lastMessageAt: string;
@@ -55,6 +60,20 @@ export default function ChatThreadPage() {
   const [loaded, setLoaded] = useState<LoadedChat | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [starterPrompts, setStarterPrompts] = useState<StarterPrompt[]>([]);
+
+  const getStarterPrompts = (chat: LoadedChat): StarterPrompt[] => {
+    if (chat.thread.category === "document") {
+      // Remove "Chat about " prefix to get the original document title
+      const originalTitle = chat.thread.title.replace(/^Chat about\s+/, "");
+      return getDocumentStarterPrompts(originalTitle);
+    } else if (chat.thread.category === "entity") {
+      // Remove "Chat about " prefix to get the original entity name
+      const originalName = chat.thread.title.replace(/^Chat about\s+/, "");
+      return getEntityStarterPrompts(originalName, "entity"); // We could enhance this to get actual entity type
+    }
+    return [];
+  };
 
   useEffect(() => {
     let cancelled = false;
@@ -68,7 +87,10 @@ export default function ChatThreadPage() {
           throw new Error(`Failed to load chat (${res.status})`);
         }
         const data = (await res.json()) as LoadedChat;
-        if (!cancelled) setLoaded(data);
+        if (!cancelled) {
+          setLoaded(data);
+          setStarterPrompts(getStarterPrompts(data));
+        }
       } catch (e) {
         if (!cancelled) setError(e instanceof Error ? e.message : String(e));
       } finally {
@@ -123,13 +145,49 @@ export default function ChatThreadPage() {
     router.push("/chat");
   };
 
+  const handleStarterPrompt = async (prompt: string) => {
+    setText(prompt);
+    // Auto-submit the starter prompt
+    await sendMessage(
+      { text: prompt },
+      {
+        body: {
+          threadId,
+        },
+      }
+    );
+    setText("");
+  };
+
   return (
     <div className="min-h-screen flex flex-col">
       <Header />
 
-      <main className="flex-1 container mx-auto px-4 py-6 max-w-5xl">
+      <main className="flex-1 container mx-auto px-4 py-6">
         <div className="flex items-start justify-between gap-4 mb-4">
-          <div>
+          <div className="flex-1">
+            <div className="flex items-center gap-2 mb-2">
+              <Link href="/chat">
+                <Button variant="ghost" size="sm" className="text-muted-foreground hover:text-foreground">
+                  <ArrowLeft className="h-4 w-4 mr-1" />
+                  Back to chat module
+                </Button>
+              </Link>
+              {loaded?.thread.category !== "general" && (
+                <Link 
+                  href={
+                    loaded?.thread.category === "entity" 
+                      ? `/graph?entity=${loaded?.thread.entityId}`
+                      : `/library/${loaded?.thread.documentId}`
+                  }
+                >
+                  <Button variant="ghost" size="sm" className="text-muted-foreground hover:text-foreground">
+                    <ArrowLeft className="h-4 w-4 mr-1" />
+                    Back to {loaded?.thread.category === "entity" ? "entity" : "doc"}
+                  </Button>
+                </Link>
+              )}
+            </div>
             <h1 className="text-2xl font-bold">{loaded?.thread.title ?? "Chat"}</h1>
             <p className="text-sm text-muted-foreground">Saved conversation</p>
           </div>
@@ -150,29 +208,54 @@ export default function ChatThreadPage() {
           <div className="flex flex-col gap-4">
             <Conversation className="rounded-lg border h-[60vh]">
               <ConversationContent>
-                {messages.length === 0 ? (
+                {messages.map((m, index) => (
+                  <Message from={m.role} key={m.id}>
+                    <MessageContent>
+                      {m.parts.map((part, i) => {
+                        if (part.type === "text") {
+                          return (
+                            <MessageResponse key={`${m.id}-text-${i}`}>
+                              {part.text}
+                            </MessageResponse>
+                          );
+                        }
+                        return null;
+                      })}
+                    </MessageContent>
+                    {/* Show starter prompts after the first welcome message */}
+                    {index === 0 && loaded?.thread.category !== 'general' && starterPrompts.length > 0 && (
+                      <div className="mt-3">
+                        <div className="flex items-center gap-2 mb-2">
+                          <Lightbulb className="h-3 w-3 text-muted-foreground" />
+                          <h3 className="text-xs font-medium text-muted-foreground">
+                            Starter prompts
+                          </h3>
+                        </div>
+                        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
+                          {starterPrompts.map((prompt) => (
+                            <button
+                              key={prompt.id}
+                              onClick={() => handleStarterPrompt(prompt.text)}
+                              className="text-left p-2 rounded-md bg-background hover:bg-accent border transition-colors text-xs"
+                              disabled={status !== "ready"}
+                            >
+                              <div className="font-medium leading-tight">{prompt.text}</div>
+                              {prompt.description && (
+                                <div className="text-muted-foreground mt-1 leading-tight">{prompt.description}</div>
+                              )}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </Message>
+                ))}
+                {messages.length === 0 && (
                   <ConversationEmptyState
                     title="No messages"
                     description="Start chatting to see messages here"
                     icon={<MessageSquareIcon className="size-6" />}
                   />
-                ) : (
-                  messages.map((m) => (
-                    <Message from={m.role} key={m.id}>
-                      <MessageContent>
-                        {m.parts.map((part, i) => {
-                          if (part.type === "text") {
-                            return (
-                              <MessageResponse key={`${m.id}-text-${i}`}>
-                                {part.text}
-                              </MessageResponse>
-                            );
-                          }
-                          return null;
-                        })}
-                      </MessageContent>
-                    </Message>
-                  ))
                 )}
               </ConversationContent>
               <ConversationScrollButton />

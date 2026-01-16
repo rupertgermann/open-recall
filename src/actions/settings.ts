@@ -11,6 +11,10 @@ export type ProviderSettings = {
   baseUrl: string;
   model: string;
   apiKey?: string;
+  // OpenAI-specific options
+  reasoningEffort?: "low" | "medium" | "high";
+  verbosity?: "low" | "medium" | "high";
+  webSearchEnabled?: boolean;
 };
 
 // Combined AI settings with separate chat and embedding configs

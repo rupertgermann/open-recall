@@ -8,6 +8,7 @@ import {
   jsonb,
   index,
   uniqueIndex,
+  primaryKey,
 } from "drizzle-orm/pg-core";
 import { relations } from "drizzle-orm";
 
@@ -34,6 +35,31 @@ const vector = customType<{ data: number[]; driverData: string }>({
 });
 
 // ============================================================================
+// EMBEDDING_CACHE - Central embedding cache (Phase 3)
+// Must be defined before chunks table due to foreign key reference
+// ============================================================================
+export const embeddingCache = pgTable(
+  "embedding_cache",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    contentHash: text("content_hash").notNull(),
+    model: text("model").notNull(),
+    embedding: vector("embedding").notNull(),
+    purpose: text("purpose").notNull().default("retrieval"), // 'graph' | 'retrieval'
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+  },
+  (table) => ({
+    contentHashModelPurposeIdx: uniqueIndex("embedding_cache_hash_model_purpose_idx").on(
+      table.contentHash,
+      table.model,
+      table.purpose
+    ),
+    modelIdx: index("embedding_cache_model_idx").on(table.model),
+    purposeIdx: index("embedding_cache_purpose_idx").on(table.purpose),
+  })
+);
+
+// ============================================================================
 // DOCUMENTS - Source content metadata
 // ============================================================================
 export const documents = pgTable(
@@ -44,16 +70,50 @@ export const documents = pgTable(
     title: text("title").notNull(),
     type: text("type").notNull(), // 'article', 'youtube', 'pdf', 'note'
     content: text("content"), // Original raw content
+    contentHash: text("content_hash"), // Phase 8: SHA-256 hash for change detection
     summary: text("summary"), // AI-generated summary
     createdAt: timestamp("created_at").defaultNow().notNull(),
     updatedAt: timestamp("updated_at").defaultNow().notNull(),
     processingStatus: text("processing_status").default("pending").notNull(), // 'pending', 'processing', 'completed', 'failed'
+    embeddingModel: text("embedding_model"), // Phase 8: Track which model was used
+    embeddingVersion: text("embedding_version"), // Phase 8: Track embedding version
     metadata: jsonb("metadata"), // Flexible metadata storage
   },
   (table) => ({
     urlIdx: index("documents_url_idx").on(table.url),
     typeIdx: index("documents_type_idx").on(table.type),
     statusIdx: index("documents_status_idx").on(table.processingStatus),
+    contentHashIdx: index("documents_content_hash_idx").on(table.contentHash),
+  })
+);
+
+export const tags = pgTable(
+  "tags",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    name: text("name").notNull(),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+  },
+  (table) => ({
+    nameIdx: uniqueIndex("tags_name_idx").on(table.name),
+  })
+);
+
+export const documentTags = pgTable(
+  "document_tags",
+  {
+    documentId: uuid("document_id")
+      .notNull()
+      .references(() => documents.id, { onDelete: "cascade" }),
+    tagId: uuid("tag_id")
+      .notNull()
+      .references(() => tags.id, { onDelete: "cascade" }),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+  },
+  (table) => ({
+    pk: primaryKey({ columns: [table.documentId, table.tagId] }),
+    documentIdx: index("document_tags_document_idx").on(table.documentId),
+    tagIdx: index("document_tags_tag_idx").on(table.tagId),
   })
 );
 
@@ -68,9 +128,13 @@ export const chunks = pgTable(
       .notNull()
       .references(() => documents.id, { onDelete: "cascade" }),
     content: text("content").notNull(),
+    contentHash: text("content_hash"), // Phase 2: SHA-256 hash for deduplication
     embedding: vector("embedding"),
+    embeddingCacheId: uuid("embedding_cache_id").references(() => embeddingCache.id), // Phase 3: Reference to cached embedding
     chunkIndex: integer("chunk_index").notNull(),
     tokenCount: integer("token_count"),
+    embeddingStatus: text("embedding_status").default("pending").notNull(), // Phase 7: 'pending' | 'embedded'
+    embeddingPurpose: text("embedding_purpose").default("retrieval"), // Phase 4: 'graph' | 'retrieval'
     createdAt: timestamp("created_at").defaultNow().notNull(),
   },
   (table) => ({
@@ -79,6 +143,8 @@ export const chunks = pgTable(
       table.documentId,
       table.chunkIndex
     ),
+    contentHashIdx: uniqueIndex("chunks_content_hash_idx").on(table.contentHash),
+    embeddingStatusIdx: index("chunks_embedding_status_idx").on(table.embeddingStatus),
   })
 );
 
@@ -206,12 +272,18 @@ export const chatThreads = pgTable(
   {
     id: uuid("id").primaryKey().defaultRandom(),
     title: text("title").notNull().default("New chat"),
+    category: text("category").notNull().default("general"), // 'general', 'entity', 'document'
+    entityId: uuid("entity_id").references(() => entities.id, { onDelete: "set null" }),
+    documentId: uuid("document_id").references(() => documents.id, { onDelete: "set null" }),
     createdAt: timestamp("created_at").defaultNow().notNull(),
     updatedAt: timestamp("updated_at").defaultNow().notNull(),
     lastMessageAt: timestamp("last_message_at").defaultNow().notNull(),
   },
   (table) => ({
     lastMessageIdx: index("chat_threads_last_message_idx").on(table.lastMessageAt),
+    entityIdx: index("chat_threads_entity_idx").on(table.entityId),
+    documentIdx: index("chat_threads_document_idx").on(table.documentId),
+    categoryIdx: index("chat_threads_category_idx").on(table.category),
   })
 );
 
@@ -243,6 +315,22 @@ export const documentsRelations = relations(documents, ({ many }) => ({
   chunks: many(chunks),
   entityMentions: many(entityMentions),
   srsItems: many(srsItems),
+  documentTags: many(documentTags),
+}));
+
+export const tagsRelations = relations(tags, ({ many }) => ({
+  documentTags: many(documentTags),
+}));
+
+export const documentTagsRelations = relations(documentTags, ({ one }) => ({
+  document: one(documents, {
+    fields: [documentTags.documentId],
+    references: [documents.id],
+  }),
+  tag: one(tags, {
+    fields: [documentTags.tagId],
+    references: [tags.id],
+  }),
 }));
 
 export const chunksRelations = relations(chunks, ({ one, many }) => ({
@@ -298,8 +386,16 @@ export const srsItemsRelations = relations(srsItems, ({ one }) => ({
   }),
 }));
 
-export const chatThreadsRelations = relations(chatThreads, ({ many }) => ({
+export const chatThreadsRelations = relations(chatThreads, ({ many, one }) => ({
   messages: many(chatMessages),
+  entity: one(entities, {
+    fields: [chatThreads.entityId],
+    references: [entities.id],
+  }),
+  document: one(documents, {
+    fields: [chatThreads.documentId],
+    references: [documents.id],
+  }),
 }));
 
 export const chatMessagesRelations = relations(chatMessages, ({ one }) => ({
@@ -314,6 +410,10 @@ export const chatMessagesRelations = relations(chatMessages, ({ one }) => ({
 // ============================================================================
 export type Document = typeof documents.$inferSelect;
 export type NewDocument = typeof documents.$inferInsert;
+export type Tag = typeof tags.$inferSelect;
+export type NewTag = typeof tags.$inferInsert;
+export type DocumentTag = typeof documentTags.$inferSelect;
+export type NewDocumentTag = typeof documentTags.$inferInsert;
 export type Chunk = typeof chunks.$inferSelect;
 export type NewChunk = typeof chunks.$inferInsert;
 export type Entity = typeof entities.$inferSelect;
@@ -331,3 +431,6 @@ export type ChatThread = typeof chatThreads.$inferSelect;
 export type NewChatThread = typeof chatThreads.$inferInsert;
 export type ChatMessage = typeof chatMessages.$inferSelect;
 export type NewChatMessage = typeof chatMessages.$inferInsert;
+
+export type EmbeddingCache = typeof embeddingCache.$inferSelect;
+export type NewEmbeddingCache = typeof embeddingCache.$inferInsert;

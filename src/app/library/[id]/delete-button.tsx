@@ -53,10 +53,10 @@ export function DeleteButton({ documentId }: DeleteButtonProps) {
     <AlertDialog open={open} onOpenChange={setOpen}>
       <AlertDialogTrigger asChild>
         <Button 
-          variant="destructive" 
+          variant="outline" 
           size="sm" 
           disabled={isPending}
-          className="gap-2"
+  className="gap-2 border-destructive text-destructive hover:bg-destructive/10 hover:text-destructive"
         >
           <Trash2 className="h-4 w-4" />
           {isPending ? "Deleting..." : "Delete Document"}

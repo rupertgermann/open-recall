@@ -1,12 +1,19 @@
 import { notFound } from "next/navigation";
 import Link from "next/link";
-import { ArrowLeft, ExternalLink, FileText, Video, Globe, Network, Calendar, Hash } from "lucide-react";
+import { ArrowLeft, ExternalLink, FileText, Video, Globe, Network, Calendar, Hash, MessageSquare } from "lucide-react";
 import { Header } from "@/components/layout/header";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { getDocument } from "@/actions/documents";
 import { DeleteButton } from "./delete-button";
+import { UpdateFromSourceButton } from "./update-from-source-button";
+import { TagsEditor } from "./tags-editor";
+import { ChunksModal } from "./chunks-modal";
+import { RelatedChats } from "@/components/related-chats";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
+import { ChatAboutButton } from "@/app/library/chat-about-button";
 
 const typeIcons = {
   article: Globe,
@@ -53,7 +60,7 @@ export default async function DocumentDetailPage({
       <Header />
 
       <main className="container mx-auto px-4 py-8">
-        <div className="max-w-4xl mx-auto">
+        <div className="max-w-8xl ">
           {/* Back Button */}
           <Link href="/library" className="inline-flex items-center gap-2 text-muted-foreground hover:text-foreground mb-6">
             <ArrowLeft className="h-4 w-4" />
@@ -93,12 +100,31 @@ export default async function DocumentDetailPage({
                 </a>
               )}
             </div>
-            <DeleteButton documentId={document.id} />
+            <div className="flex items-center gap-2">
+              <Link href={`/graph?focus=${id}`} className="w-full">
+                <Button variant="outline" size="sm" className="gap-2">
+                  <Network className="h-4 w-4" />
+                  View in Graph
+                </Button>
+              </Link>
+              <ChatAboutButton documentId={document.id} documentTitle={document.title} />
+              {document.url && <UpdateFromSourceButton documentId={document.id} />}
+              <DeleteButton documentId={document.id} />
+            </div>
           </div>
 
           <div className="grid gap-6 lg:grid-cols-3">
             {/* Main Content */}
             <div className="lg:col-span-2 space-y-6">
+              <Card>
+                <CardHeader>
+                  <CardTitle>Tags</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <TagsEditor documentId={document.id} initialTags={(document as any).tags || []} />
+                </CardContent>
+              </Card>
+
               {/* Summary */}
               {document.summary && (
                 <Card>
@@ -106,9 +132,11 @@ export default async function DocumentDetailPage({
                     <CardTitle>Summary</CardTitle>
                   </CardHeader>
                   <CardContent>
-                    <p className="text-muted-foreground whitespace-pre-wrap">
-                      {document.summary}
-                    </p>
+                    <div className="prose prose-sm max-w-none dark:prose-invert">
+                      <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                        {document.summary}
+                      </ReactMarkdown>
+                    </div>
                   </CardContent>
                 </Card>
               )}
@@ -116,13 +144,20 @@ export default async function DocumentDetailPage({
               {/* Chunks */}
               <Card>
                 <CardHeader>
-                  <CardTitle className="flex items-center gap-2">
-                    <Hash className="h-5 w-5" />
-                    Content Chunks
-                  </CardTitle>
-                  <CardDescription>
-                    {document.chunks.length} chunks extracted from this document
-                  </CardDescription>
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <CardTitle className="flex items-center gap-2">
+                        <Hash className="h-5 w-5" />
+                        Content Chunks
+                      </CardTitle>
+                      <CardDescription>
+                        {document.chunks.length} chunks extracted from this document
+                      </CardDescription>
+                    </div>
+                    {document.chunks.length > 0 && (
+                      <ChunksModal document={{ title: document.title, chunks: document.chunks }} />
+                    )}
+                  </div>
                 </CardHeader>
                 <CardContent>
                   {document.chunks.length > 0 ? (
@@ -162,6 +197,9 @@ export default async function DocumentDetailPage({
 
             {/* Sidebar */}
             <div className="space-y-6">
+              {/* Related Chats */}
+              <RelatedChats documentId={document.id} />
+
               {/* Entities */}
               <Card>
                 <CardHeader>
@@ -177,13 +215,14 @@ export default async function DocumentDetailPage({
                   {document.entities.length > 0 ? (
                     <div className="flex flex-wrap gap-2">
                       {document.entities.map((entity) => (
-                        <Badge
-                          key={entity.id}
-                          variant="outline"
-                          className={entityTypeColors[entity.type] || entityTypeColors.other}
-                        >
-                          {entity.name}
-                        </Badge>
+                        <Link key={entity.id} href={`/graph?entity=${entity.id}`}>
+                          <Badge
+                            variant="outline"
+                            className={`cursor-pointer hover:opacity-80 transition-opacity ${entityTypeColors[entity.type] || entityTypeColors.other}`}
+                          >
+                            {entity.name}
+                          </Badge>
+                        </Link>
                       ))}
                     </div>
                   ) : (
@@ -238,24 +277,6 @@ export default async function DocumentDetailPage({
                 </CardContent>
               </Card>
 
-              {/* Actions */}
-              <Card>
-                <CardHeader>
-                  <CardTitle>Actions</CardTitle>
-                </CardHeader>
-                <CardContent className="space-y-2">
-                  <Link href={`/graph?focus=${id}`} className="w-full">
-                    <Button variant="outline" className="w-full">
-                      View in Graph
-                    </Button>
-                  </Link>
-                  <Link href={`/chat?context=${id}`} className="w-full">
-                    <Button variant="outline" className="w-full">
-                      Chat about this
-                    </Button>
-                  </Link>
-                </CardContent>
-              </Card>
             </div>
           </div>
         </div>

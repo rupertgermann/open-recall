@@ -1,4 +1,3 @@
-version: "3.8"
 
 services:
   db:
@@ -10,7 +9,7 @@ services:
       POSTGRES_PASSWORD: postgres
       POSTGRES_DB: openrecall
     ports:
-      - "5432:5432"
+      - "6432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./docker/init-db.sql:/docker-entrypoint-initdb.d/init-db.sql
@@ -29,7 +28,7 @@ services:
     ports:
       - "3000:3000"
     environment:
-      DATABASE_URL: postgres://postgres:postgres@db:5432/openrecall
+      DATABASE_URL: postgres://postgres:postgres@db:6432/openrecall
       AI_BASE_URL: http://host.docker.internal:11434/v1
       AI_MODEL: llama3.2:8b
       EMBEDDING_MODEL: nomic-embed-text

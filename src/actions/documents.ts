@@ -1,9 +1,12 @@
 "use server";
 
 import { db } from "@/db";
-import { documents, chunks, entities, entityMentions, relationships } from "@/db/schema";
-import { eq, desc, like, or, sql, count } from "drizzle-orm";
+import { documents, chunks, entities, entityMentions, relationships, tags, documentTags } from "@/db/schema";
+import { eq, desc, like, or, sql, count, inArray } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
+import { generateTagsWithDBConfig } from "@/lib/ai";
+import { extractFromUrl, detectContentType } from "@/lib/content/extractor";
+import { reprocessDocument } from "@/actions/ingest";
 
 export type DocumentWithStats = {
   id: string;
@@ -52,9 +55,9 @@ export async function getDocuments(options?: {
       createdAt: documents.createdAt,
       processingStatus: documents.processingStatus,
       entityCount: sql<number>`(
-        SELECT COUNT(DISTINCT ${entityMentions.entityId})
-        FROM ${entityMentions}
-        WHERE ${entityMentions.documentId} = ${documents.id}
+        SELECT COUNT(DISTINCT entity_mentions.entity_id) 
+        FROM entity_mentions 
+        WHERE entity_mentions.document_id = documents.id
       )`.as("entity_count"),
     })
     .from(documents)
@@ -88,6 +91,13 @@ export async function getDocument(id: string) {
     .where(eq(chunks.documentId, id))
     .orderBy(chunks.chunkIndex);
 
+  const docTags = await db
+    .select({ name: tags.name })
+    .from(tags)
+    .innerJoin(documentTags, eq(documentTags.tagId, tags.id))
+    .where(eq(documentTags.documentId, id))
+    .orderBy(tags.name);
+
   // Get entities mentioned in this document
   const docEntities = await db
     .selectDistinct({
@@ -100,7 +110,7 @@ export async function getDocument(id: string) {
     .innerJoin(entityMentions, eq(entityMentions.entityId, entities.id))
     .where(eq(entityMentions.documentId, id));
 
-  // Get relationships involving these entities
+  // Get relationships involving entities mentioned in this document
   const entityIds = docEntities.map((e) => e.id);
   const docRelationships = entityIds.length > 0
     ? await db
@@ -120,12 +130,161 @@ export async function getDocument(id: string) {
         )
     : [];
 
+  // Get all entities involved in these relationships (including those from other documents)
+  const relationshipEntityIds = new Set(
+    docRelationships.flatMap((rel) => [rel.sourceEntityId, rel.targetEntityId])
+  );
+  const relationshipEntities = relationshipEntityIds.size > 0
+    ? await db
+        .select({
+          id: entities.id,
+          name: entities.name,
+          type: entities.type,
+          description: entities.description,
+        })
+        .from(entities)
+        .where(sql`${entities.id} IN ${Array.from(relationshipEntityIds)}`)
+    : [];
+
+  // Combine document entities and relationship entities, removing duplicates
+  const allEntities = [...docEntities];
+  relationshipEntities.forEach((relEntity) => {
+    if (!allEntities.find((e) => e.id === relEntity.id)) {
+      allEntities.push(relEntity);
+    }
+  });
+
   return {
     ...doc,
     chunks: docChunks,
-    entities: docEntities,
+    tags: docTags.map((t) => t.name),
+    entities: allEntities,
     relationships: docRelationships,
   };
+}
+
+export async function getAllTags() {
+  const rows = await db
+    .select({ name: tags.name })
+    .from(tags)
+    .orderBy(desc(tags.createdAt));
+  return rows.map((r) => r.name);
+}
+
+export async function updateDocumentTags(documentId: string, nextTags: string[]) {
+  const normalized = Array.from(
+    new Set(
+      nextTags
+        .map((t) => t.trim().toLowerCase())
+        .filter((t) => t.length > 0)
+    )
+  );
+
+  if (normalized.length > 0) {
+    await db
+      .insert(tags)
+      .values(normalized.map((name) => ({ name })))
+      .onConflictDoNothing();
+  }
+
+  const tagRows = normalized.length > 0
+    ? await db
+        .select({ id: tags.id, name: tags.name })
+        .from(tags)
+        .where(inArray(tags.name, normalized))
+    : [];
+
+  await db.delete(documentTags).where(eq(documentTags.documentId, documentId));
+
+  if (tagRows.length > 0) {
+    await db.insert(documentTags).values(
+      tagRows.map((t) => ({ documentId, tagId: t.id }))
+    );
+  }
+
+  revalidatePath(`/library/${documentId}`);
+  revalidatePath("/graph");
+  return { success: true, tags: normalized };
+}
+
+export async function generateDocumentTags(documentId: string) {
+  const [doc] = await db
+    .select({
+      title: documents.title,
+      summary: documents.summary,
+      content: documents.content,
+    })
+    .from(documents)
+    .where(eq(documents.id, documentId))
+    .limit(1);
+
+  if (!doc) return { success: false, tags: [] as string[] };
+
+  const existing = await db
+    .select({ name: tags.name })
+    .from(tags)
+    .innerJoin(documentTags, eq(documentTags.tagId, tags.id))
+    .where(eq(documentTags.documentId, documentId));
+
+  const aiTags = await generateTagsWithDBConfig({
+    title: doc.title,
+    summary: doc.summary,
+    content: doc.content,
+  });
+
+  if (aiTags.length === 0) {
+    return { success: false, tags: existing.map((t) => t.name) };
+  }
+
+  const merged = Array.from(new Set([...existing.map((t) => t.name), ...aiTags]));
+  return updateDocumentTags(documentId, merged);
+}
+
+export async function updateDocumentFromSource(documentId: string) {
+  const [doc] = await db
+    .select({ id: documents.id, url: documents.url })
+    .from(documents)
+    .where(eq(documents.id, documentId))
+    .limit(1);
+
+  if (!doc) {
+    return { success: false, error: "Document not found" };
+  }
+
+  if (!doc.url) {
+    return { success: false, error: "Document has no source URL" };
+  }
+
+  const contentType = detectContentType(doc.url);
+  const extracted = await extractFromUrl(doc.url);
+  if (!extracted) {
+    return { success: false, error: "Failed to extract content from URL" };
+  }
+
+  await db
+    .update(documents)
+    .set({
+      title: extracted.title,
+      type: contentType === "youtube" ? "youtube" : "article",
+      content: extracted.content,
+      processingStatus: "processing",
+      updatedAt: new Date(),
+    })
+    .where(eq(documents.id, documentId));
+
+  // Reprocess document content and regenerate derived data
+  await reprocessDocument(documentId, extracted.content);
+
+  await db
+    .update(documents)
+    .set({ processingStatus: "completed", updatedAt: new Date() })
+    .where(eq(documents.id, documentId));
+
+  revalidatePath("/library");
+  revalidatePath(`/library/${documentId}`);
+  revalidatePath("/graph");
+
+  return { success: true };
 }
 
 /**
@@ -152,12 +311,21 @@ export async function getDocumentStats() {
  * Delete a document and all related data
  */
 export async function deleteDocument(id: string) {
-  // Delete relationships that reference this document first
-  // (sourceDocumentId FK doesn't have onDelete cascade)
+  // Delete relationships that reference this document directly
   await db.delete(relationships).where(eq(relationships.sourceDocumentId, id));
   
-  // Now delete the document (cascades to chunks, entityMentions, srsItems)
+  // Delete the document (cascades to chunks, entityMentions, srsItems)
   await db.delete(documents).where(eq(documents.id, id));
+  
+  // Delete orphaned entities (entities with no remaining mentions)
+  await db
+    .delete(entities)
+    .where(
+      sql`${entities.id} NOT IN (
+        SELECT DISTINCT entity_id
+        FROM entity_mentions
+      )`
+    );
   
   revalidatePath("/library");
   return { success: true };

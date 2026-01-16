@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 
 type Provider = "local" | "openai";
 type ConnectionStatus = "connected" | "disconnected" | "testing";
@@ -25,10 +26,14 @@ export default function SettingsPage() {
   const [chatConnectionError, setChatConnectionError] = useState<string | null>(null);
   const [chatAvailableModels, setChatAvailableModels] = useState<string[]>([
     "llama3.2:8b",
-    "mistral:7b",
+    "mistral:7b", 
     "qwen2.5:7b",
-    "gpt-5",
   ]);
+
+  // OpenAI-specific chat settings
+  const [reasoningEffort, setReasoningEffort] = useState("medium");
+  const [verbosity, setVerbosity] = useState("medium");
+  const [webSearchEnabled, setWebSearchEnabled] = useState(false);
 
   // Embedding provider settings
   const [embeddingProvider, setEmbeddingProvider] = useState<Provider>("local");
@@ -39,13 +44,61 @@ export default function SettingsPage() {
   const [embeddingAvailableModels, setEmbeddingAvailableModels] = useState<string[]>([
     "nomic-embed-text",
     "mxbai-embed-large",
-    "text-embedding-3-small",
-    "text-embedding-3-large",
   ]);
 
   const [isSaving, setIsSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [dbStats, setDbStats] = useState({ documents: 0, entities: 0, relationships: 0 });
+
+  // Auto-save function with debouncing
+  const autoSave = React.useCallback(
+    debounce(async () => {
+      setIsSaving(true);
+      try {
+        const openaiBaseUrl = "https://api.openai.com/v1";
+        const sharedKey = openaiApiKey || undefined;
+
+        await saveAISettings({
+          openaiApiKey: sharedKey,
+          chat: {
+            provider: chatProvider,
+            baseUrl: chatProvider === "openai" ? openaiBaseUrl : chatBaseUrl,
+            model: chatModel,
+            apiKey: chatProvider === "openai" ? sharedKey : undefined,
+            // Only include OpenAI-specific options for OpenAI provider
+            ...(chatProvider === "openai" && {
+              reasoningEffort: reasoningEffort as "low" | "medium" | "high",
+              verbosity: verbosity as "low" | "medium" | "high",
+              webSearchEnabled: webSearchEnabled,
+            }),
+          },
+          embedding: {
+            provider: embeddingProvider,
+            baseUrl: embeddingProvider === "openai" ? openaiBaseUrl : embeddingBaseUrl,
+            model: embeddingModel,
+            apiKey: embeddingProvider === "openai" ? sharedKey : undefined,
+            // Embeddings don't use reasoning or web search
+          },
+        });
+        setSaved(true);
+        setTimeout(() => setSaved(false), 2000);
+      } catch (error) {
+        console.error("Failed to auto-save settings:", error);
+      } finally {
+        setIsSaving(false);
+      }
+    }, 1000), // 1 second debounce
+    [chatProvider, chatBaseUrl, chatModel, reasoningEffort, verbosity, webSearchEnabled, embeddingProvider, embeddingBaseUrl, embeddingModel, openaiApiKey]
+  );
+
+  // Simple debounce function
+  function debounce<T extends (...args: any[]) => any>(func: T, wait: number): T {
+    let timeout: NodeJS.Timeout;
+    return ((...args: any[]) => {
+      clearTimeout(timeout);
+      timeout = setTimeout(() => func(...args), wait);
+    }) as T;
+  }
 
   // Load settings on mount
   useEffect(() => {
@@ -59,6 +112,10 @@ export default function SettingsPage() {
         setChatProvider(settings.chat.provider);
         setChatBaseUrl(settings.chat.baseUrl);
         setChatModel(settings.chat.model);
+        // OpenAI-specific chat settings
+        setReasoningEffort(settings.chat.reasoningEffort || "medium");
+        setVerbosity(settings.chat.verbosity || "medium");
+        setWebSearchEnabled(settings.chat.webSearchEnabled || false);
         // Embedding settings
         setEmbeddingProvider(settings.embedding.provider);
         setEmbeddingBaseUrl(settings.embedding.baseUrl);
@@ -78,6 +135,11 @@ export default function SettingsPage() {
     loadSettings();
   }, []);
 
+  // Auto-save when any setting changes
+  useEffect(() => {
+    autoSave();
+  }, [chatProvider, chatBaseUrl, chatModel, reasoningEffort, verbosity, webSearchEnabled, embeddingProvider, embeddingBaseUrl, embeddingModel, openaiApiKey]);
+
   const testChatConnection = async () => {
     setChatConnectionStatus("testing");
     setChatConnectionError(null);
@@ -90,14 +152,17 @@ export default function SettingsPage() {
       if (result.success) {
         setChatConnectionStatus("connected");
         if (result.models && result.models.length > 0) {
-          const openaiModels = result.models
-            .filter((m: string) => !m.startsWith("text-embedding-"))
-            .filter((m: string) => !m.includes("embedding"));
-          const localModels = result.models.filter((m: string) => !m.includes("embed"));
-
-          const gpt5Models = openaiModels.filter((m: string) => m.startsWith("gpt-5"));
-
-          let models = chatProvider === "openai" ? gpt5Models : localModels;
+          let models: string[] = [];
+          
+          if (chatProvider === "openai") {
+            // For OpenAI, show only chat models (non-embedding models)
+            models = result.models
+              .filter((m: string) => !m.startsWith("text-embedding-"))
+              .filter((m: string) => !m.includes("embedding"));
+          } else {
+            // For local providers, show non-embedding models
+            models = result.models.filter((m: string) => !m.includes("embed"));
+          }
           
           // Always include the currently configured model in the list
           if (chatModel && !models.includes(chatModel)) {
@@ -152,72 +217,55 @@ export default function SettingsPage() {
     }
   };
 
-  const handleSave = async () => {
-    setIsSaving(true);
-    try {
-      const openaiBaseUrl = "https://api.openai.com/v1";
-      const sharedKey = openaiApiKey || undefined;
-
-      await saveAISettings({
-        openaiApiKey: sharedKey,
-        chat: {
-          provider: chatProvider,
-          baseUrl: chatProvider === "openai" ? openaiBaseUrl : chatBaseUrl,
-          model: chatModel,
-          apiKey: chatProvider === "openai" ? sharedKey : undefined,
-        },
-        embedding: {
-          provider: embeddingProvider,
-          baseUrl: embeddingProvider === "openai" ? openaiBaseUrl : embeddingBaseUrl,
-          model: embeddingModel,
-          apiKey: embeddingProvider === "openai" ? sharedKey : undefined,
-        },
-      });
-      setSaved(true);
-      setTimeout(() => setSaved(false), 2000);
-    } catch (error) {
-      console.error("Failed to save settings:", error);
-    } finally {
-      setIsSaving(false);
-    }
-  };
-
   // Apply OpenAI defaults when switching provider
   useEffect(() => {
     if (chatProvider === "openai") {
-      setChatModel((prev) => (prev === "llama3.2:8b" ? "gpt-5" : prev));
+      setChatModel((prev) => (prev === "llama3.2:8b" ? "gpt-5.2" : prev));
+      // Set default OpenAI models until connection test
+      setChatAvailableModels([
+        "gpt-5.2",
+        "gpt-5-nano",
+        "gpt-5-mini",
+      ]);
+      setChatConnectionStatus("disconnected");
+      setChatConnectionError(null);
+    } else {
+      setChatModel((prev) => (prev.startsWith("gpt-") ? "llama3.2:8b" : prev));
+      // Reset to local models
+      setChatAvailableModels([
+        "llama3.2:8b",
+        "mistral:7b", 
+        "qwen2.5:7b",
+      ]);
+      setChatConnectionStatus("disconnected");
+      setChatConnectionError(null);
     }
   }, [chatProvider]);
 
   useEffect(() => {
     if (embeddingProvider === "openai") {
       setEmbeddingModel((prev) => (prev === "nomic-embed-text" ? "text-embedding-3-small" : prev));
+      // Set default OpenAI embedding models until connection test
+      setEmbeddingAvailableModels([
+        "text-embedding-3-small",
+        "text-embedding-3-large",
+      ]);
+      setEmbeddingConnectionStatus("disconnected");
+      setEmbeddingConnectionError(null);
+    } else {
+      setEmbeddingModel((prev) => (prev.startsWith("text-embedding-") ? "nomic-embed-text" : prev));
+      // Reset to local models
+      setEmbeddingAvailableModels([
+        "nomic-embed-text",
+        "mxbai-embed-large",
+      ]);
+      setEmbeddingConnectionStatus("disconnected");
+      setEmbeddingConnectionError(null);
     }
   }, [embeddingProvider]);
 
-  useEffect(() => {
-    if (chatProvider === "openai" && openaiApiKey) {
-      void testChatConnection();
-    }
-  }, [chatProvider, openaiApiKey]);
-
-  useEffect(() => {
-    if (chatProvider === "local" && chatBaseUrl) {
-      void testChatConnection();
-    }
-  }, [chatProvider, chatBaseUrl]);
-
-  useEffect(() => {
-    if (embeddingProvider === "openai" && openaiApiKey) {
-      void testEmbeddingConnection();
-    }
-  }, [embeddingProvider, openaiApiKey]);
-
-  useEffect(() => {
-    if (embeddingProvider === "local" && embeddingBaseUrl) {
-      void testEmbeddingConnection();
-    }
-  }, [embeddingProvider, embeddingBaseUrl]);
+  // Connection tests are now ONLY triggered by user interaction (clicking Test button)
+  // Removed auto-test on mount/state change to prevent cascading server calls
 
   if (isLoading) {
     return (
@@ -245,6 +293,14 @@ export default function SettingsPage() {
     connectionError,
     availableModels,
     testConnection,
+    // OpenAI-specific props (only used for chat provider)
+    reasoningEffort,
+    setReasoningEffort,
+    verbosity,
+    setVerbosity,
+    webSearchEnabled,
+    setWebSearchEnabled,
+    isChatProvider = false,
   }: {
     title: string;
     description: string;
@@ -259,6 +315,13 @@ export default function SettingsPage() {
     connectionError: string | null;
     availableModels: string[];
     testConnection: () => void;
+    reasoningEffort?: string;
+    setReasoningEffort?: (value: "low" | "medium" | "high") => void;
+    verbosity?: string;
+    setVerbosity?: (value: "low" | "medium" | "high") => void;
+    webSearchEnabled?: boolean;
+    setWebSearchEnabled?: (value: boolean) => void;
+    isChatProvider?: boolean;
   }) => (
     <Card>
       <CardHeader>
@@ -345,6 +408,70 @@ export default function SettingsPage() {
               ))}
             </select>
           </div>
+
+          {/* OpenAI-specific options */}
+          {provider === "openai" && isChatProvider && (
+            <div className="space-y-4 pt-4 border-t">
+              <div className="space-y-2">
+                <label className="text-sm font-medium">Reasoning Effort</label>
+                <Select 
+                  value={reasoningEffort} 
+                  onValueChange={(value: "low" | "medium" | "high") => setReasoningEffort?.(value)}
+                >
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="low">Low</SelectItem>
+                    <SelectItem value="medium">Medium</SelectItem>
+                    <SelectItem value="high">High</SelectItem>
+                  </SelectContent>
+                </Select>
+                <p className="text-xs text-muted-foreground">
+                  Controls the reasoning effort level for response generation
+                </p>
+              </div>
+
+              <div className="space-y-2">
+                <label className="text-sm font-medium">Verbosity</label>
+                <Select 
+                  value={verbosity} 
+                  onValueChange={(value: "low" | "medium" | "high") => setVerbosity?.(value)}
+                >
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="low">Low</SelectItem>
+                    <SelectItem value="medium">Medium</SelectItem>
+                    <SelectItem value="high">High</SelectItem>
+                  </SelectContent>
+                </Select>
+                <p className="text-xs text-muted-foreground">
+                  Constrains response verbosity (low, medium, high)
+                </p>
+              </div>
+
+              <div className="space-y-2">
+                <label className="text-sm font-medium">Web Search</label>
+                <div className="flex items-center space-x-2">
+                  <input
+                    type="checkbox"
+                    id="web-search"
+                    checked={webSearchEnabled}
+                    onChange={(e) => setWebSearchEnabled?.(e.target.checked)}
+                    className="rounded"
+                  />
+                  <label htmlFor="web-search" className="text-sm">
+                    Enable web search for responses
+                  </label>
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  Allow the model to search the web for current information
+                </p>
+              </div>
+            </div>
+          )}
         </div>
       </CardContent>
     </Card>
@@ -361,6 +488,26 @@ export default function SettingsPage() {
             <p className="text-muted-foreground">
               Configure separate AI providers for chat and embeddings
             </p>
+          </div>
+
+          {/* Auto-save Status */}
+          <div className="flex items-center justify-center p-4 bg-muted/50 rounded-lg">
+            {isSaving ? (
+              <>
+                <Loader2 className="mr-2 h-4 w-4 animate-spin text-muted-foreground" />
+                <span className="text-sm text-muted-foreground">Auto-saving...</span>
+              </>
+            ) : saved ? (
+              <>
+                <CheckCircle className="mr-2 h-4 w-4 text-green-500" />
+                <span className="text-sm text-green-500">All changes saved</span>
+              </>
+            ) : (
+              <>
+                <div className="mr-2 h-4 w-4 rounded-full bg-muted" />
+                <span className="text-sm text-muted-foreground">Changes auto-save automatically</span>
+              </>
+            )}
           </div>
 
           {(chatProvider === "openai" || embeddingProvider === "openai") && (
@@ -402,6 +549,14 @@ export default function SettingsPage() {
             connectionError={chatConnectionError}
             availableModels={chatAvailableModels}
             testConnection={testChatConnection}
+            // OpenAI-specific options for chat
+            reasoningEffort={reasoningEffort}
+            setReasoningEffort={setReasoningEffort}
+            verbosity={verbosity}
+            setVerbosity={setVerbosity}
+            webSearchEnabled={webSearchEnabled}
+            setWebSearchEnabled={setWebSearchEnabled}
+            isChatProvider={true}
           />
 
           {/* Embedding Provider */}
@@ -419,6 +574,8 @@ export default function SettingsPage() {
             connectionError={embeddingConnectionError}
             availableModels={embeddingAvailableModels}
             testConnection={testEmbeddingConnection}
+            // Embedding provider doesn't use OpenAI-specific options
+            isChatProvider={false}
           />
 
           {/* Database Status */}
@@ -461,26 +618,6 @@ export default function SettingsPage() {
               </div>
             </CardContent>
           </Card>
-
-          {/* Save Button */}
-          <Button onClick={handleSave} disabled={isSaving} className="w-full">
-            {isSaving ? (
-              <>
-                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                Saving...
-              </>
-            ) : saved ? (
-              <>
-                <CheckCircle className="mr-2 h-4 w-4" />
-                Saved!
-              </>
-            ) : (
-              <>
-                <Save className="mr-2 h-4 w-4" />
-                Save Settings
-              </>
-            )}
-          </Button>
         </div>
       </main>
     </div>

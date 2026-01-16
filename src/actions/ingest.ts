@@ -4,15 +4,24 @@ import { db } from "@/db";
 import { documents, chunks, entities, entityMentions, relationships } from "@/db/schema";
 import { eq, and } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
-import { extractFromUrl, extractFromHtml, detectContentType, extractYouTubeId } from "@/lib/content/extractor";
-import { chunkByParagraphs } from "@/lib/content/chunker";
+import { extractFromUrl, detectContentType } from "@/lib/content/extractor";
 import {
   generateSummaryWithDBConfig,
-  generateEmbeddingsWithDBConfig,
   extractEntitiesWithDBConfig,
+  generateTagsWithDBConfig,
   type ExtractedEntity,
   type ExtractedRelationship,
 } from "@/lib/ai";
+import { updateDocumentTags } from "@/actions/documents";
+import {
+  chunkStructured,
+  generateRetrievalEmbeddings,
+  generateGraphEmbeddings,
+  generateContentHash,
+  metricsCollector,
+  getCurrentEmbeddingModel,
+  hasContentChanged,
+} from "@/lib/embedding";
 
 export type IngestProgress = {
   step: "fetching" | "chunking" | "summarizing" | "extracting" | "embedding" | "saving" | "complete" | "error";
@@ -25,6 +34,12 @@ export type IngestResult = {
   documentId?: string;
   error?: string;
 };
+
+export async function reprocessDocument(documentId: string, content: string): Promise<void> {
+  // Clear existing chunks (and cascaded entity mentions) to avoid duplicates and unique hash conflicts.
+  await db.delete(chunks).where(eq(chunks.documentId, documentId));
+  await processDocument(documentId, content);
+}
 
 /**
  * Ingest content from a URL
@@ -98,72 +113,164 @@ export async function ingestText(title: string, content: string): Promise<Ingest
 
 /**
  * Process a document: chunk, summarize, extract entities, embed
+ * Implements all phases of the embedding performance plan
  */
 async function processDocument(documentId: string, content: string): Promise<void> {
+  // Start metrics collection
+  metricsCollector.startIngestion(documentId);
+  
   try {
-    // 1. Chunk the content
-    const textChunks = chunkByParagraphs(content, { maxChunkSize: 1000 });
+    // Get current embedding model for tracking
+    const embeddingModel = await getCurrentEmbeddingModel();
+    const contentHash = generateContentHash(content);
+    
+    // Phase 8: Check if document content has changed
+    const [existingDoc] = await db
+      .select({ contentHash: documents.contentHash, embeddingModel: documents.embeddingModel })
+      .from(documents)
+      .where(eq(documents.id, documentId))
+      .limit(1);
+    
+    const needsReprocessing = !existingDoc?.contentHash || 
+      hasContentChanged(content, existingDoc.contentHash) ||
+      existingDoc.embeddingModel !== embeddingModel;
+    
+    if (!needsReprocessing) {
+      metricsCollector.log(`[INGEST] Document ${documentId} unchanged, skipping reprocessing`);
+      await db
+        .update(documents)
+        .set({ processingStatus: "completed", updatedAt: new Date() })
+        .where(eq(documents.id, documentId));
+      metricsCollector.finishIngestion();
+      return;
+    }
 
-    // 2. Generate summary
+    // Phase 1: Structure-aware chunking
+    metricsCollector.startTimer("chunking");
+    const textChunks = chunkStructured(content, {
+      minChunkTokens: 100,
+      maxChunkTokens: 800,
+      targetChunkTokens: 500,
+    });
+    metricsCollector.recordChunking(textChunks.length);
+
+    // Phase 2: Filter out duplicate chunks by hash
+    const uniqueChunks: typeof textChunks = [];
+    const seenHashes = new Set<string>();
+    
+    for (const chunk of textChunks) {
+      if (!seenHashes.has(chunk.contentHash)) {
+        seenHashes.add(chunk.contentHash);
+        uniqueChunks.push(chunk);
+      }
+    }
+    metricsCollector.log(`[INGEST] Deduplicated ${textChunks.length} -> ${uniqueChunks.length} chunks`);
+
+    // Phase 5: Generate summary (for graph construction)
+    metricsCollector.startTimer("summarization");
     let summary: string | null = null;
     try {
-      summary = await generateSummaryWithDBConfig(content.slice(0, 8000)); // Limit for context window
+      summary = await generateSummaryWithDBConfig(content.slice(0, 8000));
     } catch (error) {
       console.error("Summary generation failed:", error);
     }
+    metricsCollector.recordSummarization();
 
-    // Update document with summary
-    if (summary) {
-      await db
-        .update(documents)
-        .set({ summary })
-        .where(eq(documents.id, documentId));
+    // Update document with summary and hash
+    await db
+      .update(documents)
+      .set({ 
+        summary,
+        contentHash,
+        embeddingModel,
+        embeddingVersion: "1.0",
+      })
+      .where(eq(documents.id, documentId));
+
+    try {
+      const tagText = (summary || content).slice(0, 8000);
+      const [docRow] = await db
+        .select({ title: documents.title })
+        .from(documents)
+        .where(eq(documents.id, documentId))
+        .limit(1);
+      const aiTags = await generateTagsWithDBConfig({ title: docRow?.title, summary, content: tagText });
+      if (aiTags.length > 0) {
+        await updateDocumentTags(documentId, aiTags);
+      }
+    } catch (error) {
+      console.error("Tag generation failed:", error);
     }
 
-    // 3. Extract entities and relationships
+    // Phase 5: Extract entities from summary (not raw text) for efficiency
+    metricsCollector.startTimer("entityExtraction");
     let extractedData: { entities: ExtractedEntity[]; relationships: ExtractedRelationship[] } = {
       entities: [],
       relationships: [],
     };
     try {
-      extractedData = await extractEntitiesWithDBConfig(content.slice(0, 8000));
+      // Use summary for entity extraction if available, otherwise use truncated content
+      const textForExtraction = summary || content.slice(0, 8000);
+      extractedData = await extractEntitiesWithDBConfig(textForExtraction);
     } catch (error) {
       console.error("Entity extraction failed:", error);
     }
+    metricsCollector.recordEntityExtraction();
 
-    // 4. Save chunks with embeddings (batched to avoid stack overflow on large documents)
-    const EMBEDDING_BATCH_SIZE = 10;
-    const chunkContents = textChunks.map(chunk => chunk.content);
-    let chunkEmbeddings: number[][] = [];
+    // Phase 3 & 6: Generate embeddings with caching and batching
+    // Phase 4: Use retrieval embeddings for chunks
+    const chunkContents = uniqueChunks.map((chunk: { content: string }) => chunk.content);
+    let chunkEmbeddingResult = { embeddings: [] as number[][], cacheHits: 0, cacheMisses: 0, timeMs: 0 };
     
     try {
-      // Process embeddings in batches to avoid stack overflow
-      for (let i = 0; i < chunkContents.length; i += EMBEDDING_BATCH_SIZE) {
-        const batch = chunkContents.slice(i, i + EMBEDDING_BATCH_SIZE);
-        const batchEmbeddings = await generateEmbeddingsWithDBConfig(batch);
-        chunkEmbeddings.push(...batchEmbeddings);
-      }
+      chunkEmbeddingResult = await generateRetrievalEmbeddings(chunkContents);
     } catch (error) {
-      console.error("Embedding generation failed:", error);
+      console.error("Chunk embedding generation failed:", error);
     }
 
-    // Batch insert all chunks at once
-    const chunkValues = textChunks.map((chunk, i) => ({
+    // Phase 7: Save chunks with embedding status
+    const chunkValues = uniqueChunks.map((chunk: { content: string; contentHash: string; index: number; tokenCount: number }, i: number) => ({
       documentId,
       content: chunk.content,
+      contentHash: chunk.contentHash,
       chunkIndex: chunk.index,
       tokenCount: chunk.tokenCount,
-      embedding: chunkEmbeddings[i] ?? null,
+      embedding: chunkEmbeddingResult.embeddings[i] ?? null,
+      embeddingStatus: chunkEmbeddingResult.embeddings[i] ? "embedded" : "pending",
+      embeddingPurpose: "retrieval" as const,
     }));
 
-    await db.insert(chunks).values(chunkValues);
+    if (chunkValues.length > 0) {
+      await db.insert(chunks).values(chunkValues);
+    }
 
-    // 5. Save entities (optimized with batch processing)
-    const entityIdMap = new Map<string, string>(); // name -> id
-    
-    // First, check which entities already exist
-    const newEntities: ExtractedEntity[] = [];
+    // Process entities with graph embeddings (Phase 4)
+    const entityIdMap = new Map<string, string>();
+
+    const resolveEntityIdByName = (name: string): string | undefined => {
+      let foundId: string | undefined;
+      for (const [key, id] of entityIdMap.entries()) {
+        const [keyName] = key.split("||");
+        if (keyName !== name) continue;
+        if (foundId && foundId !== id) return undefined;
+        foundId = id;
+      }
+      return foundId;
+    };
+
+    // Dedupe extracted entities within this ingestion run to avoid inserting the
+    // same (name,type) multiple times.
+    const uniqueExtractedEntities: ExtractedEntity[] = [];
+    const seenEntityKeys = new Set<string>();
     for (const entity of extractedData.entities) {
+      const key = `${entity.name}||${entity.type}`;
+      if (seenEntityKeys.has(key)) continue;
+      seenEntityKeys.add(key);
+      uniqueExtractedEntities.push(entity);
+    }
+
+    const newEntities: ExtractedEntity[] = [];
+    for (const entity of uniqueExtractedEntities) {
       const existing = await db
         .select()
         .from(entities)
@@ -171,40 +278,54 @@ async function processDocument(documentId: string, content: string): Promise<voi
         .limit(1);
 
       if (existing.length > 0) {
-        entityIdMap.set(entity.name, existing[0].id);
+        entityIdMap.set(`${entity.name}||${entity.type}`, existing[0].id);
       } else {
         newEntities.push(entity);
       }
     }
 
-    // Generate embeddings for new entities in batch
+    // Phase 4: Generate graph embeddings for new entities
     if (newEntities.length > 0) {
       const entityTexts = newEntities.map(e => e.name + (e.description ? `: ${e.description}` : ""));
-      let entityEmbeddings: number[][] = [];
+      let entityEmbeddingResult = { embeddings: [] as number[][], cacheHits: 0, cacheMisses: 0, timeMs: 0 };
       
       try {
-        entityEmbeddings = await generateEmbeddingsWithDBConfig(entityTexts);
+        entityEmbeddingResult = await generateGraphEmbeddings(entityTexts);
       } catch (error) {
         console.error("Entity embedding failed:", error);
       }
 
-      // Insert new entities
       for (let i = 0; i < newEntities.length; i++) {
         const entity = newEntities[i];
-        const [newEntity] = await db
+        const inserted = await db
           .insert(entities)
           .values({
             name: entity.name,
             type: entity.type,
             description: entity.description,
-            embedding: entityEmbeddings[i] ?? null,
+            embedding: entityEmbeddingResult.embeddings[i] ?? null,
           })
+          .onConflictDoNothing({ target: [entities.name, entities.type] })
           .returning();
-        entityIdMap.set(entity.name, newEntity.id);
+
+        if (inserted.length > 0) {
+          entityIdMap.set(`${entity.name}||${entity.type}`, inserted[0].id);
+        } else {
+          // Likely a concurrent insert (or a previously missed row). Fetch the existing entity id.
+          const existing = await db
+            .select({ id: entities.id })
+            .from(entities)
+            .where(and(eq(entities.name, entity.name), eq(entities.type, entity.type)))
+            .limit(1);
+
+          if (existing.length > 0) {
+            entityIdMap.set(`${entity.name}||${entity.type}`, existing[0].id);
+          }
+        }
       }
     }
 
-    // Create entity mentions (batch query for first chunk)
+    // Create entity mentions
     const firstChunk = await db
       .select()
       .from(chunks)
@@ -223,10 +344,10 @@ async function processDocument(documentId: string, content: string): Promise<voi
       }
     }
 
-    // 6. Save relationships
+    // Save relationships
     for (const rel of extractedData.relationships) {
-      const sourceId = entityIdMap.get(rel.source);
-      const targetId = entityIdMap.get(rel.target);
+      const sourceId = resolveEntityIdByName(rel.source);
+      const targetId = resolveEntityIdByName(rel.target);
 
       if (sourceId && targetId) {
         await db.insert(relationships).values({
@@ -239,11 +360,14 @@ async function processDocument(documentId: string, content: string): Promise<voi
       }
     }
 
-    // 7. Mark document as completed
+    // Mark document as completed
     await db
       .update(documents)
       .set({ processingStatus: "completed", updatedAt: new Date() })
       .where(eq(documents.id, documentId));
+
+    // Finish metrics collection
+    metricsCollector.finishIngestion();
 
   } catch (error) {
     console.error("Document processing failed:", error);
@@ -251,6 +375,7 @@ async function processDocument(documentId: string, content: string): Promise<voi
       .update(documents)
       .set({ processingStatus: "failed", updatedAt: new Date() })
       .where(eq(documents.id, documentId));
+    metricsCollector.finishIngestion();
     throw error;
   }
 }
