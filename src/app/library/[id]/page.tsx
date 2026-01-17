@@ -1,6 +1,6 @@
 import { notFound } from "next/navigation";
 import Link from "next/link";
-import Image from "next/image";
+import { DocumentImage } from "./document-image";
 import { ArrowLeft, ExternalLink, FileText, Video, Globe, Network, Calendar, Hash, MessageSquare } from "lucide-react";
 import { Header } from "@/components/layout/header";
 import { Button } from "@/components/ui/button";
@@ -199,17 +199,7 @@ export default async function DocumentDetailPage({
             {/* Sidebar */}
             <div className="space-y-6">
               {document.imagePath && (
-                <div className="overflow-hidden rounded-xl border bg-muted/30">
-                  <div className="relative aspect-[4/3] w-full">
-                    <Image
-                      src={document.imagePath}
-                      alt={document.title}
-                      fill
-                      className="object-cover"
-                      sizes="(min-width: 1024px) 320px, 100vw"
-                    />
-                  </div>
-                </div>
+                <DocumentImage imagePath={document.imagePath} title={document.title} />
               )}
 
               {/* Related Chats */}
