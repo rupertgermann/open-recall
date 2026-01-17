@@ -114,21 +114,6 @@ export default async function DocumentDetailPage({
             </div>
           </div>
 
-          {document.imagePath && (
-            <div className="mb-8 overflow-hidden rounded-xl border bg-muted/30">
-              <div className="relative h-64 w-full">
-                <Image
-                  src={document.imagePath}
-                  alt={document.title}
-                  fill
-                  className="object-cover"
-                  sizes="(min-width: 1024px) 900px, 100vw"
-                  priority
-                />
-              </div>
-            </div>
-          )}
-
           <div className="grid gap-6 lg:grid-cols-3">
             {/* Main Content */}
             <div className="lg:col-span-2 space-y-6">
@@ -213,6 +198,20 @@ export default async function DocumentDetailPage({
 
             {/* Sidebar */}
             <div className="space-y-6">
+              {document.imagePath && (
+                <div className="overflow-hidden rounded-xl border bg-muted/30">
+                  <div className="relative aspect-[4/3] w-full">
+                    <Image
+                      src={document.imagePath}
+                      alt={document.title}
+                      fill
+                      className="object-cover"
+                      sizes="(min-width: 1024px) 320px, 100vw"
+                    />
+                  </div>
+                </div>
+              )}
+
               {/* Related Chats */}
               <RelatedChats documentId={document.id} />
 
