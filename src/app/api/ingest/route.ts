@@ -1,7 +1,7 @@
 import { db } from "@/db";
 import { documents, chunks, entities, entityMentions, relationships } from "@/db/schema";
 import { eq, and } from "drizzle-orm";
-import { extractFromUrl } from "@/lib/content/extractor";
+import { extractFromUrl, downloadDocumentImage } from "@/lib/content/extractor";
 import {
   generateSummaryWithDBConfig,
   extractEntitiesWithDBConfig,
@@ -47,6 +47,7 @@ export async function POST(req: Request) {
         let content: string;
         let url: string | null = null;
         let contentType: string;
+        let leadImageUrl: string | undefined;
 
         if (body.type === "url") {
           url = body.url ?? null;
@@ -83,10 +84,12 @@ export async function POST(req: Request) {
           title = extracted.title;
           content = extracted.content;
           contentType = url.includes("youtube.com") || url.includes("youtu.be") ? "youtube" : "article";
+          leadImageUrl = extracted.leadImageUrl;
         } else {
           title = body.title!;
           content = body.content!;
           contentType = "note";
+          leadImageUrl = undefined;
         }
 
         controller.enqueue(encoder.encode(createSSEMessage("fetching", `Content extracted: "${title.slice(0, 50)}..."`, 15)));
@@ -102,8 +105,26 @@ export async function POST(req: Request) {
             type: contentType,
             content,
             processingStatus: "processing",
+            metadata: leadImageUrl ? { leadImageUrl } : undefined,
           })
           .returning();
+
+        if (leadImageUrl) {
+          const image = await downloadDocumentImage(leadImageUrl, doc.id);
+          if (image) {
+            await db
+              .update(documents)
+              .set({
+                metadata: {
+                  leadImageUrl: image.url,
+                  imagePath: image.publicPath,
+                  imageContentType: image.contentType,
+                },
+                updatedAt: new Date(),
+              })
+              .where(eq(documents.id, doc.id));
+          }
+        }
 
         // Step 3: Structure-aware chunking (Phase 1)
         console.log("[INGEST] Using new structure-aware chunking");

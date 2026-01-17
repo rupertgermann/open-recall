@@ -4,7 +4,7 @@ import { db } from "@/db";
 import { documents, chunks, entities, entityMentions, relationships } from "@/db/schema";
 import { eq, and } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
-import { extractFromUrl, detectContentType } from "@/lib/content/extractor";
+import { extractFromUrl, detectContentType, downloadDocumentImage } from "@/lib/content/extractor";
 import {
   generateSummaryWithDBConfig,
   extractEntitiesWithDBConfig,
@@ -70,8 +70,28 @@ export async function ingestUrl(url: string): Promise<IngestResult> {
         type: contentType === "youtube" ? "youtube" : "article",
         content: extracted.content,
         processingStatus: "processing",
+        metadata: extracted.leadImageUrl
+          ? { leadImageUrl: extracted.leadImageUrl }
+          : undefined,
       })
       .returning();
+
+    if (extracted.leadImageUrl) {
+      const image = await downloadDocumentImage(extracted.leadImageUrl, doc.id);
+      if (image) {
+        await db
+          .update(documents)
+          .set({
+            metadata: {
+              leadImageUrl: image.url,
+              imagePath: image.publicPath,
+              imageContentType: image.contentType,
+            },
+            updatedAt: new Date(),
+          })
+          .where(eq(documents.id, doc.id));
+      }
+    }
 
     // Process in background (for MVP, we do it synchronously)
     await processDocument(doc.id, extracted.content);

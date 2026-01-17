@@ -1,8 +1,7 @@
 import { db } from "@/db";
 import { documents, chunks, entities, entityMentions, relationships } from "@/db/schema";
 import { eq, and } from "drizzle-orm";
-import { extractFromUrl } from "@/lib/content/extractor";
-import { detectContentType } from "@/lib/content/extractor";
+import { extractFromUrl, detectContentType, downloadDocumentImage } from "@/lib/content/extractor";
 import {
   generateSummaryWithDBConfig,
   extractEntitiesWithDBConfig,
@@ -81,9 +80,29 @@ export async function POST(req: Request) {
             type: contentType === "youtube" ? "youtube" : "article",
             content: extracted.content,
             processingStatus: "processing",
+            metadata: extracted.leadImageUrl
+              ? { leadImageUrl: extracted.leadImageUrl }
+              : undefined,
             updatedAt: new Date(),
           })
           .where(eq(documents.id, body.documentId));
+
+        if (extracted.leadImageUrl) {
+          const image = await downloadDocumentImage(extracted.leadImageUrl, body.documentId);
+          if (image) {
+            await db
+              .update(documents)
+              .set({
+                metadata: {
+                  leadImageUrl: image.url,
+                  imagePath: image.publicPath,
+                  imageContentType: image.contentType,
+                },
+                updatedAt: new Date(),
+              })
+              .where(eq(documents.id, body.documentId));
+          }
+        }
 
         // Step 4: Chunking
         controller.enqueue(encoder.encode(createSSEMessage("chunking", "Chunking text...", 35)));

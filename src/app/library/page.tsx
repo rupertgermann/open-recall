@@ -4,6 +4,7 @@ import { useState, useEffect, useTransition } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { FileText, Video, Globe, Search, MoreVertical, Trash2, ExternalLink, Loader2, RefreshCw, X, Grid, List } from "lucide-react";
+import Image from "next/image";
 import { Header } from "@/components/layout/header";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -69,9 +70,21 @@ function DocumentListItem({
     >
       <div className="flex items-start justify-between">
         <div className="flex items-start gap-3 flex-1 min-w-0">
-          <div className={`p-2 rounded-lg ${colorClass} flex-shrink-0`}>
-            <Icon className="h-5 w-5" />
-          </div>
+          {doc.imagePath ? (
+            <div className="relative h-16 w-16 flex-shrink-0 overflow-hidden rounded-lg border">
+              <Image
+                src={doc.imagePath}
+                alt={doc.title}
+                fill
+                className="object-cover"
+                sizes="64px"
+              />
+            </div>
+          ) : (
+            <div className={`p-2 rounded-lg ${colorClass} flex-shrink-0`}>
+              <Icon className="h-5 w-5" />
+            </div>
+          )}
           <div className="flex-1 min-w-0">
             <h3 className="font-semibold text-lg line-clamp-1 mt-1">{doc.title}</h3>
             {doc.summary && (
@@ -383,14 +396,27 @@ export default function LibraryPage() {
                   >
                     <CardHeader className="pb-3">
                       <div className="flex items-center justify-between">
-                        <div className="flex items-center gap-3 min-w-0 flex-1">
+                      <div className="flex items-center gap-3 min-w-0 flex-1">
+                        {doc.imagePath ? (
+                          <div className="relative h-12 w-12 flex-shrink-0 overflow-hidden rounded-lg border">
+                            <Image
+                              src={doc.imagePath}
+                              alt={doc.title}
+                              fill
+                              className="object-cover"
+                              sizes="48px"
+                            />
+                          </div>
+                        ) : (
                           <div className={`p-2 rounded-lg ${colorClass} flex-shrink-0`}>
                             <Icon className="h-5 w-5" />
                           </div>
-                          <CardTitle className="text-lg line-clamp-1 m-0">
-                            {doc.title}
-                          </CardTitle>
-                        </div>
+                        )}
+                        <CardTitle className="text-lg line-clamp-1 m-0">
+                          {doc.title}
+                        </CardTitle>
+                      </div>
+
                         <DropdownMenu>
                           <DropdownMenuTrigger asChild>
                             <Button 

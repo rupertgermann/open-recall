@@ -5,7 +5,7 @@ import { documents, chunks, entities, entityMentions, relationships, tags, docum
 import { eq, desc, like, or, sql, count, inArray } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { generateTagsWithDBConfig } from "@/lib/ai";
-import { extractFromUrl, detectContentType } from "@/lib/content/extractor";
+import { extractFromUrl, detectContentType, downloadDocumentImage } from "@/lib/content/extractor";
 import { reprocessDocument } from "@/actions/ingest";
 
 export type DocumentWithStats = {
@@ -17,6 +17,7 @@ export type DocumentWithStats = {
   createdAt: Date;
   processingStatus: string;
   entityCount: number;
+  imagePath: string | null;
 };
 
 /**
@@ -54,6 +55,7 @@ export async function getDocuments(options?: {
       summary: documents.summary,
       createdAt: documents.createdAt,
       processingStatus: documents.processingStatus,
+      metadata: documents.metadata,
       entityCount: sql<number>`(
         SELECT COUNT(DISTINCT entity_mentions.entity_id) 
         FROM entity_mentions 
@@ -67,8 +69,15 @@ export async function getDocuments(options?: {
     .offset(offset);
 
   return results.map((r) => ({
-    ...r,
+    id: r.id,
+    title: r.title,
+    type: r.type,
+    url: r.url,
+    summary: r.summary,
+    createdAt: r.createdAt,
+    processingStatus: r.processingStatus,
     entityCount: Number(r.entityCount) || 0,
+    imagePath: (r.metadata as { imagePath?: string } | null)?.imagePath ?? null,
   }));
 }
 
@@ -156,6 +165,7 @@ export async function getDocument(id: string) {
 
   return {
     ...doc,
+    imagePath: (doc.metadata as { imagePath?: string } | null)?.imagePath ?? null,
     chunks: docChunks,
     tags: docTags.map((t) => t.name),
     entities: allEntities,
@@ -268,9 +278,29 @@ export async function updateDocumentFromSource(documentId: string) {
       type: contentType === "youtube" ? "youtube" : "article",
       content: extracted.content,
       processingStatus: "processing",
+      metadata: extracted.leadImageUrl
+        ? { leadImageUrl: extracted.leadImageUrl }
+        : undefined,
       updatedAt: new Date(),
     })
     .where(eq(documents.id, documentId));
+
+  if (extracted.leadImageUrl) {
+    const image = await downloadDocumentImage(extracted.leadImageUrl, documentId);
+    if (image) {
+      await db
+        .update(documents)
+        .set({
+          metadata: {
+            leadImageUrl: image.url,
+            imagePath: image.publicPath,
+            imageContentType: image.contentType,
+          },
+          updatedAt: new Date(),
+        })
+        .where(eq(documents.id, documentId));
+    }
+  }
 
   // Reprocess document content and regenerate derived data
   await reprocessDocument(documentId, extracted.content);

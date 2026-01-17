@@ -1,5 +1,6 @@
 import { notFound } from "next/navigation";
 import Link from "next/link";
+import Image from "next/image";
 import { ArrowLeft, ExternalLink, FileText, Video, Globe, Network, Calendar, Hash, MessageSquare } from "lucide-react";
 import { Header } from "@/components/layout/header";
 import { Button } from "@/components/ui/button";
@@ -112,6 +113,21 @@ export default async function DocumentDetailPage({
               <DeleteButton documentId={document.id} />
             </div>
           </div>
+
+          {document.imagePath && (
+            <div className="mb-8 overflow-hidden rounded-xl border bg-muted/30">
+              <div className="relative h-64 w-full">
+                <Image
+                  src={document.imagePath}
+                  alt={document.title}
+                  fill
+                  className="object-cover"
+                  sizes="(min-width: 1024px) 900px, 100vw"
+                  priority
+                />
+              </div>
+            </div>
+          )}
 
           <div className="grid gap-6 lg:grid-cols-3">
             {/* Main Content */}

@@ -44,3 +44,6 @@ drizzle/
 
 # Misc
 *.log
+
+# Generated document images
+public/document-images/
