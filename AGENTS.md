@@ -17,21 +17,19 @@ Keep edits minimal and aligned with existing patterns.
 - `npm run start` - run built app.
 - `npm run lint` - ESLint via Next.js.
 
-### Linting single file
-- `npx next lint --file src/app/chat/page.tsx`
-- `npm run lint -- --file src/app/chat/page.tsx`
-
+### Single-file checks
+- `npx next lint --file src/app/chat/page.tsx`.
+- `npm run lint -- --file src/app/chat/page.tsx`.
+- No unit test runner is configured; use lint/build and manual UI checks.
 ### Testing
-- No automated test runner is configured.
+- Automated tests are not configured.
 - Use `npm run lint` and `npm run build` as checks.
-- Manual UI validation is expected (see README/CLAUDE notes).
-
+- Validate UI flows manually (see `README.md`/`CLAUDE.md`).
 ### Database
 - `npm run db:generate` - generate migrations.
 - `npm run db:push` - push schema in dev.
 - `npm run db:migrate` - run migrations in prod.
 - `npm run db:studio` - open Drizzle Studio.
-
 ### Docker
 - `docker compose up db -d` - start Postgres with extensions.
 - `docker compose up --build` - full stack build/run.
@@ -93,7 +91,7 @@ Keep edits minimal and aligned with existing patterns.
 - Wrap external calls in `try/catch`.
 - Log server errors with `console.error` and return safe fallbacks.
 - Prefer early returns for invalid inputs in API routes.
-- When catching errors, keep messages user-safe.
+- Keep caught error messages user-safe.
 - Clean up loading state in `finally` blocks.
 
 ## Data access patterns
@@ -116,7 +114,7 @@ Keep edits minimal and aligned with existing patterns.
 - Prefer `useState` + `useEffect` patterns seen in `src/app/chat/page.tsx`.
 
 ## Documentation & configs
-- `CLAUDE.md` contains environment and architecture notes.
+- `README.md` and `CLAUDE.md` contain architecture and workflow notes.
 - No Cursor rules (`.cursor/rules/` or `.cursorrules`) found.
 - No Copilot instructions (`.github/copilot-instructions.md`) found.
 
@@ -140,9 +138,9 @@ Keep edits minimal and aligned with existing patterns.
 - Do not add tests unless a suite exists.
 
 ## Single-file references (examples)
-- Lint a page: `npx next lint --file src/app/library/page.tsx`
-- Lint an API route: `npx next lint --file src/app/api/ingest/route.ts`
-- Lint a server action: `npx next lint --file src/actions/ingest.ts`
+- Lint a page: `npx next lint --file src/app/library/page.tsx`.
+- Lint an API route: `npx next lint --file src/app/api/ingest/route.ts`.
+- Lint a server action: `npx next lint --file src/actions/ingest.ts`.
 
 ## Network/services
 - Local DB runs on Docker; default port mapping `localhost:5432`.
