@@ -13,6 +13,7 @@ export async function GET(req: Request) {
       category: chatThreads.category,
       entityId: chatThreads.entityId,
       documentId: chatThreads.documentId,
+      projectId: chatThreads.projectId,
       createdAt: chatThreads.createdAt,
       updatedAt: chatThreads.updatedAt,
       lastMessageAt: chatThreads.lastMessageAt,

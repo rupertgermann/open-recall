@@ -1,10 +1,11 @@
-import { streamText, convertToModelMessages, type UIMessage, generateText } from "ai";
+import { streamText, convertToModelMessages, type UIMessage, generateText, tool, stepCountIs } from "ai";
+import { z } from "zod";
 import { createOpenAI } from "@ai-sdk/openai";
 import { retrieveContext, buildPromptContext } from "@/actions/chat";
 import { getChatConfigFromDB, type ChatConfig } from "@/lib/ai/config";
 import { db } from "@/db";
 import { chatMessages, chatThreads, entities, documents } from "@/db/schema";
-import { eq } from "drizzle-orm";
+import { eq, like, or, desc } from "drizzle-orm";
 import type { ChatMessageMetadata, ChatSourceReference, ChatEntityReference } from "@/lib/chat/types";
 
 // Helper to create AI client from config
@@ -264,10 +265,122 @@ Guidelines:
   // Get model from DB-backed config
   const model = getModelFromConfig(chatConfig);
 
+  const chatTools = {
+    searchKnowledgeBase: tool({
+      description: "Search the user's knowledge base for documents and information. Use this when the user asks about something that might be in their saved content.",
+      inputSchema: z.object({
+        query: z.string().describe("The search query to find relevant documents"),
+      }),
+      execute: async ({ query }) => {
+        try {
+          const results = await db
+            .select({
+              id: documents.id,
+              title: documents.title,
+              type: documents.type,
+              summary: documents.summary,
+            })
+            .from(documents)
+            .where(or(like(documents.title, `%${query}%`), like(documents.summary, `%${query}%`)))
+            .orderBy(desc(documents.createdAt))
+            .limit(5);
+
+          if (results.length === 0) return "No documents found matching the query.";
+          return results.map((d) => `[${d.title}] (${d.type}): ${d.summary?.slice(0, 200) || "No summary"}`).join("\n\n");
+        } catch {
+          return "Failed to search the knowledge base.";
+        }
+      },
+    }),
+    createNote: tool({
+      description: "Create a new text note in the user's knowledge base. Use this when the user asks you to save, remember, or note something down.",
+      inputSchema: z.object({
+        title: z.string().describe("Title for the note"),
+        content: z.string().describe("The content of the note in markdown format"),
+      }),
+      execute: async ({ title, content }) => {
+        try {
+          const [created] = await db
+            .insert(documents)
+            .values({
+              title,
+              type: "note",
+              content,
+              summary: content.slice(0, 500),
+              processingStatus: "pending",
+            })
+            .returning({ id: documents.id });
+
+          return `Note "${title}" created successfully (ID: ${created.id}). It will be processed and added to the knowledge graph shortly.`;
+        } catch {
+          return "Failed to create the note.";
+        }
+      },
+    }),
+    lookupEntity: tool({
+      description: "Look up a specific entity (person, concept, technology, organization) in the knowledge graph to get details and connections.",
+      inputSchema: z.object({
+        name: z.string().describe("The name of the entity to look up"),
+      }),
+      execute: async ({ name }) => {
+        try {
+          const results = await db
+            .select({
+              id: entities.id,
+              name: entities.name,
+              type: entities.type,
+              description: entities.description,
+            })
+            .from(entities)
+            .where(like(entities.name, `%${name}%`))
+            .limit(5);
+
+          if (results.length === 0) return `No entity found matching "${name}".`;
+          return results
+            .map((e) => `**${e.name}** (${e.type}): ${e.description || "No description"}`)
+            .join("\n\n");
+        } catch {
+          return "Failed to look up entity.";
+        }
+      },
+    }),
+    findRelatedDocuments: tool({
+      description: "Find documents related to a specific topic or document. Use this to discover connections between pieces of knowledge.",
+      inputSchema: z.object({
+        topic: z.string().describe("The topic or document title to find related content for"),
+      }),
+      execute: async ({ topic }) => {
+        try {
+          const results = await db
+            .select({
+              id: documents.id,
+              title: documents.title,
+              type: documents.type,
+              summary: documents.summary,
+              createdAt: documents.createdAt,
+            })
+            .from(documents)
+            .where(or(like(documents.title, `%${topic}%`), like(documents.summary, `%${topic}%`)))
+            .orderBy(desc(documents.createdAt))
+            .limit(8);
+
+          if (results.length === 0) return `No documents found related to "${topic}".`;
+          return results
+            .map((d) => `- **${d.title}** (${d.type}, ${d.createdAt.toLocaleDateString()}): ${d.summary?.slice(0, 150) || "No summary"}...`)
+            .join("\n");
+        } catch {
+          return "Failed to find related documents.";
+        }
+      },
+    }),
+  };
+
   const result = streamText({
     model: model as Parameters<typeof streamText>[0]["model"],
     system: systemPrompt,
     messages: convertToModelMessages(messages),
+    tools: chatTools,
+    stopWhen: stepCountIs(3),
   });
 
   // Ensure the stream runs to completion and triggers onFinish even if the client disconnects.

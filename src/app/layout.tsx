@@ -4,6 +4,7 @@ import "./globals.css";
 import { Providers } from "@/components/providers";
 import { Toaster } from "@/components/ui/toaster";
 import { ModeToggle } from "@/components/mode-toggle";
+import { QuickCapture } from "@/components/quick-capture";
 
 const inter = Inter({ subsets: ["latin"] });
 
@@ -22,6 +23,7 @@ export default function RootLayout({
       <body className={`${inter.className} antialiased`}>
         <Providers>
           {children}
+          <QuickCapture />
           <ModeToggle />
           <Toaster />
         </Providers>

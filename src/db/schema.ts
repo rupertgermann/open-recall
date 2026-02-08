@@ -291,6 +291,41 @@ export const documentCollections = pgTable(
 );
 
 // ============================================================================
+// PROJECTS - Chat project groupings
+// ============================================================================
+export const projects = pgTable(
+  "projects",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    name: text("name").notNull(),
+    description: text("description"),
+    goal: text("goal"),
+    color: text("color").default("#8b5cf6"),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    updatedAt: timestamp("updated_at").defaultNow().notNull(),
+  },
+  (table) => ({
+    nameIdx: uniqueIndex("projects_name_idx").on(table.name),
+  })
+);
+
+export const projectDocuments = pgTable(
+  "project_documents",
+  {
+    projectId: uuid("project_id")
+      .notNull()
+      .references(() => projects.id, { onDelete: "cascade" }),
+    documentId: uuid("document_id")
+      .notNull()
+      .references(() => documents.id, { onDelete: "cascade" }),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+  },
+  (table) => ({
+    pk: primaryKey({ columns: [table.projectId, table.documentId] }),
+  })
+);
+
+// ============================================================================
 // SETTINGS - User preferences
 // ============================================================================
 export const settings = pgTable("settings", {
@@ -308,9 +343,10 @@ export const chatThreads = pgTable(
   {
     id: uuid("id").primaryKey().defaultRandom(),
     title: text("title").notNull().default("New chat"),
-    category: text("category").notNull().default("general"), // 'general', 'entity', 'document'
+    category: text("category").notNull().default("general"), // 'general', 'entity', 'document', 'project'
     entityId: uuid("entity_id").references(() => entities.id, { onDelete: "set null" }),
     documentId: uuid("document_id").references(() => documents.id, { onDelete: "set null" }),
+    projectId: uuid("project_id").references(() => projects.id, { onDelete: "set null" }),
     createdAt: timestamp("created_at").defaultNow().notNull(),
     updatedAt: timestamp("updated_at").defaultNow().notNull(),
     lastMessageAt: timestamp("last_message_at").defaultNow().notNull(),
@@ -319,6 +355,7 @@ export const chatThreads = pgTable(
     lastMessageIdx: index("chat_threads_last_message_idx").on(table.lastMessageAt),
     entityIdx: index("chat_threads_entity_idx").on(table.entityId),
     documentIdx: index("chat_threads_document_idx").on(table.documentId),
+    projectIdx: index("chat_threads_project_idx").on(table.projectId),
     categoryIdx: index("chat_threads_category_idx").on(table.category),
   })
 );
@@ -438,6 +475,22 @@ export const documentCollectionsRelations = relations(documentCollections, ({ on
   }),
 }));
 
+export const projectsRelations = relations(projects, ({ many }) => ({
+  projectDocuments: many(projectDocuments),
+  chatThreads: many(chatThreads),
+}));
+
+export const projectDocumentsRelations = relations(projectDocuments, ({ one }) => ({
+  project: one(projects, {
+    fields: [projectDocuments.projectId],
+    references: [projects.id],
+  }),
+  document: one(documents, {
+    fields: [projectDocuments.documentId],
+    references: [documents.id],
+  }),
+}));
+
 export const chatThreadsRelations = relations(chatThreads, ({ many, one }) => ({
   messages: many(chatMessages),
   entity: one(entities, {
@@ -447,6 +500,10 @@ export const chatThreadsRelations = relations(chatThreads, ({ many, one }) => ({
   document: one(documents, {
     fields: [chatThreads.documentId],
     references: [documents.id],
+  }),
+  project: one(projects, {
+    fields: [chatThreads.projectId],
+    references: [projects.id],
   }),
 }));
 
@@ -491,3 +548,8 @@ export type Collection = typeof collections.$inferSelect;
 export type NewCollection = typeof collections.$inferInsert;
 export type DocumentCollection = typeof documentCollections.$inferSelect;
 export type NewDocumentCollection = typeof documentCollections.$inferInsert;
+
+export type Project = typeof projects.$inferSelect;
+export type NewProject = typeof projects.$inferInsert;
+export type ProjectDocument = typeof projectDocuments.$inferSelect;
+export type NewProjectDocument = typeof projectDocuments.$inferInsert;

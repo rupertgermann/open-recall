@@ -4,7 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useChat } from "@ai-sdk/react";
 import { DefaultChatTransport } from "ai";
 import Link from "next/link";
-import { Loader2, MessageSquareIcon, Plus, Trash2, Filter, Search } from "lucide-react";
+import { Loader2, MessageSquareIcon, Plus, Trash2, Filter, Search, FolderKanban, MoreVertical, Pencil } from "lucide-react";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -37,6 +37,19 @@ import {
   PromptInputTextarea,
 } from "@/components/ai-elements/prompt-input";
 import { cn } from "@/lib/utils";
+import {
+  getProjects,
+  createProject,
+  deleteProject as deleteProjectAction,
+  type ProjectWithCounts,
+} from "@/actions/projects";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import { Input as ShadInput } from "@/components/ui/input";
 
 const chatTransport = new DefaultChatTransport({ api: "/api/chat" });
 
@@ -59,6 +72,13 @@ export default function ChatPage() {
   const [searchQuery, setSearchQuery] = useState<string>("");
   const [searchSuggestions, setSearchSuggestions] = useState<typeof threads>([]);
   const [showSuggestions, setShowSuggestions] = useState(false);
+
+  // Project state
+  const [projectsList, setProjectsList] = useState<ProjectWithCounts[]>([]);
+  const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
+  const [showNewProject, setShowNewProject] = useState(false);
+  const [newProjectName, setNewProjectName] = useState("");
+  const [projectToDelete, setProjectToDelete] = useState<string | null>(null);
 
   const [loadedMessages, setLoadedMessages] = useState<
     Array<{ id: string; role: "user" | "assistant"; content: string }>
@@ -159,6 +179,53 @@ export default function ChatPage() {
     setThreads(data.threads);
     return data.threads;
   };
+
+  // Fetch projects on mount
+  useEffect(() => {
+    (async () => {
+      try {
+        const p = await getProjects();
+        setProjectsList(p);
+      } catch (e) {
+        console.error("Failed to load projects:", e);
+      }
+    })();
+  }, []);
+
+  const handleCreateProject = async () => {
+    const name = newProjectName.trim();
+    if (!name) return;
+    try {
+      const created = await createProject({ name });
+      setProjectsList((prev) => [{ ...created, chatCount: 0, documentCount: 0 }, ...prev]);
+      setSelectedProjectId(created.id);
+      setCategoryFilter("all"); // show all when switching to project
+    } catch {
+      // ignore
+    } finally {
+      setShowNewProject(false);
+      setNewProjectName("");
+    }
+  };
+
+  const handleDeleteProject = async () => {
+    if (!projectToDelete) return;
+    try {
+      await deleteProjectAction(projectToDelete);
+      setProjectsList((prev) => prev.filter((p) => p.id !== projectToDelete));
+      if (selectedProjectId === projectToDelete) setSelectedProjectId(null);
+    } catch {
+      // ignore
+    } finally {
+      setProjectToDelete(null);
+    }
+  };
+
+  // Filter threads by project
+  const filteredThreads = useMemo(() => {
+    if (!selectedProjectId) return threads;
+    return threads.filter((t) => (t as any).projectId === selectedProjectId);
+  }, [threads, selectedProjectId]);
 
   useEffect(() => {
     let cancelled = false;
@@ -301,6 +368,118 @@ export default function ChatPage() {
               </Button>
             </div>
 
+            {/* Projects */}
+            {projectsList.length > 0 && (
+              <div className="p-2 border-b">
+                <div className="flex items-center gap-1 flex-wrap">
+                  <Button
+                    variant={selectedProjectId === null ? "secondary" : "ghost"}
+                    size="sm"
+                    className="text-xs h-7"
+                    onClick={() => setSelectedProjectId(null)}
+                  >
+                    All
+                  </Button>
+                  {projectsList.map((p) => (
+                    <div key={p.id} className="flex items-center group">
+                      <Button
+                        variant={selectedProjectId === p.id ? "secondary" : "ghost"}
+                        size="sm"
+                        className="text-xs h-7 gap-1 pr-1"
+                        onClick={() => setSelectedProjectId(selectedProjectId === p.id ? null : p.id)}
+                      >
+                        <FolderKanban className="h-3 w-3" style={{ color: p.color || undefined }} />
+                        {p.name}
+                        <span className="text-muted-foreground ml-0.5">{p.chatCount}</span>
+                      </Button>
+                      <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
+                          <Button variant="ghost" size="icon" className="h-5 w-5 opacity-0 group-hover:opacity-100">
+                            <MoreVertical className="h-3 w-3" />
+                          </Button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="end">
+                          <DropdownMenuItem
+                            className="text-destructive"
+                            onClick={() => setProjectToDelete(p.id)}
+                          >
+                            <Trash2 className="h-3.5 w-3.5 mr-2" />
+                            Delete project
+                          </DropdownMenuItem>
+                        </DropdownMenuContent>
+                      </DropdownMenu>
+                    </div>
+                  ))}
+                  {!showNewProject ? (
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="text-xs h-7 gap-1 text-muted-foreground"
+                      onClick={() => setShowNewProject(true)}
+                    >
+                      <Plus className="h-3 w-3" />
+                    </Button>
+                  ) : (
+                    <form
+                      className="flex items-center gap-1"
+                      onSubmit={(e) => {
+                        e.preventDefault();
+                        handleCreateProject();
+                      }}
+                    >
+                      <ShadInput
+                        autoFocus
+                        className="h-7 w-28 text-xs"
+                        placeholder="Project name"
+                        value={newProjectName}
+                        onChange={(e) => setNewProjectName(e.target.value)}
+                        onBlur={() => {
+                          if (!newProjectName.trim()) setShowNewProject(false);
+                        }}
+                      />
+                    </form>
+                  )}
+                </div>
+              </div>
+            )}
+            {projectsList.length === 0 && (
+              <div className="p-2 border-b">
+                <div className="flex items-center gap-1">
+                  {!showNewProject ? (
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="text-xs h-7 gap-1 text-muted-foreground"
+                      onClick={() => setShowNewProject(true)}
+                    >
+                      <FolderKanban className="h-3 w-3" />
+                      <Plus className="h-3 w-3" />
+                      New Project
+                    </Button>
+                  ) : (
+                    <form
+                      className="flex items-center gap-1"
+                      onSubmit={(e) => {
+                        e.preventDefault();
+                        handleCreateProject();
+                      }}
+                    >
+                      <ShadInput
+                        autoFocus
+                        className="h-7 w-28 text-xs"
+                        placeholder="Project name"
+                        value={newProjectName}
+                        onChange={(e) => setNewProjectName(e.target.value)}
+                        onBlur={() => {
+                          if (!newProjectName.trim()) setShowNewProject(false);
+                        }}
+                      />
+                    </form>
+                  )}
+                </div>
+              </div>
+            )}
+
             <div className="p-3 border-b">
               <div className="flex items-center gap-2">
                 <Filter className="h-4 w-4 text-muted-foreground" />
@@ -367,11 +546,13 @@ export default function ChatPage() {
                     <Loader2 className="h-4 w-4 animate-spin" />
                     Loading...
                   </div>
-                ) : threads.length === 0 ? (
-                  <div className="text-sm text-muted-foreground p-2">No chats yet</div>
+                ) : filteredThreads.length === 0 ? (
+                  <div className="text-sm text-muted-foreground p-2">
+                    {selectedProjectId ? "No chats in this project" : "No chats yet"}
+                  </div>
                 ) : (
                   <div className="flex flex-col gap-1">
-                    {threads.map((t) => (
+                    {filteredThreads.map((t) => (
                       <div
                         key={t.id}
                         className={cn(
@@ -502,6 +683,30 @@ export default function ChatPage() {
                 onClick={(e) => {
                   e.preventDefault();
                   confirmDeleteThread();
+                }}
+                className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              >
+                Delete
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
+
+        {/* Delete Project Confirm Dialog */}
+        <AlertDialog open={!!projectToDelete} onOpenChange={(open) => !open && setProjectToDelete(null)}>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>Delete project?</AlertDialogTitle>
+              <AlertDialogDescription>
+                This will delete the project. Chats in this project will not be deleted but will be unlinked.
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel>Cancel</AlertDialogCancel>
+              <AlertDialogAction
+                onClick={(e) => {
+                  e.preventDefault();
+                  handleDeleteProject();
                 }}
                 className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
               >
