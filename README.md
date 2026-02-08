@@ -4,6 +4,8 @@ Privacy-focused, local-first Personal Knowledge Management powered by GraphRAG.
 
 Save web articles, notes, and PDFs — then chat with your knowledge base using a hybrid of vector search and knowledge graph traversal, all running on your own machine.
 
+> **Note**: 100% of the code in this repository was written by AI — specifically Claude Opus and OpenAI Codex.
+
 ## Features
 
 - **GraphRAG Pipeline**: Automatically extract entities and relationships from ingested content to build a semantic knowledge graph
