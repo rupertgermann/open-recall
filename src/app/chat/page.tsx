@@ -5,6 +5,8 @@ import { useChat } from "@ai-sdk/react";
 import { DefaultChatTransport } from "ai";
 import Link from "next/link";
 import { Loader2, MessageSquareIcon, Plus, Trash2, Filter, Search } from "lucide-react";
+import type { ChatUIMessage, ChatMessageMetadata } from "@/lib/chat/types";
+import { ChatSources } from "@/components/chat/chat-sources";
 import { Header } from "@/components/layout/header";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -26,6 +28,7 @@ import {
 } from "@/components/ai-elements/prompt-input";
 import { cn } from "@/lib/utils";
 
+const chatTransport = new DefaultChatTransport({ api: "/api/chat" });
 
 export default function ChatPage() {
   const [threads, setThreads] = useState<
@@ -54,10 +57,8 @@ export default function ChatPage() {
 
   const [input, setInput] = useState("");
 
-  const { messages, status, sendMessage, setMessages } = useChat({
-    transport: new DefaultChatTransport({
-      api: "/api/chat",
-    }),
+  const { messages, status, sendMessage, setMessages } = useChat<ChatUIMessage>({
+    transport: chatTransport,
   });
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -158,7 +159,7 @@ export default function ChatPage() {
         if (!res.ok) throw new Error("Failed to load chat");
         const data = (await res.json()) as {
           thread: { id: string; title: string };
-          messages: Array<{ id: string; role: string; content: string }>;
+          messages: Array<{ id: string; role: string; content: string; metadata?: unknown }>;
         };
         if (cancelled) return;
 
@@ -169,10 +170,11 @@ export default function ChatPage() {
         }));
         setLoadedMessages(mapped);
         setMessages(
-          mapped.map((m) => ({
+          data.messages.map((m) => ({
             id: m.id,
-            role: m.role,
-            parts: [{ type: "text", text: m.content }],
+            role: (m.role === "assistant" ? "assistant" : "user") as "assistant" | "user",
+            parts: [{ type: "text" as const, text: m.content }],
+            metadata: (m.metadata as ChatMessageMetadata) ?? undefined,
           }))
         );
       } finally {
@@ -443,6 +445,12 @@ export default function ChatPage() {
                           return null;
                         })}
                       </MessageContent>
+                      {m.role === "assistant" && m.metadata && (
+                        <ChatSources
+                          sources={(m.metadata as ChatMessageMetadata).sources}
+                          entities={(m.metadata as ChatMessageMetadata).entities}
+                        />
+                      )}
                     </Message>
                   ))
                 )}

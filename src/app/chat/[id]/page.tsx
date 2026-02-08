@@ -3,7 +3,9 @@
 import { useEffect, useMemo, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { useChat } from "@ai-sdk/react";
-import { DefaultChatTransport, type UIMessage } from "ai";
+import { DefaultChatTransport } from "ai";
+import type { ChatUIMessage, ChatMessageMetadata } from "@/lib/chat/types";
+import { ChatSources } from "@/components/chat/chat-sources";
 import { Header } from "@/components/layout/header";
 import {
   Conversation,
@@ -23,6 +25,8 @@ import { Button } from "@/components/ui/button";
 import { Loader2, MessageSquareIcon, Trash2, ArrowLeft, Lightbulb } from "lucide-react";
 import Link from "next/link";
 import { getDocumentStarterPrompts, getEntityStarterPrompts, type StarterPrompt } from "@/lib/chat/starter-prompts";
+
+const chatTransport = new DefaultChatTransport({ api: "/api/chat" });
 
 type LoadedChat = {
   thread: {
@@ -44,11 +48,12 @@ type LoadedChat = {
   }>;
 };
 
-function toUIMessages(rows: LoadedChat["messages"]): UIMessage[] {
+function toUIMessages(rows: LoadedChat["messages"]): ChatUIMessage[] {
   return rows.map((m) => ({
     id: m.id,
     role: m.role === "assistant" ? "assistant" : "user",
-    parts: [{ type: "text", text: m.content }],
+    parts: [{ type: "text" as const, text: m.content }],
+    metadata: (m.metadata as ChatMessageMetadata) ?? undefined,
   }));
 }
 
@@ -110,11 +115,8 @@ export default function ChatThreadPage() {
     return toUIMessages(loaded.messages);
   }, [loaded]);
 
-  const { messages, status, sendMessage, setMessages } = useChat({
-    transport: new DefaultChatTransport({
-      api: "/api/chat",
-    }),
-    messages: initialMessages,
+  const { messages, status, sendMessage, setMessages } = useChat<ChatUIMessage>({
+    transport: chatTransport,
   });
 
   useEffect(() => {
@@ -222,6 +224,12 @@ export default function ChatThreadPage() {
                         return null;
                       })}
                     </MessageContent>
+                    {m.role === "assistant" && m.metadata && (
+                      <ChatSources
+                        sources={(m.metadata as ChatMessageMetadata).sources}
+                        entities={(m.metadata as ChatMessageMetadata).entities}
+                      />
+                    )}
                     {/* Show starter prompts after the first welcome message */}
                     {index === 0 && loaded?.thread.category !== 'general' && starterPrompts.length > 0 && (
                       <div className="mt-3">

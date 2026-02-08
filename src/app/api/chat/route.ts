@@ -5,6 +5,7 @@ import { getChatConfigFromDB, type ChatConfig } from "@/lib/ai/config";
 import { db } from "@/db";
 import { chatMessages, chatThreads, entities, documents } from "@/db/schema";
 import { eq } from "drizzle-orm";
+import type { ChatMessageMetadata, ChatSourceReference, ChatEntityReference } from "@/lib/chat/types";
 
 // Helper to create AI client from config
 function createAIClient(config: ChatConfig) {
@@ -228,6 +229,26 @@ export async function POST(req: Request) {
     }
   }
 
+  // Deduplicate sources by documentId, keeping highest score
+  const sourceMap = new Map<string, ChatSourceReference>();
+  for (const c of retrievedData.chunks) {
+    const existing = sourceMap.get(c.documentId);
+    if (!existing || c.score > existing.score) {
+      sourceMap.set(c.documentId, {
+        documentId: c.documentId,
+        title: c.documentTitle,
+        score: c.score,
+      });
+    }
+  }
+  const dedupedSources = Array.from(sourceMap.values());
+
+  const dedupedEntities: ChatEntityReference[] = retrievedData.entities.map((e) => ({
+    id: e.id,
+    name: e.name,
+    type: e.type,
+  }));
+
   const systemPrompt = `You are a helpful AI assistant with access to the user's personal knowledge base.
 Answer questions based on the retrieved context.
 
@@ -235,8 +256,8 @@ ${contextString ? `Context:\n${contextString}` : "No relevant context found."}
 
 Guidelines:
 - Use context to answer accurately
+- When referencing information from the knowledge base, mention the document title naturally (e.g. "According to [Document Title]...")
 - If context insufficient, say so and provide general knowledge
-- Cite sources when possible
 - Be concise
 - Acknowledge uncertainty when unsure`;
 
@@ -280,6 +301,15 @@ Guidelines:
       "X-Chat-Thread-Id": effectiveThreadId,
     },
     originalMessages: messages,
+    messageMetadata: ({ part }): ChatMessageMetadata | undefined => {
+      if (part.type === "finish") {
+        return {
+          sources: dedupedSources,
+          entities: dedupedEntities,
+          createdAt: Date.now(),
+        };
+      }
+    },
     onFinish: async ({ messages: responseMessages }) => {
       try {
         const lastAssistant = [...responseMessages].reverse().find((m) => m.role === "assistant");
@@ -288,18 +318,16 @@ Guidelines:
           assistantTextPart && "text" in assistantTextPart ? assistantTextPart.text : null;
 
         if (assistantText) {
+          const storedMetadata: ChatMessageMetadata = {
+            sources: dedupedSources,
+            entities: dedupedEntities,
+            createdAt: Date.now(),
+          };
           await db.insert(chatMessages).values({
             threadId: effectiveThreadId,
             role: "assistant",
             content: assistantText,
-            metadata: {
-              retrievedSources: retrievedData.chunks.map((c) => ({
-                id: c.documentId,
-                title: c.documentTitle,
-                score: c.score,
-              })),
-              retrievedEntities: retrievedData.entities.map((e) => e.name),
-            },
+            metadata: storedMetadata,
           });
           await db
             .update(chatThreads)

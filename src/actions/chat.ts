@@ -1,7 +1,7 @@
 "use server";
 
 import { db } from "@/db";
-import { chunks, documents, entities, entityMentions, relationships } from "@/db/schema";
+import { chunks, documents, entities, relationships } from "@/db/schema";
 import { eq, sql, cosineDistance, isNotNull } from "drizzle-orm";
 import { generateEmbeddingWithDBConfig } from "@/lib/ai";
 
