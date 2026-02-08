@@ -20,6 +20,17 @@ Save web articles, notes, and PDFs — then chat with your knowledge base using 
 - **Web Search**: Augment AI responses with live web search results
 - **Dark Mode**: Full dark/light theme support
 
+## Screenshots
+
+| | |
+|---|---|
+| ![Dashboard](docs/screens/dashboard.png) | ![Library](docs/screens/library.png) |
+| **Dashboard** — Overview of your knowledge base with stats, recent documents, chats, and quick actions. | **Library** — Browse, search, and organize documents with AI-generated summaries and entity counts. |
+| ![Graph](docs/screens/graph.png) | ![Chat](docs/screens/chat.png) |
+| **Knowledge Graph** — Interactive force-directed graph visualization of entities and their relationships. | **Chat** — RAG-powered conversations grounded in your knowledge base with cited entity tags. |
+| ![Add Content](docs/screens/add_doc.png) | ![Settings](docs/screens/settings.png) |
+| **Ingestion** — Add content via URL or text with a live processing pipeline showing each step. | **Settings** — Configure AI providers, models, reasoning effort, and web search per provider. |
+
 ## Tech Stack
 
 - **Framework**: [Next.js 16](https://nextjs.org/) (App Router, Turbopack)
