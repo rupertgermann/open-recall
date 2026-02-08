@@ -57,7 +57,7 @@ function StatCard({
           <div className="flex items-center justify-between">
             <div>
               <p className="text-sm text-muted-foreground">{label}</p>
-              <p className="text-3xl font-bold mt-1">{value.toLocaleString()}</p>
+              <p className="text-3xl font-bold mt-1">{value.toLocaleString("en-US")}</p>
             </div>
             <div className={cn("p-3 rounded-xl bg-muted group-hover:scale-110 transition-transform", color)}>
               <Icon className="h-6 w-6" />
@@ -297,14 +297,14 @@ export function DashboardClient({ data }: { data: DashboardData }) {
                             </div>
                             <div className="min-w-0 flex-1">
                               <p className="text-sm font-medium truncate">{doc.title}</p>
-                              <p className="text-xs text-muted-foreground">
-                                {doc.createdAt.toLocaleDateString()}
+                              <span className="text-xs text-muted-foreground">
+                                {doc.createdAt.toLocaleDateString("en-US")}
                                 {doc.processingStatus !== "completed" && (
                                   <Badge variant="outline" className="ml-2 text-[10px]">
                                     Processing
                                   </Badge>
                                 )}
-                              </p>
+                              </span>
                             </div>
                           </Link>
                         );
@@ -343,8 +343,8 @@ export function DashboardClient({ data }: { data: DashboardData }) {
                           </div>
                           <div className="min-w-0 flex-1">
                             <p className="text-sm font-medium truncate">{chat.title}</p>
-                            <p className="text-xs text-muted-foreground">
-                              {chat.lastMessageAt.toLocaleDateString()}
+                            <span className="text-xs text-muted-foreground">
+                              {chat.lastMessageAt.toLocaleDateString("en-US")}
                               <Badge
                                 variant="outline"
                                 className={cn(
@@ -355,7 +355,7 @@ export function DashboardClient({ data }: { data: DashboardData }) {
                               >
                                 {chat.category}
                               </Badge>
-                            </p>
+                            </span>
                           </div>
                         </Link>
                       ))}
