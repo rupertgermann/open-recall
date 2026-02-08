@@ -3,7 +3,7 @@
 import { useState, useEffect, useTransition } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { FileText, Video, Globe, Search, MoreVertical, Trash2, ExternalLink, Loader2, RefreshCw, X, Grid, List, FolderOpen, Plus, Pencil, Library } from "lucide-react";
+import { FileText, Video, Globe, Search, MoreVertical, Trash2, ExternalLink, Loader2, RefreshCw, X, Grid, List, FolderOpen, Plus, Pencil, Library, Sparkles, CheckSquare, Square } from "lucide-react";
 import Image from "next/image";
 import { Header } from "@/components/layout/header";
 import { Button } from "@/components/ui/button";
@@ -30,7 +30,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import { useToast } from "@/hooks/use-toast";
 import { getDocuments, deleteDocument, updateDocumentFromSource, type DocumentWithStats } from "@/actions/documents";
-import { getCollections, createCollection, updateCollection, deleteCollection, type CollectionWithCount } from "@/actions/collections";
+import { getCollections, createCollection, updateCollection, deleteCollection, bulkAddToCollection, autoOrganizeDocuments, getUnassignedDocumentCount, type CollectionWithCount, type AutoOrganizeResult } from "@/actions/collections";
 import { cn } from "@/lib/utils";
 
 const typeIcons = {
@@ -53,13 +53,19 @@ function DocumentListItem({
   onUpdateFromSource, 
   onDeleteClick, 
   isPending, 
-  documentToUpdate 
+  documentToUpdate,
+  bulkSelectMode = false,
+  isSelected = false,
+  onToggleSelect,
 }: { 
   doc: DocumentWithStats;
   onUpdateFromSource: (id: string) => void;
   onDeleteClick: (id: string) => void;
   isPending: boolean;
   documentToUpdate: string | null;
+  bulkSelectMode?: boolean;
+  isSelected?: boolean;
+  onToggleSelect?: (id: string) => void;
 }) {
   const router = useRouter();
   const Icon = typeIcons[doc.type as keyof typeof typeIcons] || FileText;
@@ -67,11 +73,23 @@ function DocumentListItem({
 
   return (
     <div
-      className="group border rounded-lg p-4 hover:bg-muted/50 transition-colors cursor-pointer"
-      onClick={() => router.push(`/library/${doc.id}`)}
+      className={cn(
+        "group border rounded-lg p-4 hover:bg-muted/50 transition-colors cursor-pointer",
+        bulkSelectMode && isSelected && "ring-2 ring-primary"
+      )}
+      onClick={() => bulkSelectMode && onToggleSelect ? onToggleSelect(doc.id) : router.push(`/library/${doc.id}`)}
     >
       <div className="flex items-start justify-between">
         <div className="flex items-start gap-3 flex-1 min-w-0">
+          {bulkSelectMode && (
+            <div className="flex-shrink-0 mt-1">
+              {isSelected ? (
+                <CheckSquare className="h-5 w-5 text-primary" />
+              ) : (
+                <Square className="h-5 w-5 text-muted-foreground" />
+              )}
+            </div>
+          )}
           {doc.imagePath ? (
             <div className="relative h-16 w-16 flex-shrink-0 overflow-hidden rounded-lg border">
               <Image
@@ -184,6 +202,15 @@ export default function LibraryPage() {
   const [collectionName, setCollectionName] = useState("");
   const [collectionDescription, setCollectionDescription] = useState("");
 
+  // Bulk select state
+  const [bulkSelectMode, setBulkSelectMode] = useState(false);
+  const [selectedDocIds, setSelectedDocIds] = useState<Set<string>>(new Set());
+
+  // Auto-organize state
+  const [isAutoOrganizing, setIsAutoOrganizing] = useState(false);
+  const [unassignedCount, setUnassignedCount] = useState(0);
+  const [organizeResults, setOrganizeResults] = useState<AutoOrganizeResult[] | null>(null);
+
   // Load view mode from localStorage on mount
   useEffect(() => {
     const savedViewMode = localStorage.getItem("library-view-mode");
@@ -209,6 +236,21 @@ export default function LibraryPage() {
     }
     fetchCollections();
   }, []);
+
+  // Fetch unassigned doc count when collections change
+  useEffect(() => {
+    async function fetchUnassigned() {
+      try {
+        const count = await getUnassignedDocumentCount();
+        setUnassignedCount(count);
+      } catch (error) {
+        console.error("Failed to fetch unassigned count:", error);
+      }
+    }
+    if (collectionsList.length > 0) {
+      fetchUnassigned();
+    }
+  }, [collectionsList]);
 
   const refreshCollections = async () => {
     try {
@@ -281,6 +323,75 @@ export default function LibraryPage() {
     setCollectionName("");
     setCollectionDescription("");
     setCollectionDialogOpen(true);
+  };
+
+  // Bulk select handlers
+  const toggleBulkSelect = () => {
+    setBulkSelectMode((prev) => !prev);
+    setSelectedDocIds(new Set());
+  };
+
+  const toggleDocSelection = (docId: string) => {
+    setSelectedDocIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(docId)) {
+        next.delete(docId);
+      } else {
+        next.add(docId);
+      }
+      return next;
+    });
+  };
+
+  const selectAll = () => {
+    setSelectedDocIds(new Set(documents.map((d) => d.id)));
+  };
+
+  const deselectAll = () => {
+    setSelectedDocIds(new Set());
+  };
+
+  const handleBulkAssign = async (collectionId: string) => {
+    const ids = Array.from(selectedDocIds);
+    if (ids.length === 0) return;
+    try {
+      await bulkAddToCollection(ids, collectionId);
+      toast({
+        title: "Documents assigned",
+        description: `${ids.length} document(s) added to collection.`,
+      });
+      await refreshCollections();
+      setBulkSelectMode(false);
+      setSelectedDocIds(new Set());
+    } catch (error) {
+      toast({ title: "Assignment failed", variant: "destructive" });
+    }
+  };
+
+  const handleAutoOrganize = async () => {
+    setIsAutoOrganizing(true);
+    setOrganizeResults(null);
+    try {
+      const results = await autoOrganizeDocuments();
+      setOrganizeResults(results);
+      await refreshCollections();
+      if (results.length > 0) {
+        toast({
+          title: "Auto-organize complete",
+          description: `${results.length} document(s) organized into collections.`,
+        });
+      } else {
+        toast({
+          title: "No changes",
+          description: "No documents matched any existing collection.",
+        });
+      }
+    } catch (error) {
+      console.error("Auto-organize failed:", error);
+      toast({ title: "Auto-organize failed", variant: "destructive" });
+    } finally {
+      setIsAutoOrganizing(false);
+    }
   };
 
   // Debounce search
@@ -412,6 +523,15 @@ export default function LibraryPage() {
                 disabled={isLoading}
               >
                 <RefreshCw className={`h-4 w-4 ${isLoading ? "animate-spin" : ""}`} />
+              </Button>
+              <Button
+                variant={bulkSelectMode ? "secondary" : "outline"}
+                size="sm"
+                onClick={toggleBulkSelect}
+                className="gap-1.5"
+              >
+                <CheckSquare className="h-4 w-4" />
+                Select
               </Button>
               <div className="flex border rounded-md">
                 <Button
@@ -552,6 +672,92 @@ export default function LibraryPage() {
             </div>
           )}
 
+          {/* Bulk Select Toolbar */}
+          {bulkSelectMode && (
+            <div className="flex items-center gap-3 rounded-lg border bg-muted/50 px-4 py-2">
+              <span className="text-sm font-medium">
+                {selectedDocIds.size} selected
+              </span>
+              <Button variant="ghost" size="sm" onClick={selectAll}>
+                Select all
+              </Button>
+              <Button variant="ghost" size="sm" onClick={deselectAll} disabled={selectedDocIds.size === 0}>
+                Clear
+              </Button>
+              <div className="flex-1" />
+              {selectedDocIds.size > 0 && collectionsList.length > 0 && (
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button size="sm" className="gap-1.5">
+                      <FolderOpen className="h-4 w-4" />
+                      Move to collection
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end">
+                    {collectionsList.map((col) => (
+                      <DropdownMenuItem
+                        key={col.id}
+                        onClick={() => handleBulkAssign(col.id)}
+                      >
+                        <FolderOpen className="h-4 w-4 mr-2" />
+                        {col.name}
+                      </DropdownMenuItem>
+                    ))}
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              )}
+              <Button variant="ghost" size="sm" onClick={toggleBulkSelect}>
+                <X className="h-4 w-4" />
+              </Button>
+            </div>
+          )}
+
+          {/* Auto-organize */}
+          {!bulkSelectMode && collectionsList.length > 0 && unassignedCount > 0 && (
+            <div className="flex items-center gap-3 rounded-lg border border-dashed px-4 py-2">
+              <Sparkles className="h-4 w-4 text-muted-foreground" />
+              <span className="text-sm text-muted-foreground">
+                {unassignedCount} document(s) not in any collection
+              </span>
+              <Button
+                variant="outline"
+                size="sm"
+                className="gap-1.5 ml-auto"
+                onClick={handleAutoOrganize}
+                disabled={isAutoOrganizing}
+              >
+                {isAutoOrganizing ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  <Sparkles className="h-4 w-4" />
+                )}
+                {isAutoOrganizing ? "Organizing..." : "Auto-organize with AI"}
+              </Button>
+            </div>
+          )}
+
+          {/* Auto-organize results */}
+          {organizeResults && organizeResults.length > 0 && (
+            <div className="rounded-lg border bg-muted/30 px-4 py-3 space-y-1">
+              <div className="flex items-center justify-between">
+                <span className="text-sm font-medium flex items-center gap-1.5">
+                  <Sparkles className="h-3.5 w-3.5" />
+                  Auto-organize results
+                </span>
+                <Button variant="ghost" size="sm" onClick={() => setOrganizeResults(null)}>
+                  <X className="h-4 w-4" />
+                </Button>
+              </div>
+              {organizeResults.map((r) => (
+                <p key={r.documentId} className="text-xs text-muted-foreground">
+                  <span className="font-medium text-foreground">{r.documentTitle}</span>
+                  {" → "}
+                  {r.assignedCollections.join(", ")}
+                </p>
+              ))}
+            </div>
+          )}
+
           {/* Document Grid/List */}
           {isLoading ? (
             <div className="flex items-center justify-center py-12">
@@ -566,12 +772,24 @@ export default function LibraryPage() {
                 return (
                   <Card 
                     key={doc.id} 
-                    className="group hover:shadow-md transition-shadow cursor-pointer"
-                    onClick={() => router.push(`/library/${doc.id}`)}
+                    className={cn(
+                      "group hover:shadow-md transition-shadow cursor-pointer",
+                      bulkSelectMode && selectedDocIds.has(doc.id) && "ring-2 ring-primary"
+                    )}
+                    onClick={() => bulkSelectMode ? toggleDocSelection(doc.id) : router.push(`/library/${doc.id}`)}
                   >
                     <CardHeader className="pb-3">
                       <div className="flex items-center justify-between">
                       <div className="flex items-center gap-3 min-w-0 flex-1">
+                        {bulkSelectMode && (
+                          <div className="flex-shrink-0">
+                            {selectedDocIds.has(doc.id) ? (
+                              <CheckSquare className="h-5 w-5 text-primary" />
+                            ) : (
+                              <Square className="h-5 w-5 text-muted-foreground" />
+                            )}
+                          </div>
+                        )}
                         {doc.imagePath ? (
                           <div className="relative h-12 w-12 flex-shrink-0 overflow-hidden rounded-lg border">
                             <Image
@@ -674,6 +892,9 @@ export default function LibraryPage() {
                   onDeleteClick={handleDeleteClick}
                   isPending={isPending}
                   documentToUpdate={documentToUpdate}
+                  bulkSelectMode={bulkSelectMode}
+                  isSelected={selectedDocIds.has(doc.id)}
+                  onToggleSelect={toggleDocSelection}
                 />
               ))}
             </div>
