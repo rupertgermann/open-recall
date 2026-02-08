@@ -1,7 +1,7 @@
 "use server";
 
 import { db } from "@/db";
-import { entities, relationships, entityMentions, documents, tags, documentTags } from "@/db/schema";
+import { entities, relationships, entityMentions, documents, tags, documentTags, documentCollections } from "@/db/schema";
 import { eq, sql, desc, count } from "drizzle-orm";
 
 export type GraphNode = {
@@ -28,24 +28,44 @@ export type GraphData = {
 /**
  * Get the full knowledge graph
  */
-export async function getGraphData(options?: { tags?: string[] }): Promise<GraphData> {
+export async function getGraphData(options?: { tags?: string[]; collectionId?: string }): Promise<GraphData> {
   const requestedTags = Array.from(
     new Set((options?.tags || []).map((t) => t.trim().toLowerCase()).filter(Boolean))
   );
+  const collectionId = options?.collectionId;
 
-  const entityFilterSql = requestedTags.length === 0
+  // Build document-level filter conditions
+  const docFilterParts: ReturnType<typeof sql>[] = [];
+
+  if (requestedTags.length > 0) {
+    docFilterParts.push(
+      sql`${entityMentions.documentId} IN (
+        SELECT ${documentTags.documentId}
+        FROM ${documentTags}
+        INNER JOIN ${tags} ON ${tags.id} = ${documentTags.tagId}
+        WHERE ${tags.name} IN ${requestedTags}
+        GROUP BY ${documentTags.documentId}
+        HAVING COUNT(DISTINCT ${tags.name}) = ${requestedTags.length}
+      )`
+    );
+  }
+
+  if (collectionId) {
+    docFilterParts.push(
+      sql`${entityMentions.documentId} IN (
+        SELECT ${documentCollections.documentId}
+        FROM ${documentCollections}
+        WHERE ${documentCollections.collectionId} = ${collectionId}
+      )`
+    );
+  }
+
+  const entityFilterSql = docFilterParts.length === 0
     ? undefined
     : sql`${entities.id} IN (
         SELECT DISTINCT ${entityMentions.entityId}
         FROM ${entityMentions}
-        WHERE ${entityMentions.documentId} IN (
-          SELECT ${documentTags.documentId}
-          FROM ${documentTags}
-          INNER JOIN ${tags} ON ${tags.id} = ${documentTags.tagId}
-          WHERE ${tags.name} IN ${requestedTags}
-          GROUP BY ${documentTags.documentId}
-          HAVING COUNT(DISTINCT ${tags.name}) = ${requestedTags.length}
-        )
+        WHERE ${docFilterParts.reduce((a, b) => sql`${a} AND ${b}`)}
       )`;
 
   // Get all entities with mention counts
@@ -74,7 +94,7 @@ export async function getGraphData(options?: { tags?: string[] }): Promise<Graph
     })
     .from(relationships);
 
-  if (requestedTags.length === 0) {
+  if (docFilterParts.length === 0) {
     const connectedIds = new Set<string>();
     for (const l of allRelationships) {
       connectedIds.add(l.source);

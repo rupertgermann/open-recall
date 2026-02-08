@@ -4,11 +4,12 @@ import { useState, useCallback, useMemo, useEffect, useRef } from "react";
 import dynamic from "next/dynamic";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
-import { Search, Loader2, RefreshCw, Focus, X, RotateCcw, ZoomIn, ZoomOut, MessageSquare } from "lucide-react";
+import { Search, Loader2, RefreshCw, Focus, X, RotateCcw, ZoomIn, ZoomOut, MessageSquare, FolderOpen, Library } from "lucide-react";
 import { ChatAboutButton } from "@/app/library/chat-about-button";
 import { RelatedChats } from "@/components/related-chats";
 import { getGraphData, getDocumentGraph, getEntityDetails, type GraphData, type GraphNode } from "@/actions/graph";
 import { getAllTags } from "@/actions/documents";
+import { getCollections, type CollectionWithCount } from "@/actions/collections";
 import { aiWebSearchForEntity, type WebSearchResult } from "@/actions/websearch";
 import { Header } from "@/components/layout/header";
 import { Button } from "@/components/ui/button";
@@ -99,6 +100,9 @@ export default function GraphPage() {
   const [isWebSearching, setIsWebSearching] = useState(false);
   const [isAddingUrl, setIsAddingUrl] = useState<Record<string, boolean>>({});
   const [filterByEntity, setFilterByEntity] = useState(false);
+  const [hoveredNode, setHoveredNode] = useState<string | null>(null);
+  const [collectionsList, setCollectionsList] = useState<CollectionWithCount[]>([]);
+  const [selectedCollectionId, setSelectedCollectionId] = useState<string | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const [dimensions, setDimensions] = useState({ width: 0, height: 0 });
   const graphRef = useRef<any>(null);
@@ -108,10 +112,11 @@ export default function GraphPage() {
   useEffect(() => {
     (async () => {
       try {
-        const t = await getAllTags();
+        const [t, cols] = await Promise.all([getAllTags(), getCollections()]);
         setAvailableTags(t);
+        setCollectionsList(cols);
       } catch (e) {
-        console.error("Failed to load tags:", e);
+        console.error("Failed to load tags/collections:", e);
       }
     })();
   }, []);
@@ -221,7 +226,7 @@ export default function GraphPage() {
       try {
         const data = focusDocumentId 
           ? await getDocumentGraph(focusDocumentId)
-          : await getGraphData({ tags: selectedTags });
+          : await getGraphData({ tags: selectedTags, collectionId: selectedCollectionId || undefined });
         setGraphData(data);
       } catch (error) {
         console.error("Failed to fetch graph:", error);
@@ -230,7 +235,7 @@ export default function GraphPage() {
       }
     }
     fetchGraph();
-  }, [focusDocumentId, focusEntityId, selectedTags]);
+  }, [focusDocumentId, focusEntityId, selectedTags, selectedCollectionId]);
 
   // Center graph when focused data loads
   useEffect(() => {
@@ -320,7 +325,7 @@ export default function GraphPage() {
     try {
       const data = focusDocumentId
         ? await getDocumentGraph(focusDocumentId)
-        : await getGraphData({ tags: selectedTags });
+        : await getGraphData({ tags: selectedTags, collectionId: selectedCollectionId || undefined });
       setGraphData(data);
     } catch (error) {
       console.error("Failed to refresh graph:", error);
@@ -419,6 +424,19 @@ export default function GraphPage() {
     }
     return max;
   }, [forceGraphData]);
+
+  // Precompute neighbor sets for hover highlighting
+  const hoveredNeighbors = useMemo(() => {
+    if (!hoveredNode) return null;
+    const neighbors = new Set<string>([hoveredNode]);
+    for (const l of filteredData.links) {
+      const sourceId = typeof l.source === "object" ? (l.source as any).id : (l.source as string);
+      const targetId = typeof l.target === "object" ? (l.target as any).id : (l.target as string);
+      if (sourceId === hoveredNode) neighbors.add(targetId);
+      if (targetId === hoveredNode) neighbors.add(sourceId);
+    }
+    return neighbors;
+  }, [hoveredNode, filteredData.links]);
 
   const handleNodeClick = useCallback((node: { id: string; name: string; type: string }) => {
     const graphNode = graphData.nodes.find((n) => n.id === node.id);
@@ -717,6 +735,33 @@ export default function GraphPage() {
                   ))}
                 </div>
 
+                {/* Collection Filter */}
+                {collectionsList.length > 0 && (
+                  <div className="flex gap-1 flex-wrap items-center border-l pl-2 ml-1">
+                    <Library className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+                    <Button
+                      variant={selectedCollectionId === null ? "secondary" : "outline"}
+                      size="sm"
+                      onClick={() => setSelectedCollectionId(null)}
+                      className="text-xs h-7"
+                    >
+                      All
+                    </Button>
+                    {collectionsList.map((col) => (
+                      <Button
+                        key={col.id}
+                        variant={selectedCollectionId === col.id ? "secondary" : "outline"}
+                        size="sm"
+                        onClick={() => setSelectedCollectionId(selectedCollectionId === col.id ? null : col.id)}
+                        className="text-xs h-7 gap-1"
+                      >
+                        <FolderOpen className="h-3 w-3" />
+                        {col.name}
+                      </Button>
+                    ))}
+                  </div>
+                )}
+
                 {/* Stats */}
                 <div className="flex items-center gap-2 text-sm text-muted-foreground border-l pl-2 ml-1">
                   <span className="whitespace-nowrap"><span className="font-medium text-foreground">{filteredData.nodes.length}</span> entities</span>
@@ -756,8 +801,32 @@ export default function GraphPage() {
                   nodeLabel="name"
                   nodeColor={(node) => typeColors[(node as any).type || "concept"] || "#888"}
                   nodeVal={(node) => (node as any).val || 5}
-                  linkColor={() => "#888"}
-                  linkWidth={1}
+                  linkColor={(link) => {
+                    if (!hoveredNode) return "rgba(136,136,136,0.3)";
+                    const sourceId = typeof link.source === "object" ? (link.source as any).id : link.source;
+                    const targetId = typeof link.target === "object" ? (link.target as any).id : link.target;
+                    if (sourceId === hoveredNode || targetId === hoveredNode) {
+                      const neighborId = sourceId === hoveredNode ? targetId : sourceId;
+                      const neighborNode = forceGraphData.nodes.find((n: any) => n.id === neighborId);
+                      return typeColors[(neighborNode as any)?.type || "concept"] || "#888";
+                    }
+                    return "rgba(136,136,136,0.06)";
+                  }}
+                  linkWidth={(link) => {
+                    if (!hoveredNode) return 1;
+                    const sourceId = typeof link.source === "object" ? (link.source as any).id : link.source;
+                    const targetId = typeof link.target === "object" ? (link.target as any).id : link.target;
+                    return (sourceId === hoveredNode || targetId === hoveredNode) ? 2.5 : 0.3;
+                  }}
+                  linkDirectionalParticles={(link) => {
+                    if (!hoveredNode) return 0;
+                    const sourceId = typeof link.source === "object" ? (link.source as any).id : link.source;
+                    const targetId = typeof link.target === "object" ? (link.target as any).id : link.target;
+                    return (sourceId === hoveredNode || targetId === hoveredNode) ? 3 : 0;
+                  }}
+                  linkDirectionalParticleWidth={2}
+                  linkDirectionalParticleSpeed={0.006}
+                  onNodeHover={(node) => setHoveredNode(node ? (node as any).id : null)}
                   onNodeClick={(node) => handleNodeClick(node as any)}
                   onZoomEnd={handleZoomEnd}
                   nodeCanvasObjectMode={() => "replace"}
@@ -810,6 +879,14 @@ export default function GraphPage() {
                       }
                     }
                     
+                    // Dim non-neighbor nodes when hovering
+                    const nodeId = (node as any).id as string;
+                    const isDimmed = hoveredNeighbors && !hoveredNeighbors.has(nodeId);
+                    if (isDimmed) {
+                      ctx.save();
+                      ctx.globalAlpha = 0.15;
+                    }
+
                     ctx.beginPath();
                     ctx.arc(node.x || 0, node.y || 0, r, 0, 2 * Math.PI, false);
                     ctx.fillStyle = typeColors[(node as any).type || "concept"] || "#888";
@@ -868,6 +945,10 @@ export default function GraphPage() {
                         const yOffset = r + fontSize + (i * fontSize * 1.2);
                         ctx.fillText(line, node.x || 0, (node.y || 0) + yOffset);
                       });
+                      ctx.restore();
+                    }
+
+                    if (isDimmed) {
                       ctx.restore();
                     }
                   }}

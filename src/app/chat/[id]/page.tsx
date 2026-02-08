@@ -22,6 +22,16 @@ import {
   PromptInputTextarea,
 } from "@/components/ai-elements/prompt-input";
 import { Button } from "@/components/ui/button";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { Loader2, MessageSquareIcon, Trash2, ArrowLeft, Lightbulb } from "lucide-react";
 import Link from "next/link";
 import { getDocumentStarterPrompts, getEntityStarterPrompts, type StarterPrompt } from "@/lib/chat/starter-prompts";
@@ -142,8 +152,11 @@ export default function ChatThreadPage() {
     setText("");
   };
 
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+
   const handleDelete = async () => {
     await fetch(`/api/chats/${threadId}`, { method: "DELETE" });
+    setShowDeleteConfirm(false);
     router.push("/chat");
   };
 
@@ -193,7 +206,7 @@ export default function ChatThreadPage() {
             <h1 className="text-2xl font-bold">{loaded?.thread.title ?? "Chat"}</h1>
             <p className="text-sm text-muted-foreground">Saved conversation</p>
           </div>
-          <Button variant="outline" size="sm" onClick={handleDelete}>
+          <Button variant="outline" size="sm" onClick={() => setShowDeleteConfirm(true)}>
             <Trash2 className="h-4 w-4 mr-2" />
             Delete
           </Button>
@@ -284,6 +297,29 @@ export default function ChatThreadPage() {
             </PromptInput>
           </div>
         )}
+        {/* Delete Chat Confirm Dialog */}
+        <AlertDialog open={showDeleteConfirm} onOpenChange={setShowDeleteConfirm}>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>Delete chat?</AlertDialogTitle>
+              <AlertDialogDescription>
+                This will permanently delete this chat thread and all its messages.
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel>Cancel</AlertDialogCancel>
+              <AlertDialogAction
+                onClick={(e) => {
+                  e.preventDefault();
+                  handleDelete();
+                }}
+                className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              >
+                Delete
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
       </main>
     </div>
   );

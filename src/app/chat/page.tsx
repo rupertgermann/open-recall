@@ -5,6 +5,16 @@ import { useChat } from "@ai-sdk/react";
 import { DefaultChatTransport } from "ai";
 import Link from "next/link";
 import { Loader2, MessageSquareIcon, Plus, Trash2, Filter, Search } from "lucide-react";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import type { ChatUIMessage, ChatMessageMetadata } from "@/lib/chat/types";
 import { ChatSources } from "@/components/chat/chat-sources";
 import { Header } from "@/components/layout/header";
@@ -263,13 +273,17 @@ export default function ChatPage() {
     setMessages([]);
   };
 
-  const deleteThread = async (id: string) => {
-    await fetch(`/api/chats/${id}`, { method: "DELETE" });
-    const nextThreads = threads.filter((t) => t.id !== id);
+  const [threadToDelete, setThreadToDelete] = useState<string | null>(null);
+
+  const confirmDeleteThread = async () => {
+    if (!threadToDelete) return;
+    await fetch(`/api/chats/${threadToDelete}`, { method: "DELETE" });
+    const nextThreads = threads.filter((t) => t.id !== threadToDelete);
     setThreads(nextThreads);
-    if (selectedThreadId === id) {
+    if (selectedThreadId === threadToDelete) {
       setSelectedThreadId(nextThreads[0]?.id ?? null);
     }
+    setThreadToDelete(null);
   };
 
   return (
@@ -394,7 +408,7 @@ export default function ChatPage() {
                         <Button
                           size="icon-sm"
                           variant="ghost"
-                          onClick={() => void deleteThread(t.id)}
+                          onClick={() => setThreadToDelete(t.id)}
                           aria-label="Delete"
                         >
                           <Trash2 className="h-4 w-4" />
@@ -473,6 +487,29 @@ export default function ChatPage() {
             </PromptInput>
           </section>
         </div>
+        {/* Delete Thread Confirm Dialog */}
+        <AlertDialog open={!!threadToDelete} onOpenChange={(open) => !open && setThreadToDelete(null)}>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>Delete chat?</AlertDialogTitle>
+              <AlertDialogDescription>
+                This will permanently delete this chat thread and all its messages.
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel>Cancel</AlertDialogCancel>
+              <AlertDialogAction
+                onClick={(e) => {
+                  e.preventDefault();
+                  confirmDeleteThread();
+                }}
+                className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              >
+                Delete
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
       </main>
     </div>
   );
