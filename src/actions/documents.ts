@@ -1,7 +1,7 @@
 "use server";
 
 import { db } from "@/db";
-import { documents, chunks, entities, entityMentions, relationships, tags, documentTags } from "@/db/schema";
+import { documents, chunks, entities, entityMentions, relationships, tags, documentTags, documentCollections } from "@/db/schema";
 import { eq, desc, like, or, sql, count, inArray } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { generateTagsWithDBConfig } from "@/lib/ai";
@@ -26,10 +26,11 @@ export type DocumentWithStats = {
 export async function getDocuments(options?: {
   search?: string;
   type?: string;
+  collectionId?: string;
   limit?: number;
   offset?: number;
 }): Promise<DocumentWithStats[]> {
-  const { search, type, limit = 50, offset = 0 } = options || {};
+  const { search, type, collectionId, limit = 50, offset = 0 } = options || {};
 
   // Build where conditions
   const conditions = [];
@@ -42,6 +43,15 @@ export async function getDocuments(options?: {
         like(documents.title, `%${search}%`),
         like(documents.summary, `%${search}%`)
       )
+    );
+  }
+
+  if (collectionId) {
+    conditions.push(
+      sql`${documents.id} IN (
+        SELECT document_id FROM document_collections
+        WHERE collection_id = ${collectionId}
+      )`
     );
   }
 

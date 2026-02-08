@@ -3,7 +3,7 @@
 import { useState, useEffect, useTransition } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { FileText, Video, Globe, Search, MoreVertical, Trash2, ExternalLink, Loader2, RefreshCw, X, Grid, List } from "lucide-react";
+import { FileText, Video, Globe, Search, MoreVertical, Trash2, ExternalLink, Loader2, RefreshCw, X, Grid, List, FolderOpen, Plus, Pencil, Library } from "lucide-react";
 import Image from "next/image";
 import { Header } from "@/components/layout/header";
 import { Button } from "@/components/ui/button";
@@ -30,6 +30,8 @@ import {
 } from "@/components/ui/alert-dialog";
 import { useToast } from "@/hooks/use-toast";
 import { getDocuments, deleteDocument, updateDocumentFromSource, type DocumentWithStats } from "@/actions/documents";
+import { getCollections, createCollection, updateCollection, deleteCollection, type CollectionWithCount } from "@/actions/collections";
+import { cn } from "@/lib/utils";
 
 const typeIcons = {
   article: Globe,
@@ -173,6 +175,15 @@ export default function LibraryPage() {
   const [offset, setOffset] = useState(0);
   const [hasMore, setHasMore] = useState(true);
 
+  // Collection state
+  const [collectionsList, setCollectionsList] = useState<CollectionWithCount[]>([]);
+  const [selectedCollectionId, setSelectedCollectionId] = useState<string | null>(null);
+  const [collectionDialogOpen, setCollectionDialogOpen] = useState(false);
+  const [collectionToEdit, setCollectionToEdit] = useState<CollectionWithCount | null>(null);
+  const [collectionToDelete, setCollectionToDelete] = useState<string | null>(null);
+  const [collectionName, setCollectionName] = useState("");
+  const [collectionDescription, setCollectionDescription] = useState("");
+
   // Load view mode from localStorage on mount
   useEffect(() => {
     const savedViewMode = localStorage.getItem("library-view-mode");
@@ -185,6 +196,92 @@ export default function LibraryPage() {
   useEffect(() => {
     localStorage.setItem("library-view-mode", viewMode);
   }, [viewMode]);
+
+  // Fetch collections on mount
+  useEffect(() => {
+    async function fetchCollections() {
+      try {
+        const cols = await getCollections();
+        setCollectionsList(cols);
+      } catch (error) {
+        console.error("Failed to fetch collections:", error);
+      }
+    }
+    fetchCollections();
+  }, []);
+
+  const refreshCollections = async () => {
+    try {
+      const cols = await getCollections();
+      setCollectionsList(cols);
+    } catch (error) {
+      console.error("Failed to refresh collections:", error);
+    }
+  };
+
+  const handleCreateOrUpdateCollection = async () => {
+    const name = collectionName.trim();
+    if (!name) return;
+
+    try {
+      if (collectionToEdit) {
+        await updateCollection(collectionToEdit.id, {
+          name,
+          description: collectionDescription.trim() || undefined,
+        });
+        toast({ title: "Collection updated" });
+      } else {
+        const created = await createCollection({
+          name,
+          description: collectionDescription.trim() || undefined,
+        });
+        setSelectedCollectionId(created.id);
+        toast({ title: "Collection created" });
+      }
+      await refreshCollections();
+    } catch (error) {
+      toast({
+        title: collectionToEdit ? "Update failed" : "Creation failed",
+        description: error instanceof Error ? error.message : "Unknown error",
+        variant: "destructive",
+      });
+    } finally {
+      setCollectionDialogOpen(false);
+      setCollectionToEdit(null);
+      setCollectionName("");
+      setCollectionDescription("");
+    }
+  };
+
+  const handleDeleteCollection = async () => {
+    if (!collectionToDelete) return;
+    try {
+      await deleteCollection(collectionToDelete);
+      if (selectedCollectionId === collectionToDelete) {
+        setSelectedCollectionId(null);
+      }
+      await refreshCollections();
+      toast({ title: "Collection deleted" });
+    } catch (error) {
+      toast({ title: "Delete failed", variant: "destructive" });
+    } finally {
+      setCollectionToDelete(null);
+    }
+  };
+
+  const openEditDialog = (col: CollectionWithCount) => {
+    setCollectionToEdit(col);
+    setCollectionName(col.name);
+    setCollectionDescription(col.description || "");
+    setCollectionDialogOpen(true);
+  };
+
+  const openCreateDialog = () => {
+    setCollectionToEdit(null);
+    setCollectionName("");
+    setCollectionDescription("");
+    setCollectionDialogOpen(true);
+  };
 
   // Debounce search
   useEffect(() => {
@@ -202,6 +299,7 @@ export default function LibraryPage() {
         const docs = await getDocuments({
           search: debouncedSearch || undefined,
           type: filterType || undefined,
+          collectionId: selectedCollectionId || undefined,
           limit: pageSize,
           offset: 0,
         });
@@ -215,7 +313,7 @@ export default function LibraryPage() {
       }
     }
     fetchDocuments();
-  }, [debouncedSearch, filterType, pageSize]);
+  }, [debouncedSearch, filterType, selectedCollectionId, pageSize]);
 
   const loadMore = async () => {
     if (isLoading || !hasMore) return;
@@ -224,6 +322,7 @@ export default function LibraryPage() {
       const more = await getDocuments({
         search: debouncedSearch || undefined,
         type: filterType || undefined,
+        collectionId: selectedCollectionId || undefined,
         limit: pageSize,
         offset,
       });
@@ -377,6 +476,82 @@ export default function LibraryPage() {
             </div>
           </div>
 
+          {/* Collection Filter */}
+          {collectionsList.length > 0 && (
+            <div className="flex items-center gap-2 flex-wrap">
+              <Library className="h-4 w-4 text-muted-foreground shrink-0" />
+              <Button
+                variant={selectedCollectionId === null ? "secondary" : "outline"}
+                size="sm"
+                onClick={() => setSelectedCollectionId(null)}
+              >
+                All
+              </Button>
+              {collectionsList.map((col) => (
+                <div key={col.id} className="relative group">
+                  <Button
+                    variant={selectedCollectionId === col.id ? "secondary" : "outline"}
+                    size="sm"
+                    onClick={() => setSelectedCollectionId(selectedCollectionId === col.id ? null : col.id)}
+                    className="gap-1.5 pr-2"
+                  >
+                    <FolderOpen className="h-3.5 w-3.5" />
+                    {col.name}
+                    <Badge variant="secondary" className="ml-1 h-5 px-1.5 text-[10px]">
+                      {col.documentCount}
+                    </Badge>
+                  </Button>
+                  <DropdownMenu>
+                    <DropdownMenuTrigger asChild>
+                      <button
+                        className="absolute -top-1 -right-1 h-4 w-4 rounded-full bg-muted border flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
+                        onClick={(e) => e.stopPropagation()}
+                      >
+                        <MoreVertical className="h-2.5 w-2.5" />
+                      </button>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="end">
+                      <DropdownMenuItem onClick={() => openEditDialog(col)}>
+                        <Pencil className="h-4 w-4 mr-2" />
+                        Rename
+                      </DropdownMenuItem>
+                      <DropdownMenuItem
+                        className="text-destructive"
+                        onClick={() => setCollectionToDelete(col.id)}
+                      >
+                        <Trash2 className="h-4 w-4 mr-2" />
+                        Delete
+                      </DropdownMenuItem>
+                    </DropdownMenuContent>
+                  </DropdownMenu>
+                </div>
+              ))}
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={openCreateDialog}
+                className="gap-1.5 text-muted-foreground"
+              >
+                <Plus className="h-3.5 w-3.5" />
+                New Collection
+              </Button>
+            </div>
+          )}
+
+          {collectionsList.length === 0 && (
+            <div className="flex items-center gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={openCreateDialog}
+                className="gap-1.5"
+              >
+                <FolderOpen className="h-3.5 w-3.5" />
+                Create your first collection
+              </Button>
+            </div>
+          )}
+
           {/* Document Grid/List */}
           {isLoading ? (
             <div className="flex items-center justify-center py-12">
@@ -522,6 +697,7 @@ export default function LibraryPage() {
           )}
         </div>
 
+        {/* Delete Document Dialog */}
         <AlertDialog open={!!documentToDelete} onOpenChange={(open) => !open && setDocumentToDelete(null)}>
           <AlertDialogContent>
             <AlertDialogHeader>
@@ -542,6 +718,80 @@ export default function LibraryPage() {
                 className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
               >
                 {isPending ? "Deleting..." : "Delete"}
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
+
+        {/* Create/Edit Collection Dialog */}
+        <AlertDialog open={collectionDialogOpen} onOpenChange={(open) => {
+          if (!open) {
+            setCollectionDialogOpen(false);
+            setCollectionToEdit(null);
+            setCollectionName("");
+            setCollectionDescription("");
+          }
+        }}>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>
+                {collectionToEdit ? "Rename Collection" : "New Collection"}
+              </AlertDialogTitle>
+              <AlertDialogDescription>
+                {collectionToEdit
+                  ? "Update the collection name and description."
+                  : "Create a new collection to organize your documents."}
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <div className="space-y-3 py-2">
+              <Input
+                placeholder="Collection name"
+                value={collectionName}
+                onChange={(e) => setCollectionName(e.target.value)}
+                onKeyDown={(e) => e.key === "Enter" && handleCreateOrUpdateCollection()}
+                autoFocus
+              />
+              <Input
+                placeholder="Description (optional)"
+                value={collectionDescription}
+                onChange={(e) => setCollectionDescription(e.target.value)}
+                onKeyDown={(e) => e.key === "Enter" && handleCreateOrUpdateCollection()}
+              />
+            </div>
+            <AlertDialogFooter>
+              <AlertDialogCancel>Cancel</AlertDialogCancel>
+              <AlertDialogAction
+                onClick={(e) => {
+                  e.preventDefault();
+                  handleCreateOrUpdateCollection();
+                }}
+                disabled={!collectionName.trim()}
+              >
+                {collectionToEdit ? "Save" : "Create"}
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
+
+        {/* Delete Collection Dialog */}
+        <AlertDialog open={!!collectionToDelete} onOpenChange={(open) => !open && setCollectionToDelete(null)}>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>Delete collection?</AlertDialogTitle>
+              <AlertDialogDescription>
+                This will delete the collection. Documents in this collection will not be deleted.
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel>Cancel</AlertDialogCancel>
+              <AlertDialogAction
+                onClick={(e) => {
+                  e.preventDefault();
+                  handleDeleteCollection();
+                }}
+                className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              >
+                Delete
               </AlertDialogAction>
             </AlertDialogFooter>
           </AlertDialogContent>

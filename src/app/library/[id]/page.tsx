@@ -15,6 +15,7 @@ import { RelatedChats } from "@/components/related-chats";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { ChatAboutButton } from "@/app/library/chat-about-button";
+import { CollectionEditor } from "./collection-editor";
 
 const typeIcons = {
   article: Globe,
@@ -201,6 +202,16 @@ export default async function DocumentDetailPage({
               {document.imagePath && (
                 <DocumentImage imagePath={document.imagePath} title={document.title} />
               )}
+
+              {/* Collections */}
+              <Card>
+                <CardHeader>
+                  <CardTitle className="text-sm">Collections</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <CollectionEditor documentId={document.id} />
+                </CardContent>
+              </Card>
 
               {/* Related Chats */}
               <RelatedChats documentId={document.id} />

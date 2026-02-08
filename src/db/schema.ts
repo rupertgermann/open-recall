@@ -255,6 +255,42 @@ export const srsItems = pgTable(
 );
 
 // ============================================================================
+// COLLECTIONS - Document groupings / libraries
+// ============================================================================
+export const collections = pgTable(
+  "collections",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    name: text("name").notNull(),
+    description: text("description"),
+    color: text("color").default("#6366f1"), // Tailwind indigo-500 default
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    updatedAt: timestamp("updated_at").defaultNow().notNull(),
+  },
+  (table) => ({
+    nameIdx: uniqueIndex("collections_name_idx").on(table.name),
+  })
+);
+
+export const documentCollections = pgTable(
+  "document_collections",
+  {
+    documentId: uuid("document_id")
+      .notNull()
+      .references(() => documents.id, { onDelete: "cascade" }),
+    collectionId: uuid("collection_id")
+      .notNull()
+      .references(() => collections.id, { onDelete: "cascade" }),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+  },
+  (table) => ({
+    pk: primaryKey({ columns: [table.documentId, table.collectionId] }),
+    documentIdx: index("document_collections_document_idx").on(table.documentId),
+    collectionIdx: index("document_collections_collection_idx").on(table.collectionId),
+  })
+);
+
+// ============================================================================
 // SETTINGS - User preferences
 // ============================================================================
 export const settings = pgTable("settings", {
@@ -316,6 +352,7 @@ export const documentsRelations = relations(documents, ({ many }) => ({
   entityMentions: many(entityMentions),
   srsItems: many(srsItems),
   documentTags: many(documentTags),
+  documentCollections: many(documentCollections),
 }));
 
 export const tagsRelations = relations(tags, ({ many }) => ({
@@ -386,6 +423,21 @@ export const srsItemsRelations = relations(srsItems, ({ one }) => ({
   }),
 }));
 
+export const collectionsRelations = relations(collections, ({ many }) => ({
+  documentCollections: many(documentCollections),
+}));
+
+export const documentCollectionsRelations = relations(documentCollections, ({ one }) => ({
+  document: one(documents, {
+    fields: [documentCollections.documentId],
+    references: [documents.id],
+  }),
+  collection: one(collections, {
+    fields: [documentCollections.collectionId],
+    references: [collections.id],
+  }),
+}));
+
 export const chatThreadsRelations = relations(chatThreads, ({ many, one }) => ({
   messages: many(chatMessages),
   entity: one(entities, {
@@ -434,3 +486,8 @@ export type NewChatMessage = typeof chatMessages.$inferInsert;
 
 export type EmbeddingCache = typeof embeddingCache.$inferSelect;
 export type NewEmbeddingCache = typeof embeddingCache.$inferInsert;
+
+export type Collection = typeof collections.$inferSelect;
+export type NewCollection = typeof collections.$inferInsert;
+export type DocumentCollection = typeof documentCollections.$inferSelect;
+export type NewDocumentCollection = typeof documentCollections.$inferInsert;
