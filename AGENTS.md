@@ -4,7 +4,7 @@ Guidance for coding agents working in this repository.
 Keep edits minimal and aligned with existing patterns.
 
 ## Quick context
-- Framework: Next.js App Router (Next 16).
+- Framework: Next.js 16 App Router.
 - Language: TypeScript (strict mode).
 - UI: TailwindCSS + Shadcn UI components.
 - Data: Drizzle ORM with PostgreSQL + pgvector + Apache AGE.
@@ -143,7 +143,7 @@ Keep edits minimal and aligned with existing patterns.
 - Lint a server action: `npx next lint --file src/actions/ingest.ts`.
 
 ## Network/services
-- Local DB runs on Docker; default port mapping `localhost:5432`.
+- Local DB runs on Docker; host port `6432` mapped to container port `5432`.
 - Ollama defaults to `http://localhost:11434/v1`.
 - App runs at `http://localhost:3000`.
 

@@ -7,7 +7,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 Open-recall is a privacy-focused, local-first Personal Knowledge Management system powered by GraphRAG. It uses a hybrid approach combining vector similarity search with knowledge graph traversal to provide intelligent context retrieval.
 
 **Core Technologies:**
-- **Frontend**: Next.js 15 (App Router), TypeScript, Shadcn UI, TailwindCSS
+- **Frontend**: Next.js 16 (App Router), TypeScript, Shadcn UI, TailwindCSS
 - **Database**: PostgreSQL with pgvector (vector embeddings) + Apache AGE (graph queries)
 - **AI**: Vercel AI SDK with flexible provider support (Ollama/LM Studio for local, OpenAI for cloud)
 - **ORM**: Drizzle
@@ -39,9 +39,9 @@ The database requires pgvector and Apache AGE extensions:
 - **pgvector**: Vector similarity search for embeddings
 - **Apache AGE**: Graph database for entity relationships
 - Extensions are initialized via `docker/init-db.sql` on first start
-- Default connection: `postgres://postgres:postgres@localhost:5432/openrecall`
+- Default connection: `postgres://postgres:postgres@localhost:6432/openrecall`
 
-**Important**: When running locally, ensure Docker database is exposed on port 6432 (mapped to 5432 internally) to avoid conflicts. The connection string should use `localhost:5432` which maps to container port 6432.
+**Important**: Docker exposes the database on host port 6432 (mapped to container port 5432) to avoid conflicts with any local PostgreSQL. The local connection string uses `localhost:6432`.
 
 ## Architecture
 
@@ -326,7 +326,7 @@ Content hashing (SHA-256) enables:
 
 ## Recent Changes
 
-- Turbopack enabled for faster dev builds (Next.js 15)
+- Turbopack enabled for faster dev builds (Next.js 16 default bundler)
 - Auto-save settings with debounced updates
 - OpenAI provider support added alongside local providers
 - Starter prompts moved inline after welcome message in chat

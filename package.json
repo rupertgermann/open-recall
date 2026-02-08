@@ -2,6 +2,12 @@
   "name": "open-recall",
   "version": "0.1.0",
   "private": true,
+  "description": "Privacy-focused, local-first Personal Knowledge Management powered by GraphRAG",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/rupertgermann/open-recall.git"
+  },
   "scripts": {
     "dev": "next dev",
     "build": "next build",

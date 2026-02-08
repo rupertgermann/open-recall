@@ -47,3 +47,6 @@ drizzle/
 
 # Generated document images
 public/document-images/
+
+# IDE - Windsurf
+.windsurf/
