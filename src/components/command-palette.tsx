@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback } from "react";
 import { useRouter } from "next/navigation";
-import { FileText, Video, Globe, Network, MessageSquare, Search, Command } from "lucide-react";
+import { FileText, Video, Globe, Network, MessageSquare, Search, Command, Sparkles } from "lucide-react";
 import {
   CommandDialog,
   CommandEmpty,
@@ -181,6 +181,10 @@ export function CommandPalette() {
               <CommandItem onSelect={() => handleSelect("/graph")}>
                 <Network className="h-4 w-4 mr-2" />
                 Knowledge Graph
+              </CommandItem>
+              <CommandItem onSelect={() => handleSelect("/discover")}>
+                <Sparkles className="h-4 w-4 mr-2" />
+                Discover
               </CommandItem>
               <CommandItem onSelect={() => handleSelect("/chat")}>
                 <MessageSquare className="h-4 w-4 mr-2" />

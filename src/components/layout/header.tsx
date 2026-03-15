@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Brain, Plus, MessageSquare, Network, BookOpen, Settings } from "lucide-react";
+import { Brain, Plus, MessageSquare, Network, BookOpen, Settings, Sparkles } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { CommandPalette } from "@/components/command-palette";
@@ -10,6 +10,7 @@ import { CommandPalette } from "@/components/command-palette";
 const navItems = [
   { href: "/library", label: "Library", icon: BookOpen },
   { href: "/graph", label: "Graph", icon: Network },
+  { href: "/discover", label: "Discover", icon: Sparkles },
   { href: "/chat", label: "Chat", icon: MessageSquare },
   { href: "/settings", label: "Settings", icon: Settings },
 ];

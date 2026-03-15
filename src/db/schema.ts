@@ -326,6 +326,22 @@ export const projectDocuments = pgTable(
 );
 
 // ============================================================================
+// DISCOVER_INSIGHTS - Persisted AI-generated insights
+// ============================================================================
+export const discoverInsights = pgTable(
+  "discover_insights",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    entityIds: jsonb("entity_ids").notNull(), // string[] of entity IDs
+    insight: text("insight").notNull(),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+  },
+  (table) => ({
+    createdAtIdx: index("discover_insights_created_at_idx").on(table.createdAt),
+  })
+);
+
+// ============================================================================
 // SETTINGS - User preferences
 // ============================================================================
 export const settings = pgTable("settings", {
@@ -553,3 +569,6 @@ export type Project = typeof projects.$inferSelect;
 export type NewProject = typeof projects.$inferInsert;
 export type ProjectDocument = typeof projectDocuments.$inferSelect;
 export type NewProjectDocument = typeof projectDocuments.$inferInsert;
+
+export type DiscoverInsight = typeof discoverInsights.$inferSelect;
+export type NewDiscoverInsight = typeof discoverInsights.$inferInsert;

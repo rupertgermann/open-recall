@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(wc:*)",
+      "Bash(npx *:*)",
+      "Bash(npm *:*)",
+      "Bash(grep *:*)",
+      "Bash(npx drizzle-kit:*)"
+    ]
+  }
+}
