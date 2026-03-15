@@ -139,6 +139,10 @@ npm run db:push
 
 ```bash
 npm run dev
+
+# or with custom port
+npm run dev -- --port 3003
+
 ```
 
 Open [http://localhost:3000](http://localhost:3000) in your browser.

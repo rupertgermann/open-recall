@@ -88,7 +88,7 @@ function RelationLabel({ label }: { label: string }) {
   return (
     <Tooltip>
       <TooltipTrigger asChild>
-        <span className="text-[10px] text-muted-foreground truncate max-w-[100px] cursor-default">
+        <span className="text-[10px] text-muted-foreground max-w-[100px] cursor-default">
           {label}
         </span>
       </TooltipTrigger>
@@ -154,7 +154,7 @@ function InsightDisplay({
         variant="outline"
         size="sm"
         onClick={generate}
-        className="gap-1.5 text-xs"
+        className="gap-1.5 text-xs shrink-0"
       >
         <Sparkles className="h-3 w-3" />
         Generate Insight
@@ -307,7 +307,7 @@ function HiddenConnectionCard({
   return (
     <Card className="group hover:shadow-md transition-all duration-200 hover:border-primary/20">
       <CardContent className="pt-5 pb-4">
-        <div className="flex items-center gap-3 mb-3 flex-wrap">
+        <div className="flex items-center mb-3 w-full justify-between">
           <EntityLink
             id={connection.entityA.id}
             name={connection.entityA.name}
@@ -324,10 +324,10 @@ function HiddenConnectionCard({
             <TooltipTrigger asChild>
               <Link
                 href={`/graph?entity=${connection.bridge.id}`}
-                className="flex flex-col items-center shrink-0 px-3 py-1.5 rounded-md bg-primary/5 border border-primary/10 hover:bg-primary/10 transition-colors"
+                className="flex items-center gap-1.5 shrink-0 px-3 py-1.5 rounded-md bg-primary/5 border border-primary/10 hover:bg-primary/10 transition-colors whitespace-nowrap"
               >
-                <Link2 className="h-3 w-3 text-primary mb-0.5" />
-                <span className="font-medium text-xs text-primary truncate max-w-[100px]">
+                <Link2 className="h-3 w-3 text-primary shrink-0" />
+                <span className="font-medium text-xs text-primary truncate max-w-[100px] min-w-0">
                   {connection.bridge.name}
                 </span>
                 <TypeBadge type={connection.bridge.type} />
@@ -364,30 +364,32 @@ function HiddenConnectionCard({
           />
         </div>
 
-        {connection.sourceDocuments.length > 0 && (
-          <div className="flex flex-wrap gap-1 mb-2">
-            {connection.sourceDocuments.slice(0, 3).map((doc) => (
-              <Tooltip key={doc.id}>
-                <TooltipTrigger asChild>
-                  <Link
-                    href={`/library/${doc.id}`}
-                    className="inline-flex items-center gap-1 text-[10px] text-muted-foreground bg-muted/50 rounded px-1.5 py-0.5 hover:bg-muted transition-colors"
-                  >
-                    <FileText className="h-2.5 w-2.5" />
-                    {doc.title.length > 30
-                      ? `${doc.title.slice(0, 30)}...`
-                      : doc.title}
-                  </Link>
-                </TooltipTrigger>
-                <TooltipContent side="bottom">
-                  <p className="text-xs">{doc.title}</p>
-                </TooltipContent>
-              </Tooltip>
-            ))}
-          </div>
-        )}
-
-        <InsightDisplay entityIds={entityIds} savedInsight={savedInsight} />
+        <div className="flex items-center gap-2">
+          {connection.sourceDocuments.length > 0 && (
+            <div className="flex flex-wrap gap-1 flex-1 min-w-0">
+              {connection.sourceDocuments.slice(0, 3).map((doc) => (
+                <Tooltip key={doc.id}>
+                  <TooltipTrigger asChild>
+                    <Link
+                      href={`/library/${doc.id}`}
+                      className="inline-flex items-center gap-1 text-[10px] text-muted-foreground bg-muted/50 rounded px-1.5 py-0.5 hover:bg-muted transition-colors"
+                    >
+                      <FileText className="h-2.5 w-2.5" />
+                      {doc.title.length > 30
+                        ? `${doc.title.slice(0, 30)}...`
+                        : doc.title}
+                    </Link>
+                  </TooltipTrigger>
+                  <TooltipContent side="bottom">
+                    <p className="text-xs">{doc.title}</p>
+                  </TooltipContent>
+                </Tooltip>
+              ))}
+            </div>
+          )}
+          {!connection.sourceDocuments.length && <div className="flex-1" />}
+          <InsightDisplay entityIds={entityIds} savedInsight={savedInsight} />
+        </div>
       </CardContent>
     </Card>
   );
