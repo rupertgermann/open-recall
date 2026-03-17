@@ -3,7 +3,7 @@
 import { useState, useEffect, useTransition } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { FileText, Video, Globe, Search, MoreVertical, Trash2, ExternalLink, Loader2, RefreshCw, X, Grid, List, FolderOpen, Plus, Pencil, Library, Sparkles, CheckSquare, Square } from "lucide-react";
+import { FileText, Video, Globe, Search, MoreVertical, Trash2, ExternalLink, Loader2, RefreshCw, X, Grid, List, FolderOpen, FolderMinus, FolderPlus, Plus, Pencil, Library, Sparkles, CheckSquare, Square, Check } from "lucide-react";
 import Image from "next/image";
 import { Header } from "@/components/layout/header";
 import { Button } from "@/components/ui/button";
@@ -30,7 +30,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import { useToast } from "@/hooks/use-toast";
 import { getDocuments, deleteDocument, updateDocumentFromSource, type DocumentWithStats } from "@/actions/documents";
-import { getCollections, createCollection, updateCollection, deleteCollection, bulkAddToCollection, autoOrganizeDocuments, getUnassignedDocumentCount, type CollectionWithCount, type AutoOrganizeResult } from "@/actions/collections";
+import { getCollections, createCollection, updateCollection, deleteCollection, bulkAddToCollection, autoOrganizeDocuments, suggestAutoOrganize, applyAutoOrganizeSuggestions, getUnassignedDocumentCount, removeDocumentFromCollection, type CollectionWithCount, type AutoOrganizeResult, type AutoOrganizeSuggestion } from "@/actions/collections";
 import { cn } from "@/lib/utils";
 
 const typeIcons = {
@@ -48,24 +48,28 @@ const typeColors = {
 };
 
 // Document List Item Component
-function DocumentListItem({ 
-  doc, 
-  onUpdateFromSource, 
-  onDeleteClick, 
-  isPending, 
+function DocumentListItem({
+  doc,
+  onUpdateFromSource,
+  onDeleteClick,
+  onRemoveFromCollection,
+  isPending,
   documentToUpdate,
   bulkSelectMode = false,
   isSelected = false,
   onToggleSelect,
-}: { 
+  selectedCollectionId,
+}: {
   doc: DocumentWithStats;
   onUpdateFromSource: (id: string) => void;
   onDeleteClick: (id: string) => void;
+  onRemoveFromCollection?: (id: string) => void;
   isPending: boolean;
   documentToUpdate: string | null;
   bulkSelectMode?: boolean;
   isSelected?: boolean;
   onToggleSelect?: (id: string) => void;
+  selectedCollectionId?: string | null;
 }) {
   const router = useRouter();
   const Icon = typeIcons[doc.type as keyof typeof typeIcons] || FileText;
@@ -162,6 +166,15 @@ function DocumentListItem({
                 Update from source
               </DropdownMenuItem>
             )}
+            {selectedCollectionId && onRemoveFromCollection && (
+              <DropdownMenuItem
+                onClick={() => onRemoveFromCollection(doc.id)}
+                disabled={isPending}
+              >
+                <FolderMinus className="h-4 w-4 mr-2" />
+                Remove from collection
+              </DropdownMenuItem>
+            )}
             <DropdownMenuItem
               className="text-destructive"
               onClick={() => onDeleteClick(doc.id)}
@@ -208,8 +221,11 @@ export default function LibraryPage() {
 
   // Auto-organize state
   const [isAutoOrganizing, setIsAutoOrganizing] = useState(false);
+  const [isApplyingOrganize, setIsApplyingOrganize] = useState(false);
   const [unassignedCount, setUnassignedCount] = useState(0);
   const [organizeResults, setOrganizeResults] = useState<AutoOrganizeResult[] | null>(null);
+  const [organizeSuggestions, setOrganizeSuggestions] = useState<AutoOrganizeSuggestion[] | null>(null);
+  const [dismissedSuggestions, setDismissedSuggestions] = useState<Set<string>>(new Set());
 
   // Load view mode from localStorage on mount
   useEffect(() => {
@@ -247,7 +263,7 @@ export default function LibraryPage() {
         console.error("Failed to fetch unassigned count:", error);
       }
     }
-    if (collectionsList.length > 0) {
+    {
       fetchUnassigned();
     }
   }, [collectionsList]);
@@ -371,19 +387,20 @@ export default function LibraryPage() {
   const handleAutoOrganize = async () => {
     setIsAutoOrganizing(true);
     setOrganizeResults(null);
+    setOrganizeSuggestions(null);
+    setDismissedSuggestions(new Set());
     try {
-      const results = await autoOrganizeDocuments();
-      setOrganizeResults(results);
-      await refreshCollections();
-      if (results.length > 0) {
+      const suggestions = await suggestAutoOrganize();
+      if (suggestions.length > 0) {
+        setOrganizeSuggestions(suggestions);
         toast({
-          title: "Auto-organize complete",
-          description: `${results.length} document(s) organized into collections.`,
+          title: "Suggestions ready",
+          description: `AI suggested organization for ${suggestions.length} document(s). Review below.`,
         });
       } else {
         toast({
-          title: "No changes",
-          description: "No documents matched any existing collection.",
+          title: "No suggestions",
+          description: "No documents could be matched to any collection.",
         });
       }
     } catch (error) {
@@ -391,6 +408,90 @@ export default function LibraryPage() {
       toast({ title: "Auto-organize failed", variant: "destructive" });
     } finally {
       setIsAutoOrganizing(false);
+    }
+  };
+
+  const handleDismissSuggestion = (documentId: string) => {
+    setDismissedSuggestions((prev) => new Set([...prev, documentId]));
+  };
+
+  const handleApplyAllSuggestions = async () => {
+    if (!organizeSuggestions) return;
+    const activeSuggestions = organizeSuggestions.filter(
+      (s) => !dismissedSuggestions.has(s.documentId)
+    );
+    if (activeSuggestions.length === 0) {
+      setOrganizeSuggestions(null);
+      return;
+    }
+
+    setIsApplyingOrganize(true);
+    try {
+      const toApply = activeSuggestions.map((s) => ({
+        documentId: s.documentId,
+        existingCollectionIds: s.existingCollections.map((c) => c.collectionId),
+        newCollections: s.newCollections.map((c) => ({
+          name: c.suggestedName,
+          description: c.suggestedDescription,
+        })),
+      }));
+
+      const results = await applyAutoOrganizeSuggestions(toApply);
+      setOrganizeResults(results);
+      setOrganizeSuggestions(null);
+      await refreshCollections();
+
+      const unassigned = await getUnassignedDocumentCount();
+      setUnassignedCount(unassigned);
+
+      if (results.length > 0) {
+        toast({
+          title: "Auto-organize complete",
+          description: `${results.length} document(s) organized into collections.`,
+        });
+      }
+    } catch (error) {
+      console.error("Apply organize failed:", error);
+      toast({ title: "Failed to apply suggestions", variant: "destructive" });
+    } finally {
+      setIsApplyingOrganize(false);
+    }
+  };
+
+  const handleApplySingleSuggestion = async (suggestion: AutoOrganizeSuggestion) => {
+    setIsApplyingOrganize(true);
+    try {
+      const results = await applyAutoOrganizeSuggestions([{
+        documentId: suggestion.documentId,
+        existingCollectionIds: suggestion.existingCollections.map((c) => c.collectionId),
+        newCollections: suggestion.newCollections.map((c) => ({
+          name: c.suggestedName,
+          description: c.suggestedDescription,
+        })),
+      }]);
+
+      // Remove the applied suggestion
+      setOrganizeSuggestions((prev) =>
+        prev ? prev.filter((s) => s.documentId !== suggestion.documentId) : null
+      );
+
+      // Add to results
+      setOrganizeResults((prev) => prev ? [...prev, ...results] : results);
+      await refreshCollections();
+
+      const unassigned = await getUnassignedDocumentCount();
+      setUnassignedCount(unassigned);
+
+      if (results.length > 0) {
+        toast({
+          title: "Document organized",
+          description: `"${results[0].documentTitle}" added to ${results[0].assignedCollections.join(", ")}.`,
+        });
+      }
+    } catch (error) {
+      toast({ title: "Failed to apply suggestion", variant: "destructive" });
+    } finally {
+      setIsApplyingOrganize(false);
     }
   };
 
@@ -472,6 +573,25 @@ export default function LibraryPage() {
 
   const handleDeleteClick = (id: string) => {
     setDocumentToDelete(id);
+  };
+
+  const handleRemoveFromCollection = async (documentId: string) => {
+    if (!selectedCollectionId) return;
+    try {
+      await removeDocumentFromCollection(documentId, selectedCollectionId);
+      setDocuments((prev) => prev.filter((d) => d.id !== documentId));
+      await refreshCollections();
+      toast({
+        title: "Removed from collection",
+        description: "The document has been removed from this collection.",
+      });
+    } catch (error) {
+      toast({
+        title: "Error",
+        description: "Failed to remove document from collection.",
+        variant: "destructive",
+      });
+    }
   };
 
   const confirmDelete = async () => {
@@ -713,7 +833,7 @@ export default function LibraryPage() {
           )}
 
           {/* Auto-organize */}
-          {!bulkSelectMode && collectionsList.length > 0 && unassignedCount > 0 && (
+          {!bulkSelectMode && unassignedCount > 0 && !organizeSuggestions && (
             <div className="flex items-center gap-3 rounded-lg border border-dashed px-4 py-2">
               <Sparkles className="h-4 w-4 text-muted-foreground" />
               <span className="text-sm text-muted-foreground">
@@ -731,8 +851,105 @@ export default function LibraryPage() {
                 ) : (
                   <Sparkles className="h-4 w-4" />
                 )}
-                {isAutoOrganizing ? "Organizing..." : "Auto-organize with AI"}
+                {isAutoOrganizing ? "Analyzing..." : "Auto-organize with AI"}
               </Button>
+            </div>
+          )}
+
+          {/* Auto-organize suggestions */}
+          {organizeSuggestions && organizeSuggestions.length > 0 && (
+            <div className="rounded-lg border bg-muted/30 px-4 py-3 space-y-3">
+              <div className="flex items-center justify-between">
+                <span className="text-sm font-medium flex items-center gap-1.5">
+                  <Sparkles className="h-3.5 w-3.5" />
+                  AI Organization Suggestions
+                </span>
+                <div className="flex items-center gap-2">
+                  <Button
+                    variant="default"
+                    size="sm"
+                    className="gap-1.5"
+                    onClick={handleApplyAllSuggestions}
+                    disabled={isApplyingOrganize || organizeSuggestions.filter((s) => !dismissedSuggestions.has(s.documentId)).length === 0}
+                  >
+                    {isApplyingOrganize ? (
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    ) : (
+                      <Check className="h-3.5 w-3.5" />
+                    )}
+                    Apply all
+                  </Button>
+                  <Button variant="ghost" size="sm" onClick={() => setOrganizeSuggestions(null)}>
+                    <X className="h-4 w-4" />
+                  </Button>
+                </div>
+              </div>
+              <div className="space-y-2">
+                {organizeSuggestions
+                  .filter((s) => !dismissedSuggestions.has(s.documentId))
+                  .map((s) => (
+                  <div
+                    key={s.documentId}
+                    className="flex items-start gap-3 rounded-md border bg-background px-3 py-2"
+                  >
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-medium truncate">{s.documentTitle}</p>
+                      <div className="flex flex-wrap gap-1.5 mt-1">
+                        {s.existingCollections.map((c) => (
+                          <Badge
+                            key={c.collectionId}
+                            variant="secondary"
+                            className="gap-1 text-xs"
+                            title={c.reason}
+                          >
+                            <FolderOpen className="h-3 w-3" />
+                            {c.collectionName}
+                          </Badge>
+                        ))}
+                        {s.newCollections.map((c, i) => (
+                          <Badge
+                            key={`new-${i}`}
+                            variant="outline"
+                            className="gap-1 text-xs border-dashed"
+                            title={c.reason}
+                          >
+                            <FolderPlus className="h-3 w-3" />
+                            {c.suggestedName}
+                            <span className="text-[10px] text-muted-foreground">(new)</span>
+                          </Badge>
+                        ))}
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-1 flex-shrink-0">
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="h-7 w-7 p-0"
+                        onClick={() => handleApplySingleSuggestion(s)}
+                        disabled={isApplyingOrganize}
+                        title="Accept suggestion"
+                      >
+                        <Check className="h-3.5 w-3.5" />
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="h-7 w-7 p-0"
+                        onClick={() => handleDismissSuggestion(s.documentId)}
+                        disabled={isApplyingOrganize}
+                        title="Dismiss suggestion"
+                      >
+                        <X className="h-3.5 w-3.5" />
+                      </Button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+              {organizeSuggestions.filter((s) => !dismissedSuggestions.has(s.documentId)).length === 0 && (
+                <p className="text-xs text-muted-foreground text-center py-2">
+                  All suggestions dismissed.
+                </p>
+              )}
             </div>
           )}
 
@@ -751,7 +968,7 @@ export default function LibraryPage() {
               {organizeResults.map((r) => (
                 <p key={r.documentId} className="text-xs text-muted-foreground">
                   <span className="font-medium text-foreground">{r.documentTitle}</span>
-                  {" → "}
+                  {" \u2192 "}
                   {r.assignedCollections.join(", ")}
                 </p>
               ))}
@@ -839,6 +1056,15 @@ export default function LibraryPage() {
                                 Update from source
                               </DropdownMenuItem>
                             )}
+                            {selectedCollectionId && (
+                              <DropdownMenuItem
+                                onClick={() => handleRemoveFromCollection(doc.id)}
+                                disabled={isPending}
+                              >
+                                <FolderMinus className="h-4 w-4 mr-2" />
+                                Remove from collection
+                              </DropdownMenuItem>
+                            )}
                             <DropdownMenuItem
                               className="text-destructive"
                               onClick={() => handleDeleteClick(doc.id)}
@@ -885,16 +1111,18 @@ export default function LibraryPage() {
           ) : (
             <div className="space-y-3">
               {documents.map((doc) => (
-                <DocumentListItem 
-                  key={doc.id} 
+                <DocumentListItem
+                  key={doc.id}
                   doc={doc}
                   onUpdateFromSource={handleUpdateFromSource}
                   onDeleteClick={handleDeleteClick}
+                  onRemoveFromCollection={handleRemoveFromCollection}
                   isPending={isPending}
                   documentToUpdate={documentToUpdate}
                   bulkSelectMode={bulkSelectMode}
                   isSelected={selectedDocIds.has(doc.id)}
                   onToggleSelect={toggleDocSelection}
+                  selectedCollectionId={selectedCollectionId}
                 />
               ))}
             </div>

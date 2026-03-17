@@ -238,6 +238,42 @@ export type AutoOrganizeResult = {
   assignedCollections: string[];
 };
 
+export type AutoOrganizeSuggestion = {
+  documentId: string;
+  documentTitle: string;
+  existingCollections: {
+    collectionId: string;
+    collectionName: string;
+    reason: string;
+  }[];
+  newCollections: {
+    suggestedName: string;
+    suggestedDescription: string;
+    reason: string;
+  }[];
+};
+
+const autoOrganizeSuggestionSchema = z.object({
+  assignments: z.array(
+    z.object({
+      documentTitle: z.string(),
+      existingCollections: z.array(
+        z.object({
+          collectionName: z.string(),
+          reason: z.string().describe("Brief reason why this document fits this collection"),
+        })
+      ),
+      newCollections: z.array(
+        z.object({
+          suggestedName: z.string().describe("Short, descriptive name for the new collection"),
+          suggestedDescription: z.string().describe("Brief description of what this collection contains"),
+          reason: z.string().describe("Why this new collection is needed"),
+        })
+      ),
+    })
+  ),
+});
+
 const batchAssignmentSchema = z.object({
   assignments: z.array(
     z.object({
@@ -246,6 +282,180 @@ const batchAssignmentSchema = z.object({
     })
   ),
 });
+
+export async function suggestAutoOrganize(): Promise<AutoOrganizeSuggestion[]> {
+  const allCollections = await db
+    .select({ id: collections.id, name: collections.name, description: collections.description })
+    .from(collections);
+
+  const unassignedDocs = await db
+    .select({
+      id: documents.id,
+      title: documents.title,
+      summary: documents.summary,
+    })
+    .from(documents)
+    .where(
+      sql`${documents.id} NOT IN (
+        SELECT document_id FROM document_collections
+      )`
+    )
+    .orderBy(desc(documents.createdAt))
+    .limit(50);
+
+  if (unassignedDocs.length === 0) return [];
+
+  const collectionList = allCollections.length > 0
+    ? allCollections
+        .map((c) => `- "${c.name}"${c.description ? `: ${c.description}` : ""}`)
+        .join("\n")
+    : "(no existing collections)";
+
+  const docList = unassignedDocs
+    .map((d) => `- "${d.title}": ${(d.summary || "").slice(0, 200)}`)
+    .join("\n");
+
+  const config = await getChatConfigFromDB();
+  const model = getModel(config);
+
+  try {
+    const { object } = await generateObject({
+      model,
+      schema: autoOrganizeSuggestionSchema,
+      system: `You organize documents into collections in a personal knowledge base.
+For each document:
+1. First check if it fits any EXISTING collection. Only suggest existing collections where the match is clear.
+2. If no existing collection is a good fit, suggest creating a NEW collection with a short, descriptive name.
+3. If a document truly doesn't need organizing, you may skip it.
+Use exact collection names from the provided list when suggesting existing collections.
+Keep new collection names concise (2-4 words). Group similar unassigned documents under the same new collection name.`,
+      prompt: `Existing collections:
+${collectionList}
+
+Documents to organize:
+${docList}
+
+For each document, suggest which existing collection(s) it belongs to, or propose new collection(s) to create.`,
+    });
+
+    return object.assignments
+      .map((assignment) => {
+        const doc = unassignedDocs.find(
+          (d) => d.title.toLowerCase() === assignment.documentTitle.toLowerCase()
+        );
+        if (!doc) return null;
+
+        const existingCollections = assignment.existingCollections
+          .map((ec) => {
+            const match = allCollections.find(
+              (c) => c.name.toLowerCase() === ec.collectionName.toLowerCase()
+            );
+            if (!match) return null;
+            return {
+              collectionId: match.id,
+              collectionName: match.name,
+              reason: ec.reason,
+            };
+          })
+          .filter((x): x is NonNullable<typeof x> => x !== null);
+
+        return {
+          documentId: doc.id,
+          documentTitle: doc.title,
+          existingCollections,
+          newCollections: assignment.newCollections,
+        };
+      })
+      .filter((x): x is AutoOrganizeSuggestion => x !== null)
+      .filter((x) => x.existingCollections.length > 0 || x.newCollections.length > 0);
+  } catch (error) {
+    console.error("Auto-organize suggestion failed:", error);
+    return [];
+  }
+}
+
+export async function applyAutoOrganizeSuggestions(
+  suggestions: {
+    documentId: string;
+    existingCollectionIds: string[];
+    newCollections: { name: string; description: string }[];
+  }[]
+): Promise<AutoOrganizeResult[]> {
+  const results: AutoOrganizeResult[] = [];
+
+  for (const suggestion of suggestions) {
+    const [doc] = await db
+      .select({ id: documents.id, title: documents.title })
+      .from(documents)
+      .where(eq(documents.id, suggestion.documentId))
+      .limit(1);
+
+    if (!doc) continue;
+
+    const assignedNames: string[] = [];
+
+    // Add to existing collections
+    for (const collectionId of suggestion.existingCollectionIds) {
+      await db
+        .insert(documentCollections)
+        .values({ documentId: doc.id, collectionId })
+        .onConflictDoNothing();
+
+      const [col] = await db
+        .select({ name: collections.name })
+        .from(collections)
+        .where(eq(collections.id, collectionId))
+        .limit(1);
+      if (col) assignedNames.push(col.name);
+    }
+
+    // Create new collections and add document
+    for (const newCol of suggestion.newCollections) {
+      const [created] = await db
+        .insert(collections)
+        .values({
+          name: newCol.name,
+          description: newCol.description || null,
+          color: "#6366f1",
+        })
+        .onConflictDoNothing()
+        .returning();
+
+      if (created) {
+        await db
+          .insert(documentCollections)
+          .values({ documentId: doc.id, collectionId: created.id })
+          .onConflictDoNothing();
+        assignedNames.push(created.name);
+      } else {
+        // Collection already exists, find it and add
+        const [existing] = await db
+          .select({ id: collections.id, name: collections.name })
+          .from(collections)
+          .where(eq(collections.name, newCol.name))
+          .limit(1);
+        if (existing) {
+          await db
+            .insert(documentCollections)
+            .values({ documentId: doc.id, collectionId: existing.id })
+            .onConflictDoNothing();
+          assignedNames.push(existing.name);
+        }
+      }
+    }
+
+    if (assignedNames.length > 0) {
+      results.push({
+        documentId: doc.id,
+        documentTitle: doc.title,
+        assignedCollections: assignedNames,
+      });
+    }
+  }
+
+  revalidatePath("/library");
+  return results;
+}
 
 export async function autoOrganizeDocuments(): Promise<AutoOrganizeResult[]> {
   const allCollections = await db
