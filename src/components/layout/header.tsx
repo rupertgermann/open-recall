@@ -5,7 +5,6 @@ import { usePathname } from "next/navigation";
 import { Brain, Plus, MessageSquare, Network, BookOpen, Settings, Sparkles } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
-import { CommandPalette } from "@/components/command-palette";
 
 const navItems = [
   { href: "/library", label: "Library", icon: BookOpen },
@@ -25,8 +24,6 @@ export function Header() {
           <Brain className="h-7 w-7 text-primary" />
           <span className="text-lg font-bold">open-recall</span>
         </Link>
-
-        <CommandPalette />
 
         <nav className="flex items-center gap-1">
           {navItems.map((item) => {
