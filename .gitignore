@@ -50,3 +50,4 @@ public/document-images/
 
 # IDE - Windsurf
 .windsurf/
+.claude/settings.local.json
