@@ -1,79 +1,97 @@
-# Concept: Handling Dynamic Embedding Dimensions
+# Embedding Dimensions and Model Consistency
 
-## The Challenge
+## The Constraint
 
-Different embedding models produce vectors of different dimensions. For example:
-- **nomic-embed-text** (Local): 768 dimensions
-- **text-embedding-3-small** (OpenAI): 1536 dimensions
-- **text-embedding-3-large** (OpenAI): 3072 dimensions
+Embedding models produce vectors with fixed but different dimensions:
 
-In a vector database using `pgvector`, calculating the distance (similarity) between two vectors requires them to have the exact same dimensionality. You cannot compare a 768d vector with a 1536d vector.
+- `nomic-embed-text`: 768 dimensions
+- `text-embedding-3-small`: 1536 dimensions
+- `text-embedding-3-large`: 3072 dimensions
 
-## Current Architecture
+PostgreSQL can store vectors from these models in generic pgvector `vector`
+columns, but distance operations still compare one query vector with stored
+vectors of the same dimensionality. A 1536-dimensional OpenAI query vector cannot
+be compared with a 768-dimensional local embedding.
 
-Open Recall currently uses a single `embedding` column in the `chunks` and `entities` tables.
-- **Initially**: Defined as `vector(768)`.
-- **Updated**: Defined as `vector` (generic length) to allow schema flexibility.
+## Current Storage Model
 
-### The Issue
-While the database schema now accepts vectors of any length, the application logic faces a semantic validity problem:
-1. **Hybrid Data**: If a user switches from Local (768d) to OpenAI (1536d) without clearing data, the database will contain a mix of 768d and 1536d vectors.
-2. **Search Failures**: When performing a search with an OpenAI model, the query vector will be 1536d. Attempting to calculate cosine similarity against older 768d chunks will result in database errors.
+open-recall uses generic `vector` columns instead of fixed `vector(N)` columns.
+This keeps the schema flexible while preserving pgvector search behavior.
 
-## Strategy Options
+The embedding-related schema includes:
 
-### 1. Single Model Policy (Current Approach)
-Enforce that the entire knowledge base uses a single embedding model at any given time.
-- **Pros**: Simple to implement. Guaranteed consistency.
-- **Cons**: Switching providers requires a complete re-ingest/re-index of all content.
-- **Implementation**: 
-  - Warn users when switching providers.
-  - Provide a "Re-index All" utility.
+- `documents.embedding_model` and `documents.embedding_version`
+- `chunks.embedding`
+- `chunks.embedding_cache_id`
+- `chunks.embedding_status`
+- `chunks.embedding_purpose`
+- `embedding_cache.content_hash`
+- `embedding_cache.model`
+- `embedding_cache.purpose`
+- `embedding_cache.embedding`
 
-### 2. Versioned Embeddings (Recommended for Future)
-Store metadata about which model was used to generate each embedding.
+The embedding cache is unique by `content_hash`, `model`, and `purpose`, so the
+same text can have separate retrieval and graph embeddings and can be embedded
+again under a different model without overwriting existing cached rows.
 
-**Schema Change:**
-```sql
-ALTER TABLE chunks ADD COLUMN embedding_model text;
-ALTER TABLE chunks ADD COLUMN embedding_version text;
-```
+## Runtime Behavior
 
-**Query Logic:**
-When retrieving context:
-1. Identify the currently active embedding model.
-2. Filter the DB query to only include chunks generated with that model.
-   ```sql
-   SELECT * FROM chunks 
-   WHERE embedding_model = 'text-embedding-3-small'
-   ORDER BY embedding <=> query_vector
-   ```
-3. (Optional) Background jobs could re-embed older chunks with the new model to make them searchable again.
+The ingestion pipeline records the current embedding model on each document. It
+also stores `embedding_version` as the current application embedding version.
 
-### 3. Multi-Column / Multi-Table Storage
-Create specific columns for common dimensions.
-- `embedding_768`
-- `embedding_1536`
-- `embedding_3072`
+Source refresh compares:
 
-**Pros**: Database constraints enforce correctness.
-**Cons**: Schema migrations required for every new model dimension. Sparse data.
+- the latest source content hash with `documents.content_hash`
+- the current configured embedding model with `documents.embedding_model`
 
-## Proposed Roadmap
+When both values match, the document metadata can be refreshed without
+rebuilding chunks, tags, mentions, relationships, or embeddings. When either
+value differs, the pipeline rebuilds the document-owned derived rows and stores
+embeddings from the current model.
 
-### Phase 1: Flexible Schema (Implemented)
-- Remove `vector(N)` constraint from Drizzle schema.
-- Allow `db:push` to update the column to generic `vector` type.
-- Document the need to clear/re-index data when switching providers.
+Retrieval uses the currently configured embedding model to embed the query, then
+compares that query vector against stored chunk and entity embeddings. Existing
+stored vectors from a different dimensionality can still cause pgvector
+dimension mismatch errors during retrieval.
 
-### Phase 2: User Warnings
-- In the Settings UI, detect if the selected model dimension differs from the majority of stored data.
-- Display a warning: "Changing this model will make existing documents unsearchable until re-indexed."
+## Operational Policy
 
-### Phase 3: Smart Migration
-- Add `embedding_model` column to `chunks`.
-- When switching models, offer a background job: "Migrate Embeddings".
-- This job iterates through all documents, generates new embeddings with the new model, and updates the records.
+Use one embedding model for a working library unless you are intentionally
+re-indexing content.
 
-## Recommendation
-For now, we rely on **Phase 1**. The README has been updated to instruct users to clear their database or stick to one provider if they encounter dimension errors. This balances flexibility with implementation complexity for the current stage of the project.
+When changing embedding providers or embedding models:
+
+1. Select the target embedding model in Settings or `.env`.
+2. Refresh source-backed documents from the library or document detail page.
+3. Recreate pasted notes that were embedded with a different model.
+4. Keep using the selected model for subsequent ingestion and retrieval.
+
+For a clean local reset, clear the affected data and re-ingest with the selected
+embedding model.
+
+## Why Generic `vector` Columns Still Matter
+
+Generic `vector` columns allow the same schema to accept local and OpenAI
+embeddings without a migration for every model dimension. The tradeoff is that
+runtime consistency is an application and operations concern: retrieval remains
+dimension-sensitive even though storage accepts multiple dimensions.
+
+## Current Boundaries
+
+- There is no global background re-index worker.
+- There is no automatic filtering of retrieval candidates by vector dimension.
+- Pasted notes do not have a source URL, so they are recreated rather than
+  source-refreshed.
+- Document-level `embedding_model` tracks which model produced a document's
+  derived retrieval data, while chunk rows do not independently store model
+  names.
+
+## Related Implementation Files
+
+- `src/db/schema.ts`: vector columns, document embedding metadata, chunk
+  embedding fields, and embedding cache schema
+- `src/lib/embedding/cache.ts`: content hashing and cache lookup/insert logic
+- `src/lib/embedding/service.ts`: model-aware cached embedding orchestration
+- `src/lib/ingestion/service.ts`: source refresh, content-hash checks, and
+  document-level embedding model tracking
+- `src/actions/chat.ts`: retrieval entry point used by chat

@@ -1,117 +1,148 @@
-# open-recall – Embedding Performance Implementation Plan
+# Embedding Pipeline
 
 ## Objective
-Speed up embedding time and reduce total embeddings in the GraphRAG ingestion pipeline while keeping everything local-first with Ollama.
 
----
+The embedding pipeline reduces repeated embedding work during GraphRAG ingestion
+while preserving local-first operation and compatibility with OpenAI-compatible
+embedding providers.
 
-## Phase 0 – Baseline & Safety Net
-- [x] Add timing metrics around embedding calls
-- [x] Track:
-  - chunks_created
-  - chunks_embedded
-  - embedding_time_ms
-  - embedding_cache_hits
-- [x] Add simple logging toggle (`EMBEDDING_DEBUG=true`)
+## Runtime Flow
 
----
+1. Normalize source text and compute a document content hash.
+2. Split content with structure-aware chunking.
+3. Deduplicate repeated chunk hashes inside the current document ingestion run.
+4. Generate retrieval embeddings for saved chunks.
+5. Generate graph embeddings for entities created during the run.
+6. Route embedding requests through the central embedding cache.
+7. Store document-level embedding model/version metadata.
+8. Skip source refresh rebuilds when source content and embedding model are
+   unchanged.
 
-## Phase 1 – Structure-Aware Chunking
-- [x] Replace fixed-size chunking with:
-  - Markdown heading split
-  - Paragraph split
-  - Sentence fallback
-- [x] Target chunk size: 300–800 tokens
-- [x] Merge chunks smaller than 100 tokens
-- [x] Normalize text (trim, collapse whitespace)
+## Structure-Aware Chunking
 
----
+`src/lib/embedding/chunker.ts` splits text in this order:
 
-## Phase 2 – Chunk Deduplication
-- [x] Generate `chunk_hash = sha256(normalized_text)`
-- [x] Add `chunk_hash` column (UNIQUE) to chunks table
-- [x] Skip embedding if chunk_hash already exists
-- [x] Reuse existing embedding reference
+- Markdown headings
+- Paragraphs
+- Sentence fallback for large paragraphs
+- Small-chunk merging
 
----
+Default chunk sizing is:
 
-## Phase 3 – Central Embedding Cache
-- [x] Create `embeddings` table:
-  - id
-  - content_hash (UNIQUE)
-  - model
-  - vector
-  - created_at
-- [x] Implement `getOrCreateEmbedding(text, model)`
-- [x] Route ALL embeddings through the cache:
-  - Chunk embeddings
-  - Section summaries
-  - Entity labels
-  - Relationship descriptions
+- Minimum chunk size: 100 estimated tokens
+- Target chunk size: 500 estimated tokens
+- Maximum chunk size: 800 estimated tokens
 
----
+`src/lib/text/index.ts` normalizes whitespace and estimates tokens at roughly
+four characters per token.
 
-## Phase 4 – Separate Embeddings by Purpose
-- [x] Introduce `embedding_purpose` enum:
-  - graph
-  - retrieval
-- [x] Use graph embeddings for:
-  - Section summaries
-  - Entity nodes
-- [x] Use retrieval embeddings for:
-  - Selected content chunks only
-- [x] Store purpose alongside embedding references
+## Content Hashes
 
----
+Content hashes use SHA-256 over lowercased, whitespace-normalized text.
 
-## Phase 5 – Summarize → Then Embed (GraphRAG Optimization)
-- [x] Summarize each document section (200–300 tokens)
-- [x] Embed summaries for graph construction
-- [x] Extract entities + relations from summaries (not raw text)
-- [x] Keep full chunks only for retrieval embeddings
+The app stores hashes in:
 
----
+- `documents.content_hash` for source-change detection
+- `chunks.content_hash` for per-document chunk deduplication
+- `embedding_cache.content_hash` for embedding reuse
 
-## Phase 6 – Batched & Parallel Ollama Embeddings
-- [x] Batch embeddings (8–16 texts per request)
-- [x] Implement embedding queue with limited concurrency (2–4 workers)
-- [x] Avoid single-text embedding calls
-- [x] Add backpressure to prevent Ollama overload
+Chunk uniqueness is scoped by document through
+`chunks_document_content_hash_idx`, which allows the same chunk text to appear in
+different documents while preventing duplicate chunk rows inside one document.
 
----
+## Embedding Cache
 
-## Phase 7 – Incremental & Deferred Embedding
-- [x] Add `embedding_status` field:
-  - pending
-  - embedded
-- [x] Embed only graph-critical data during ingestion
-- [ ] Embed retrieval chunks on first query (deferred - optional)
-- [ ] Background job to backfill remaining embeddings (deferred - optional)
+`embedding_cache` is the central cache for generated vectors. It is unique by:
 
----
+- `content_hash`
+- `model`
+- `purpose`
 
-## Phase 8 – Change Detection & Re-ingestion
-- [x] Add `document_hash` to documents
-- [x] Add `embedding_model` + `embedding_version`
-- [x] Re-embed only if:
-  - document_hash changes
-  - embedding model/version changes
-- [x] Skip unchanged content completely
+The `purpose` field separates retrieval embeddings from graph embeddings. The
+same text can therefore have independent cached vectors for `retrieval` and
+`graph` purposes under the same model.
 
----
+`batchGetOrCreateEmbeddings` checks cache entries for a whole batch first,
+generates only missing vectors, and writes missing vectors back to the cache.
 
-## Phase 9 – Validation & Benchmarking
-- [x] Benchmark ingestion before/after
-- [x] Verify:
-  - Reduced total embeddings
-  - Faster ingestion time
-  - No graph quality regression
-- [ ] Document results in `docs/ingestion-performance.md` (after testing)
+## Batching and Concurrency
 
----
+`generateEmbeddingsWithCache` processes embeddings in batches of 16 texts and
+runs at most two embedding batches concurrently. This keeps Ollama/local
+providers from being overloaded while still avoiding one request per text.
 
-## Done Criteria
-- [x] ≥50% reduction in total embeddings (via caching + deduplication)
-- [x] ≥3× faster ingestion for large documents (via batching + caching)
-- [x] No duplicate embeddings in database (via content hash)
-- [x] Graph remains accurate and queryable
+The embedding service exposes:
+
+- `generateRetrievalEmbeddings(texts)`
+- `generateGraphEmbeddings(texts)`
+- `generateEmbeddingWithCache(text, purpose)`
+- `generateEmbeddingsWithCache(texts, purpose)`
+
+## Ingestion Behavior
+
+The ingestion service uses retrieval embeddings for chunks and graph embeddings
+for entities created during the run. Existing entities keep their existing
+embedding. Entity mentions are mapped to chunks that contain matching entity
+names, with a fallback mention on the first chunk when no literal mention is
+found. Relationships whose endpoints cannot be resolved or are ambiguous are
+dropped before insert.
+
+Source refresh cleans document-owned derived rows before rebuilding:
+
+- relationships with the document as `source_document_id`
+- entity mentions for the document
+- document tags for the document
+- chunks for the document
+
+The document row is then updated with the latest title, type, content,
+`content_hash`, summary, `embedding_model`, `embedding_version`, status, and
+timestamp.
+
+## Metrics and Debugging
+
+`EMBEDDING_DEBUG=true` enables debug logging in `src/lib/embedding/metrics.ts`.
+The metrics collector tracks:
+
+- chunks created
+- chunks embedded
+- embedding cache hits
+- embedding cache misses
+- total texts processed
+- batch count
+- embedding time
+- total ingestion time
+
+`src/lib/embedding/benchmark.ts` provides database-backed statistics for current
+embedding state:
+
+- total documents
+- total chunks
+- cached embeddings
+- pending embeddings
+- embedded chunks
+- unique content hashes
+- duplicate chunks avoided
+- cache hit rate
+- average chunks per document
+- average tokens per chunk
+- entity embedding counts
+
+## Current Boundaries
+
+- Retrieval chunks are embedded during ingestion.
+- Pending retrieval chunk backfill is not handled by a background worker.
+- Retrieval queries do not filter candidates by embedding model or dimension.
+- Mixed-dimension libraries require source refresh, note recreation, or data
+  reset under one embedding model.
+- Benchmark helpers report database state; they do not run an automated
+  before/after benchmark suite by themselves.
+
+## Validation Surface
+
+The unit tests cover the pure planning and scoring logic around ingestion,
+retrieval, SRS, Discover, AI model lists, error messages, search results, chat
+helpers, and text hashing.
+
+```bash
+npm test
+```

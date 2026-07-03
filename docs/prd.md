@@ -1,126 +1,210 @@
-# Product Requirements Document (PRD): open-recall
+# Product Specification: open-recall
 
 ## 1. Overview
-**open-recall** is a privacy-focused, local-first Personal Knowledge Management (PKM) application. It automates the process of saving, summarizing, and linking digital content. Unlike standard note-taking apps, it utilizes **GraphRAG** (Graph Retrieval-Augmented Generation) to structure data into a semantic graph. This allows for deeper insights and connections between disparate pieces of information, all while running completely offline using local LLMs.
 
-## 2. Problem Statement
-Users desire the advanced capabilities of AI summarization and automatic knowledge connection found in cloud-based tools (like Recall.ai). However, many users have significant privacy concerns regarding their personal data, or they wish to avoid subscription costs and vendor lock-in. Existing open-source tools rarely offer a seamless "Local LLM" experience that successfully combines Vector Search with structured Knowledge Graphs.
+**open-recall** is a privacy-focused, local-first Personal Knowledge Management
+application. It turns saved web pages and notes into a searchable GraphRAG
+knowledge base by extracting readable content, summaries, tags, entities,
+relationships, chunks, embeddings, and review cards. Local AI providers are the
+default path, and OpenAI can be configured for chat, embeddings, and entity web
+research.
 
-## 3. Tech Stack Requirements
+## 2. Product Positioning
 
-### 3.1 Frontend & Application
-*   **Framework:** Next.js (App Router)
-*   **Language:** TypeScript
-*   **UI Component Library:** Shadcn UI (Radix Primitives + Tailwind CSS)
-*   **State Management:** React Query (TanStack Query) for managing async data states.
-*   **Graph Visualization:** A 2D/3D force-directed graph library capable of handling interactive node link visualizations (e.g., React Force Graph or CosmoGraph).
+The application is for users who want AI-assisted knowledge management without
+making cloud storage the default. Personal source content, derived graph data,
+chat history, flashcards, settings, and metadata live in the local PostgreSQL
+database. Cloud AI is opt-in through settings and environment configuration.
 
-### 3.2 Backend & Data (Local First)
-*   **Database:** PostgreSQL with extensions for hybrid data storage.
-*   **Vector Store:** pgvector extension for high-dimensional vector embeddings and similarity search.
-*   **Graph Store:** Apache AGE extension for native graph queries (Cypher-compatible) enabling proper graph traversal semantics.
-*   **ORM:** Drizzle ORM for type-safe database operations compatible with server actions.
-*   **Containerization:** Docker Compose orchestration for one-click local deployment of the full stack.
+## 3. Core Runtime Surfaces
 
-### 3.3 AI & Intelligence
-*   **LLM Orchestration:** Vercel AI SDK for unified streaming and model interaction across providers.
-*   **Local AI Provider:** Ollama (primary) or LM Studio providing OpenAI-compatible API endpoints.
-*   **Recommended Models:**
-    *   Chat/Extraction: llama3.2:8b, mistral:7b, qwen2.5:7b
-    *   Embeddings: nomic-embed-text, mxbai-embed-large
-*   **Structured Output:** Zod schemas with JSON mode for reliable entity extraction from local LLMs.
-*   **Fallback Strategy:** Retry with simplified prompts if structured extraction fails; graceful degradation to basic chunking.
+### 3.1 Dashboard
 
-### 3.4 Content Extraction
-*   **Web Articles:** Mozilla Readability for clean content extraction from web pages.
-*   **YouTube:** yt-dlp or youtube-transcript-api for transcript retrieval.
-*   **PDF:** pdfjs-dist for text extraction from PDF documents.
+The dashboard summarizes the knowledge base with document, entity, relationship,
+chunk, chat, and collection counts. It shows recent documents, recent chats,
+document type breakdown, a 30-day activity chart, and quick actions for common
+flows.
 
-### 3.5 Minimum Hardware Requirements
-*   **RAM:** 16GB recommended (8GB minimum for smaller models).
-*   **GPU (optional):** 6GB+ VRAM for accelerated inference; CPU-only mode supported.
-*   **Storage:** 10GB+ for models and database.
-*   **Supported Models:** 7B parameter models (quantized Q4/Q5) run comfortably on consumer hardware.
+### 3.2 Library and Document Detail
 
-## 4. Core Features & Functional Requirements
+The library provides document search, type filters, collection filters, card/list
+views, persisted view preference, paginated loading, source refresh, and deletion
+confirmation. Collection workflows include create, rename, delete, filter,
+bulk-assign, and AI-assisted organization with reviewable suggestions.
 
-### 4.1 Local-First Configuration
-*   **Settings Interface:** A dedicated settings panel allowing users to toggle between "Cloud" and "Local" AI providers.
-*   **Connection Configuration:** Fields to input the Local Base URL and select specific models available on the user's machine.
-*   **Deployment:** The application must utilize a container orchestration file to start both the application and the database simultaneously with a single command.
+Document detail pages show the source URL, downloaded lead image, summary,
+editable tags, flashcards, chunks, collections, related chats, entities,
+relationships, document-scoped chat, graph focus, source refresh, and deletion.
 
-### 4.2 GraphRAG Ingestion Pipeline
-The ingestion process goes beyond simple text storage. It must follow a specific pipeline:
-1.  **Extraction:** Scrape text from the source (YouTube transcript, Web Article, PDF).
-2.  **Chunking:** Split the text into logical segments for processing.
-3.  **Entity & Relation Extraction (The Graph):** The system prompts the Local LLM to identify key entities (People, Concepts, Tools) and the relationships between them, outputting structured data.
-4.  **Embedding (The RAG):** The system generates vector embeddings for the text chunks.
-5.  **Storage:** All chunks, vectors, discovered entities, and relationships are stored in the relational database.
+### 3.3 Ingestion
 
-### 4.3 The "Graph-Augmented" Chat
-*   **Hybrid Retrieval Logic:** When a user asks a question, the system must perform two distinct lookups:
-    1.  **Vector Search:** Find text chunks that are mathematically similar to the query.
-    2.  **Graph Traversal:** Identify entities in the query and "walk" the graph in the database to find related concepts that may not share similar keywords but are contextually linked.
-*   **Context Assembly:** The system combines results from both the Vector Search and Graph Traversal before sending them to the LLM to generate an answer.
+The Add Content page accepts URLs and pasted text. URL mode fetches HTML and
+extracts article-like text with Mozilla Readability. Text mode creates note
+documents directly from a title and body. The ingestion flow emits streaming
+progress events for fetch, chunk, summarize, tag, extract, embed, save, and
+complete states.
 
-### 4.4 The Knowledge Card (UI)
-*   **Split View:** A reading interface displaying the original content on one side and the AI analysis on the other.
-*   **Graph Insight:** A specific visualization widget showing how the current card connects to other nodes in the existing database.
-*   **Interactive Entities:** Recognized entities within the summary should be clickable. Clicking an entity (e.g., a specific technology) opens a view showing every other content piece that mentions it.
+The entity detail slider maps user intent to extraction budgets, from roughly 25
+entities at the low end to roughly 300 entities at the high end. Relationship
+budget is twice the entity budget.
 
-### 4.5 Spaced Repetition (SRS)
-*   **Local Processing:** Quiz generation occurs locally on the user's machine.
-*   **Algorithm:** Implementation of an algorithm like FSRS (Free Spaced Repetition Scheduler) to determine optimal review intervals.
-*   **Review Interface:** A flashcard-style interface for reviewing generated questions.
+Source-backed documents can be refreshed. Refresh compares the current content
+hash and embedding model with the stored document metadata, skips derived-data
+rebuilds when both match, and rebuilds chunks, tags, mentions, relationships,
+and embeddings when either changes.
 
-### 4.6 Data Portability & Backup
-*   **Export:** Full database export to JSON and Markdown formats for interoperability.
-*   **Import:** Support for importing from common PKM formats (Obsidian vault, Notion exports, browser bookmarks).
-*   **Backup:** One-click local backup functionality with timestamped archives.
-*   **Data Ownership:** All data stored locally in user-accessible formats; no proprietary lock-in.
+### 3.4 Knowledge Graph
 
-## 5. Data Model Description
+The graph view is an interactive 2D force graph. It supports entity search,
+multi-select entity type filters, tag autocomplete filters, collection filters,
+URL-driven entity/document focus, saved camera/selection state, hover
+highlighting, selected-node glow, zoom controls, and cluster/detail label
+rendering.
 
-The database schema must support a hybrid approach, handling both standard document storage and graph structures.
+Entity panels show type, description, connected entities, mentioned documents,
+related chats, graph filtering, contextual chat, and OpenAI-backed entity web
+research. Web research returns source previews and routes selected URLs into the
+Add Content screen.
 
-*   **Documents:** Stores metadata about the source content (URL, Title, Type, Creation Date).
-*   **Chunks:** Represents the text segments derived from documents, containing the actual text content and its corresponding high-dimensional vector embedding.
-*   **Entities:** Represents the nodes in the knowledge graph. These distinct items (e.g., "React", "Biology") must be unique and categorized by type.
-*   **Entity Mentions:** A linking table that tracks which specific text chunks mention which Entities, allowing the system to trace back from a concept to the exact sentence where it was discussed.
-*   **Relationships:** Represents the edges of the graph. This table stores the source entity, the target entity, and a description of the relationship (e.g., "Parent of", "Built with").
-*   **SRS Items:** Stores flashcards, including the question, answer, and scheduling parameters (stability, difficulty, due date).
+### 3.5 Discover
 
-## 6. UI/UX Guidelines
+Discover analyzes the stored relationship graph and presents hidden connections,
+bridge entities, and knowledge clusters. Hidden connections identify indirect
+entity paths through bridge entities. Bridge entities identify highly connected
+graph nodes. Knowledge clusters identify connected components and their dominant
+entity types.
 
-### 6.1 Status Indicators
-*   **Optimistic UI:** Given that local LLMs can be slower than cloud providers, the interface must provide immediate feedback.
-*   **Processing Queue:** A visual component must display the status of the ingestion pipeline (e.g., "Parsing...", "Extracting Entities...", "Embedding...").
-*   **Streaming Responses:** Chat answers must stream character-by-character to reduce perceived latency.
+AI insights stream from the Discover insight API and are stored in
+`discover_insights` by normalized entity id sets.
 
-### 6.2 The Graph Visualization
-*   **Visual Structure:** Nodes should be sized according to their centrality (how many connections they have) to highlight important concepts.
-*   **Color Coding:** Nodes should be colored based on their Entity Type (e.g., People in one color, Concepts in another).
-*   **Filtering:** Users should be able to filter the graph to show only direct connections to the content they are currently viewing.
+### 3.6 Chat
 
-## 7. Development Roadmap
+Chat is persistent and threaded. Threads are categorized as general, entity,
+document, or project. The chat sidebar supports category filters, project
+filters, debounced search suggestions, thread deletion, and project creation.
+Full-page thread views include context back-links, deletion, source/entity
+metadata, and starter prompts for entity and document chats.
 
-### Phase 1: Local Infrastructure & Ingestion
-*   Establish the containerized environment (Database + App).
-*   Implement the database schema and ORM setup.
-*   Build the AI Service Layer to abstract interactions with the local LLM.
-*   Create the basic "Add Link" pipeline (Scrape -> Chunk -> Embed).
+The chat API retrieves context with vector chunk search, entity name matching,
+and graph-neighborhood expansion. Assistant messages store source citations and
+entity references. Tool calls can search saved documents, create notes, look up
+entities, and find related documents.
 
-### Phase 2: Graph Extraction (The "Smart" Layer)
-*   Design and test system prompts for accurate Entity and Relationship extraction.
-*   Implement the logic to parse LLM outputs and save them as structured graph data.
-*   Build the primary list view for saved content.
+### 3.7 Review and Spaced Repetition
 
-### Phase 3: RAG & Chat
-*   Implement Vector Search functionality using the database's vector capabilities.
-*   Implement Graph Lookup logic to query related entities.
-*   Build the Chat UI and integrate the hybrid retrieval context.
+Document detail pages generate flashcards from document text, summaries, and
+chunks. The review page lists due flashcards across documents. Ratings of Again,
+Hard, Good, and Easy update due dates, repetitions, lapses, stability,
+difficulty, elapsed days, scheduled days, and learning state.
 
-### Phase 4: Visualization & Polish
-*   Integrate the graph visualization library.
-*   Implement the Spaced Repetition logic and Review UI.
-*   Finalize the distribution strategy (Docker images).
+### 3.8 Settings
+
+Settings are stored in the database and fall back to environment defaults.
+Separate chat and embedding provider panels support Local and OpenAI providers,
+model selection, explicit connection testing, model discovery, and auto-save.
+OpenAI key validation checks the models endpoint and updates available model
+lists. Stored OpenAI chat preferences include reasoning effort, verbosity, and
+web search.
+
+## 4. Architecture
+
+### 4.1 Frontend and Application
+
+- **Framework**: Next.js App Router
+- **Language**: TypeScript
+- **UI**: Shadcn UI, Radix primitives, TailwindCSS, lucide-react
+- **Client state**: React state plus localStorage for view preferences and graph state
+- **Streaming**: Server-sent progress for ingestion and AI SDK UI message streams for chat
+
+### 4.2 Data Layer
+
+- **Database**: PostgreSQL
+- **Vector store**: pgvector generic `vector` columns
+- **Graph storage**: relational entity, mention, and relationship tables, with Apache AGE initialized at database startup
+- **ORM**: Drizzle ORM
+- **Migrations**: Drizzle migrations under `drizzle/` plus SQL helpers under `docker/migrations/`
+
+### 4.3 AI Layer
+
+- **Provider shape**: OpenAI-compatible chat and embedding clients
+- **Local providers**: Ollama and LM Studio via local base URLs
+- **OpenAI provider**: Shared API key, model validation, and model discovery
+- **Structured output**: Zod schemas for tags, entities, relationships, collection suggestions, auto-organize plans, flashcards, and web-search result shaping
+- **Error handling**: Provider failures are normalized into user-facing messages for missing keys, rejected keys, forbidden keys, unavailable models, rate limits, and unreachable providers
+
+### 4.4 Ingestion Pipeline
+
+1. Fetch source content or accept pasted text.
+2. Extract readable text and source image metadata when available.
+3. Compute a document content hash.
+4. Split text with structure-aware chunking.
+5. Deduplicate chunk hashes within the ingestion run.
+6. Generate summary and reusable lowercase tags.
+7. Extract entities and relationships with configured budgets.
+8. Generate retrieval embeddings for chunks and graph embeddings for entities created during the run.
+9. Save document metadata, chunks, tags, entities, mentions, and relationships in one transaction.
+
+### 4.5 Retrieval Pipeline
+
+1. Generate an embedding for the user query.
+2. Search embedded chunks by cosine distance and convert distance into similarity scores.
+3. Search embedded entities by cosine distance.
+4. Search entity names with bounded normalized phrase matching.
+5. Merge entity matches by best score.
+6. Expand matched entities through bounded graph-neighborhood relationships.
+7. Assemble content chunks, graph relationships, and entity descriptions into the prompt context.
+
+## 5. Data Model
+
+- **Documents**: URL, title, type, raw content, content hash, summary, processing status, embedding model/version, metadata, timestamps
+- **Chunks**: Document-linked text chunks, content hash, vector embedding, embedding cache reference, chunk index, token count, embedding status, embedding purpose
+- **Embedding Cache**: Content hash, model, purpose, vector, timestamp, and uniqueness across hash/model/purpose
+- **Entities**: Name, type, description, optional embedding, timestamps
+- **Entity Mentions**: Entity, chunk, document, confidence, timestamp
+- **Relationships**: Source entity, target entity, relation type, description, weight, source document, timestamp
+- **Tags**: Unique tag names with document links
+- **SRS Items**: Document-linked flashcards with scheduling fields and review state
+- **Collections**: Named document groups with description, color, and document links
+- **Projects**: Chat/document groupings with description, goal, color, and links
+- **Chat Threads**: Thread title, category, entity/document/project links, timestamps
+- **Chat Messages**: Role, content, thread link, timestamp, source/entity metadata
+- **Discover Insights**: Entity id sets and generated insight text
+- **Settings**: Database-backed key-value configuration
+
+## 6. Supported Commands
+
+```bash
+npm run dev          # Start the Next.js development server
+npm run build        # Build the production app
+npm run start        # Start the production server
+npm run lint         # Run ESLint
+npm test             # Run unit tests with Node's test runner
+npm run db:generate  # Generate Drizzle migrations
+npm run db:push      # Push schema changes in development
+npm run db:migrate   # Run migrations
+npm run db:studio    # Open Drizzle Studio
+```
+
+## 7. Environment and Provider Configuration
+
+The app reads `.env` values first and then uses database-backed settings after a
+user saves settings in the UI. Separate chat and embedding settings allow mixed
+configurations such as local chat with OpenAI embeddings or all-local operation.
+
+Primary environment keys are `DATABASE_URL`, `AI_BASE_URL`, `AI_MODEL`,
+`EMBEDDING_MODEL`, `CHAT_PROVIDER`, `CHAT_BASE_URL`, `CHAT_MODEL`,
+`CHAT_API_KEY`, `EMBEDDING_PROVIDER`, `EMBEDDING_BASE_URL`,
+`EMBEDDING_API_KEY`, and `OPENAI_API_KEY`.
+
+## 8. Current Boundaries
+
+- URL ingestion uses HTML fetching and Mozilla Readability for article-like
+  pages.
+- Pasted text creates note documents directly.
+- Source refresh requires a stored source URL.
+- Mixed embedding dimensions require re-ingestion or source refresh under a
+  single chosen embedding model.
+- Chat, summarization, tagging, entity extraction, collection suggestions,
+  flashcards, Discover insights, and entity web research use the configured chat
+  provider.
+- Retrieval embeddings use the configured embedding provider.
