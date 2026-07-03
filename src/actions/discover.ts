@@ -4,6 +4,7 @@ import { generateText } from "ai";
 
 import { getModel } from "@/lib/ai/client";
 import { getChatConfigFromDB } from "@/lib/ai/config";
+import { getAIErrorMessage } from "@/lib/ai/errors";
 import {
   buildDiscoverInsightPrompt,
   DISCOVER_INSIGHT_SYSTEM_PROMPT,
@@ -56,14 +57,19 @@ export async function generateInsight(entityIds: string[]): Promise<string> {
   const config = await getChatConfigFromDB();
   const model = getModel(config);
 
-  const { text } = await generateText({
-    model,
-    system: DISCOVER_INSIGHT_SYSTEM_PROMPT,
-    prompt: buildDiscoverInsightPrompt(context),
-    maxOutputTokens: 300,
-  });
+  try {
+    const { text } = await generateText({
+      model,
+      system: DISCOVER_INSIGHT_SYSTEM_PROMPT,
+      prompt: buildDiscoverInsightPrompt(context),
+      maxOutputTokens: 300,
+    });
 
-  return text;
+    return text;
+  } catch (error) {
+    console.error("Discover insight generation failed:", getAIErrorMessage(error));
+    return getAIErrorMessage(error);
+  }
 }
 
 export async function getDiscoverStats(): Promise<DiscoverStats> {

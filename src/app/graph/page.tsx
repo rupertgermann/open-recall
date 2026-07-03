@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback, useMemo, useEffect, useRef } from "react";
+import { Suspense, useState, useCallback, useMemo, useEffect, useRef } from "react";
 import dynamic from "next/dynamic";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
@@ -76,7 +76,7 @@ function getContrastTextColor(hexColor: string) {
   return L > 0.6 ? "#111111" : "#ffffff";
 }
 
-export default function GraphPage() {
+function GraphPageContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const focusDocumentId = searchParams.get("focus");
@@ -1210,5 +1210,13 @@ export default function GraphPage() {
         </div>
       </main>
     </div>
+  );
+}
+
+export default function GraphPage() {
+  return (
+    <Suspense fallback={null}>
+      <GraphPageContent />
+    </Suspense>
   );
 }

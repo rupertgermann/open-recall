@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef, useEffect, useMemo } from "react";
+import { Suspense, useState, useRef, useEffect, useMemo } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { FileText, Link as LinkIcon, Loader2, CheckCircle, AlertCircle, Circle } from "lucide-react";
@@ -9,6 +9,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { getAIErrorMessage } from "@/lib/ai/errors";
 
 type ContentType = "url" | "text";
 
@@ -31,7 +32,7 @@ const STEP_LABELS: Record<string, string> = {
   complete: "Complete",
 };
 
-export default function AddPage() {
+function AddPageContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const [contentType, setContentType] = useState<ContentType>("url");
@@ -69,7 +70,22 @@ export default function AddPage() {
     });
 
     if (!response.ok) {
-      throw new Error("Failed to start processing");
+      let message = `Failed to start processing (${response.status})`;
+
+      try {
+        const contentType = response.headers.get("content-type") || "";
+        if (contentType.includes("application/json")) {
+          const data = await response.json();
+          message = data.error || data.message || message;
+        } else {
+          const text = await response.text();
+          message = text.trim() || message;
+        }
+      } catch {
+        // Keep the status-based message.
+      }
+
+      throw new Error(message);
     }
 
     const reader = response.body?.getReader();
@@ -102,7 +118,7 @@ export default function AddPage() {
           }
 
           if (data.error) {
-            setError(data.message);
+            setError(data.message || "Processing failed");
             setIsProcessing(false);
             return;
           }
@@ -190,7 +206,7 @@ export default function AddPage() {
       await runIngestRequest(endpoint, body);
     } catch (error) {
       if (error instanceof Error && error.name !== "AbortError") {
-        setError(error.message);
+        setError(getAIErrorMessage(error));
       }
       setIsProcessing(false);
     }
@@ -454,5 +470,13 @@ export default function AddPage() {
         </div>
       </main>
     </div>
+  );
+}
+
+export default function AddPage() {
+  return (
+    <Suspense fallback={null}>
+      <AddPageContent />
+    </Suspense>
   );
 }

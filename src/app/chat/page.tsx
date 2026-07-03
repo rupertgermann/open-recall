@@ -4,7 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useChat } from "@ai-sdk/react";
 import { DefaultChatTransport } from "ai";
 import Link from "next/link";
-import { Loader2, MessageSquareIcon, Plus, Trash2, Filter, Search, FolderKanban, MoreVertical, Pencil } from "lucide-react";
+import { AlertCircle, Loader2, MessageSquareIcon, Plus, Trash2, Filter, Search, FolderKanban, MoreVertical, Pencil } from "lucide-react";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -15,6 +15,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import type { ChatUIMessage, ChatMessageMetadata } from "@/lib/chat/types";
 import { ChatSources } from "@/components/chat/chat-sources";
 import { Header } from "@/components/layout/header";
@@ -50,6 +51,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Input as ShadInput } from "@/components/ui/input";
+import { getAIErrorMessage } from "@/lib/ai/errors";
 
 const chatTransport = new DefaultChatTransport({ api: "/api/chat" });
 
@@ -86,10 +88,13 @@ export default function ChatPage() {
   const [loadingThread, setLoadingThread] = useState(false);
 
   const [input, setInput] = useState("");
+  const [chatRequestError, setChatRequestError] = useState<string | null>(null);
 
-  const { messages, status, sendMessage, setMessages } = useChat<ChatUIMessage>({
+  const { messages, status, sendMessage, setMessages, error: chatError } = useChat<ChatUIMessage>({
     transport: chatTransport,
   });
+
+  const chatErrorMessage = chatRequestError ?? (chatError ? getAIErrorMessage(chatError) : null);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
@@ -274,6 +279,7 @@ export default function ChatPage() {
   const handleSubmit = async () => {
     const text = input.trim();
     if (!text || status !== "ready") return;
+    setChatRequestError(null);
     const currentThreadId = selectedThreadId;
 
     // If we are starting a brand new chat, create an empty thread first so we can
@@ -298,14 +304,18 @@ export default function ChatPage() {
       }
     }
 
-    await sendMessage(
-      { text },
-      {
-        body: effectiveThreadId ? { threadId: effectiveThreadId } : undefined,
-      }
-    );
+    try {
+      await sendMessage(
+        { text },
+        {
+          body: effectiveThreadId ? { threadId: effectiveThreadId } : undefined,
+        }
+      );
 
-    setInput("");
+      setInput("");
+    } catch (error) {
+      setChatRequestError(getAIErrorMessage(error));
+    }
   };
 
   const selectedThread = useMemo(
@@ -611,6 +621,14 @@ export default function ChatPage() {
                 </p>
               </div>
             </div>
+
+            {chatErrorMessage && (
+              <Alert variant="destructive">
+                <AlertCircle className="h-4 w-4" />
+                <AlertTitle>Chat request failed</AlertTitle>
+                <AlertDescription>{chatErrorMessage}</AlertDescription>
+              </Alert>
+            )}
 
             <Conversation className="rounded-lg border h-[60vh]">
               <ConversationContent>

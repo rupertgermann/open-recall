@@ -7,6 +7,7 @@ import {
   extractEntitiesWithDBConfig,
   generateTagsWithDBConfig,
 } from "@/lib/ai";
+import { getAIErrorMessage } from "@/lib/ai/errors";
 import { updateDocumentTags } from "@/actions/documents";
 import {
   chunkStructured,
@@ -306,7 +307,7 @@ export async function POST(req: Request) {
           encoder.encode(
             createSSEMessage(
               "error",
-              error instanceof Error ? error.message : "Unknown error occurred",
+              getAIErrorMessage(error),
               0,
               true
             )

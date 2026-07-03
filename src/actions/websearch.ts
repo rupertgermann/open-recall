@@ -4,6 +4,7 @@ import { z } from "zod";
 import { createOpenAI } from "@ai-sdk/openai";
 import { generateText } from "ai";
 import { getChatConfigFromDB } from "@/lib/ai/config";
+import { getAIErrorMessage } from "@/lib/ai/errors";
 
 const webSearchResultsSchema = z.object({
   results: z.array(
@@ -111,12 +112,13 @@ Requirements:
     return deduped;
     
   } catch (error) {
-    console.error("[WebSearch] Error during generateText:", error);
+    const message = getAIErrorMessage(error);
+    console.error("[WebSearch] Error during generateText:", message);
     console.error("[WebSearch] Error details:", {
       name: error instanceof Error ? error.name : "Unknown",
       message: error instanceof Error ? error.message : String(error),
       stack: error instanceof Error ? error.stack : undefined
     });
-    throw error;
+    throw new Error(message);
   }
 }

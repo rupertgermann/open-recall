@@ -36,11 +36,11 @@ export async function extractFromHtml(
   ) ?? resolveImageUrl(findMetaImage(document), url);
 
   return {
-    title: article.title,
-    content: article.textContent,
-    excerpt: article.excerpt,
-    byline: article.byline,
-    siteName: article.siteName,
+    title: article.title ?? document.title ?? "Untitled",
+    content: article.textContent ?? "",
+    excerpt: article.excerpt ?? undefined,
+    byline: article.byline ?? undefined,
+    siteName: article.siteName ?? undefined,
     leadImageUrl,
   };
 }

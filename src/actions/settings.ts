@@ -4,6 +4,7 @@ import { db } from "@/db";
 import { settings, documents, entities, relationships } from "@/db/schema";
 import { eq, count } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
+import { getAIErrorMessage } from "@/lib/ai/errors";
 
 // Provider-specific settings
 export type ProviderSettings = {
@@ -140,6 +141,51 @@ export async function getDatabaseStats() {
 }
 
 /**
+ * Validate an OpenAI API key by checking the models endpoint.
+ */
+export async function validateOpenAIApiKey(
+  apiKey?: string
+): Promise<{ success: boolean; models?: string[]; error?: string }> {
+  const trimmedKey = apiKey?.trim();
+
+  if (!trimmedKey) {
+    return { success: false, error: "Enter an OpenAI API key" };
+  }
+
+  try {
+    const response = await fetch("https://api.openai.com/v1/models", {
+      method: "GET",
+      headers: { Authorization: `Bearer ${trimmedKey}` },
+      cache: "no-store",
+    });
+
+    if (!response.ok) {
+      if (response.status === 401) {
+        return { success: false, error: getAIErrorMessage({ statusCode: response.status }) };
+      }
+
+      if (response.status === 403) {
+        return { success: false, error: getAIErrorMessage({ statusCode: response.status }) };
+      }
+
+      return { success: false, error: `OpenAI validation failed: ${response.status}` };
+    }
+
+    const data = await response.json();
+
+    return {
+      success: true,
+      models: data.data?.map((model: { id: string }) => model.id) || [],
+    };
+  } catch (error) {
+    return {
+      success: false,
+      error: getAIErrorMessage(error),
+    };
+  }
+}
+
+/**
  * Test connection to AI provider
  */
 export async function testAIConnection(
@@ -173,7 +219,13 @@ export async function testAIConnection(
       });
       
       if (!openaiResponse.ok) {
-        return { success: false, error: `Connection failed: ${response.status}` };
+        return {
+          success: false,
+          error: getAIErrorMessage({
+            statusCode: openaiResponse.status,
+            message: openaiResponse.statusText,
+          }),
+        };
       }
 
       const data = await openaiResponse.json();
@@ -191,7 +243,7 @@ export async function testAIConnection(
   } catch (error) {
     return {
       success: false,
-      error: error instanceof Error ? error.message : "Connection failed",
+      error: getAIErrorMessage(error),
     };
   }
 }

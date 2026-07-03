@@ -7,6 +7,7 @@ import {
   extractEntitiesWithDBConfig,
   generateTagsWithDBConfig,
 } from "@/lib/ai";
+import { getAIErrorMessage } from "@/lib/ai/errors";
 import { updateDocumentTags } from "@/actions/documents";
 import {
   chunkStructured,
@@ -166,7 +167,7 @@ export async function POST(req: Request) {
             .set({ summary })
             .where(eq(documents.id, doc.id));
         } catch (error) {
-          controller.enqueue(encoder.encode(createSSEMessage("summarizing", "Summary generation skipped (AI unavailable)", 45)));
+          controller.enqueue(encoder.encode(createSSEMessage("summarizing", `Summary generation skipped: ${getAIErrorMessage(error)}`, 45)));
         }
 
         controller.enqueue(encoder.encode(createSSEMessage("tagging", "Generating tags...", 47)));
@@ -181,7 +182,7 @@ export async function POST(req: Request) {
             controller.enqueue(encoder.encode(createSSEMessage("tagging", "No tags generated", 49)));
           }
         } catch (error) {
-          controller.enqueue(encoder.encode(createSSEMessage("tagging", "Tag generation skipped (AI unavailable)", 49)));
+          controller.enqueue(encoder.encode(createSSEMessage("tagging", `Tag generation skipped: ${getAIErrorMessage(error)}`, 49)));
         }
 
         // Step 5: Entity Extraction
@@ -205,7 +206,7 @@ export async function POST(req: Request) {
             60
           )));
         } catch (error) {
-          controller.enqueue(encoder.encode(createSSEMessage("extracting", "Entity extraction skipped (AI unavailable)", 60)));
+          controller.enqueue(encoder.encode(createSSEMessage("extracting", `Entity extraction skipped: ${getAIErrorMessage(error)}`, 60)));
         }
 
         // Step 6: Generate Embeddings with caching (Phase 3 & 6)
@@ -238,8 +239,8 @@ export async function POST(req: Request) {
         } catch (error) {
           console.error("Embedding generation failed:", error);
           controller.enqueue(encoder.encode(createSSEMessage(
-            "embedding", 
-            `Embedding generation failed`, 
+            "embedding",
+            `Embedding generation failed: ${getAIErrorMessage(error)}`,
             75
           )));
         }
@@ -401,7 +402,7 @@ export async function POST(req: Request) {
         console.error("Ingestion error:", error);
         controller.enqueue(encoder.encode(createSSEMessage(
           "error",
-          error instanceof Error ? error.message : "An unexpected error occurred",
+          getAIErrorMessage(error),
           0,
           true
         )));

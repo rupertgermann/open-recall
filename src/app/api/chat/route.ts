@@ -3,6 +3,7 @@ import { z } from "zod";
 import { createOpenAI } from "@ai-sdk/openai";
 import { retrieveContext, buildPromptContext } from "@/actions/chat";
 import { getChatConfigFromDB, type ChatConfig } from "@/lib/ai/config";
+import { createAIErrorResponse, getAIErrorMessage } from "@/lib/ai/errors";
 import { db } from "@/db";
 import { chatMessages, chatThreads, entities, documents } from "@/db/schema";
 import { eq, like, or, desc } from "drizzle-orm";
@@ -110,6 +111,15 @@ async function ensureThread(threadId?: string | null, category?: string, entityI
 }
 
 export async function POST(req: Request) {
+  try {
+    return await handleChatPost(req);
+  } catch (error) {
+    console.error("Chat request failed:", getAIErrorMessage(error));
+    return createAIErrorResponse(error);
+  }
+}
+
+async function handleChatPost(req: Request) {
   const {
     messages,
     threadId,
@@ -378,18 +388,18 @@ Guidelines:
   const result = streamText({
     model: model as Parameters<typeof streamText>[0]["model"],
     system: systemPrompt,
-    messages: convertToModelMessages(messages),
+    messages: await convertToModelMessages(messages),
     tools: chatTools,
     stopWhen: stepCountIs(3),
   });
 
   // Ensure the stream runs to completion and triggers onFinish even if the client disconnects.
   // (best-effort; ignore errors)
-  try {
-    result.consumeStream();
-  } catch {
-    // ignore
-  }
+  void result.consumeStream({
+    onError: (error) => {
+      console.error("Chat stream failed:", getAIErrorMessage(error));
+    },
+  });
 
   // Persist latest user message (best-effort).
   try {
@@ -423,6 +433,7 @@ Guidelines:
         };
       }
     },
+    onError: (error) => getAIErrorMessage(error),
     onFinish: async ({ messages: responseMessages }) => {
       try {
         const lastAssistant = [...responseMessages].reverse().find((m) => m.role === "assistant");

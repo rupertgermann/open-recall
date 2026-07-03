@@ -22,6 +22,7 @@ import {
   PromptInputTextarea,
 } from "@/components/ai-elements/prompt-input";
 import { Button } from "@/components/ui/button";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -32,9 +33,10 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { Loader2, MessageSquareIcon, Trash2, ArrowLeft, Lightbulb } from "lucide-react";
+import { AlertCircle, Loader2, MessageSquareIcon, Trash2, ArrowLeft, Lightbulb } from "lucide-react";
 import Link from "next/link";
 import { getDocumentStarterPrompts, getEntityStarterPrompts, type StarterPrompt } from "@/lib/chat/starter-prompts";
+import { getAIErrorMessage } from "@/lib/ai/errors";
 
 const chatTransport = new DefaultChatTransport({ api: "/api/chat" });
 
@@ -125,7 +127,7 @@ export default function ChatThreadPage() {
     return toUIMessages(loaded.messages);
   }, [loaded]);
 
-  const { messages, status, sendMessage, setMessages } = useChat<ChatUIMessage>({
+  const { messages, status, sendMessage, setMessages, error: chatError } = useChat<ChatUIMessage>({
     transport: chatTransport,
   });
 
@@ -136,20 +138,27 @@ export default function ChatThreadPage() {
   }, [initialMessages, setMessages]);
 
   const [text, setText] = useState("");
+  const [chatRequestError, setChatRequestError] = useState<string | null>(null);
+  const chatErrorMessage = chatRequestError ?? (chatError ? getAIErrorMessage(chatError) : null);
 
   const handleSubmit = async () => {
     const trimmed = text.trim();
     if (!trimmed || status !== "ready") return;
+    setChatRequestError(null);
 
-    await sendMessage(
-      { text: trimmed },
-      {
-        body: {
-          threadId,
-        },
-      }
-    );
-    setText("");
+    try {
+      await sendMessage(
+        { text: trimmed },
+        {
+          body: {
+            threadId,
+          },
+        }
+      );
+      setText("");
+    } catch (error) {
+      setChatRequestError(getAIErrorMessage(error));
+    }
   };
 
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
@@ -162,16 +171,21 @@ export default function ChatThreadPage() {
 
   const handleStarterPrompt = async (prompt: string) => {
     setText(prompt);
+    setChatRequestError(null);
     // Auto-submit the starter prompt
-    await sendMessage(
-      { text: prompt },
-      {
-        body: {
-          threadId,
-        },
-      }
-    );
-    setText("");
+    try {
+      await sendMessage(
+        { text: prompt },
+        {
+          body: {
+            threadId,
+          },
+        }
+      );
+      setText("");
+    } catch (error) {
+      setChatRequestError(getAIErrorMessage(error));
+    }
   };
 
   return (
@@ -221,6 +235,14 @@ export default function ChatThreadPage() {
           <div className="text-sm text-destructive">{error}</div>
         ) : (
           <div className="flex flex-col gap-4">
+            {chatErrorMessage && (
+              <Alert variant="destructive">
+                <AlertCircle className="h-4 w-4" />
+                <AlertTitle>Chat request failed</AlertTitle>
+                <AlertDescription>{chatErrorMessage}</AlertDescription>
+              </Alert>
+            )}
+
             <Conversation className="rounded-lg border h-[60vh]">
               <ConversationContent>
                 {messages.map((m, index) => (

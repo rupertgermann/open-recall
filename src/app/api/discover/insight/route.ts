@@ -3,6 +3,7 @@ import { z } from "zod";
 
 import { getModel } from "@/lib/ai/client";
 import { getChatConfigFromDB } from "@/lib/ai/config";
+import { getAIErrorMessage } from "@/lib/ai/errors";
 import {
   buildDiscoverInsightPrompt,
   DISCOVER_INSIGHT_SYSTEM_PROMPT,
@@ -64,9 +65,9 @@ export async function POST(req: Request) {
 
     return result.toTextStreamResponse();
   } catch (error) {
-    console.error("Discover insight generation failed:", error);
+    console.error("Discover insight generation failed:", getAIErrorMessage(error));
     return Response.json(
-      { error: "Failed to generate discover insight." },
+      { error: getAIErrorMessage(error) },
       { status: 500 }
     );
   }

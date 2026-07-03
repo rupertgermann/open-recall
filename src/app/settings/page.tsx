@@ -1,22 +1,40 @@
 "use client";
 
 import React, { useState, useEffect } from "react";
-import { Save, RefreshCw, CheckCircle, Loader2, Server, Cpu, Database, MessageSquare, Binary } from "lucide-react";
-import { getAISettings, saveAISettings, getDatabaseStats, testAIConnection, type AISettings, type ProviderSettings } from "@/actions/settings";
+import { RefreshCw, CheckCircle, Loader2, Server, Cpu, Database, MessageSquare, Binary } from "lucide-react";
+import { getAISettings, saveAISettings, getDatabaseStats, testAIConnection, validateOpenAIApiKey } from "@/actions/settings";
 import { Header } from "@/components/layout/header";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import {
+  DEFAULT_LOCAL_CHAT_MODEL,
+  DEFAULT_LOCAL_EMBEDDING_MODEL,
+  DEFAULT_OPENAI_CHAT_MODEL,
+  DEFAULT_OPENAI_EMBEDDING_MODEL,
+  LOCAL_CHAT_MODELS,
+  LOCAL_EMBEDDING_MODELS,
+  OPENAI_CHAT_MODELS,
+  OPENAI_EMBEDDING_MODELS,
+  getOpenAIChatModelOptions,
+  isRemovedOpenAIChatModel,
+  mergeModelOptions,
+  normalizeOpenAIChatModel,
+} from "@/lib/ai/models";
 
 type Provider = "local" | "openai";
 type ConnectionStatus = "connected" | "disconnected" | "testing";
+type ApiKeyValidationStatus = "idle" | "validating" | "valid" | "invalid";
 
 export default function SettingsPage() {
   const [isLoading, setIsLoading] = useState(true);
 
   const [openaiApiKey, setOpenaiApiKey] = useState("");
+  const [openaiApiKeyStatus, setOpenaiApiKeyStatus] = useState<ApiKeyValidationStatus>("idle");
+  const [openaiApiKeyError, setOpenaiApiKeyError] = useState<string | null>(null);
+  const [openaiApiKeyInputActive, setOpenaiApiKeyInputActive] = useState(false);
 
   // Chat provider settings
   const [chatProvider, setChatProvider] = useState<Provider>("local");
@@ -24,11 +42,7 @@ export default function SettingsPage() {
   const [chatModel, setChatModel] = useState("llama3.2:8b");
   const [chatConnectionStatus, setChatConnectionStatus] = useState<ConnectionStatus>("disconnected");
   const [chatConnectionError, setChatConnectionError] = useState<string | null>(null);
-  const [chatAvailableModels, setChatAvailableModels] = useState<string[]>([
-    "llama3.2:8b",
-    "mistral:7b", 
-    "qwen2.5:7b",
-  ]);
+  const [chatAvailableModels, setChatAvailableModels] = useState<string[]>([...LOCAL_CHAT_MODELS]);
 
   // OpenAI-specific chat settings
   const [reasoningEffort, setReasoningEffort] = useState("medium");
@@ -41,10 +55,7 @@ export default function SettingsPage() {
   const [embeddingModel, setEmbeddingModel] = useState("nomic-embed-text");
   const [embeddingConnectionStatus, setEmbeddingConnectionStatus] = useState<ConnectionStatus>("disconnected");
   const [embeddingConnectionError, setEmbeddingConnectionError] = useState<string | null>(null);
-  const [embeddingAvailableModels, setEmbeddingAvailableModels] = useState<string[]>([
-    "nomic-embed-text",
-    "mxbai-embed-large",
-  ]);
+  const [embeddingAvailableModels, setEmbeddingAvailableModels] = useState<string[]>([...LOCAL_EMBEDDING_MODELS]);
 
   const [isSaving, setIsSaving] = useState(false);
   const [saved, setSaved] = useState(false);
@@ -109,9 +120,18 @@ export default function SettingsPage() {
           getDatabaseStats(),
         ]);
         // Chat settings
+        const loadedChatModel =
+          settings.chat.provider === "openai"
+            ? normalizeOpenAIChatModel(settings.chat.model)
+            : settings.chat.model;
         setChatProvider(settings.chat.provider);
         setChatBaseUrl(settings.chat.baseUrl);
-        setChatModel(settings.chat.model);
+        setChatModel(loadedChatModel);
+        setChatAvailableModels(
+          settings.chat.provider === "openai"
+            ? getOpenAIChatModelOptions([], loadedChatModel)
+            : mergeModelOptions(LOCAL_CHAT_MODELS, [], loadedChatModel)
+        );
         // OpenAI-specific chat settings
         setReasoningEffort(settings.chat.reasoningEffort || "medium");
         setVerbosity(settings.chat.verbosity || "medium");
@@ -120,6 +140,11 @@ export default function SettingsPage() {
         setEmbeddingProvider(settings.embedding.provider);
         setEmbeddingBaseUrl(settings.embedding.baseUrl);
         setEmbeddingModel(settings.embedding.model);
+        setEmbeddingAvailableModels(
+          settings.embedding.provider === "openai"
+            ? mergeModelOptions(OPENAI_EMBEDDING_MODELS, [], settings.embedding.model)
+            : mergeModelOptions(LOCAL_EMBEDDING_MODELS, [], settings.embedding.model)
+        );
 
         const keyFromSettings =
           settings.chat.apiKey || settings.embedding.apiKey || "";
@@ -156,17 +181,14 @@ export default function SettingsPage() {
           
           if (chatProvider === "openai") {
             // For OpenAI, show only chat models (non-embedding models)
-            models = result.models
+            const discoveredModels = result.models
               .filter((m: string) => !m.startsWith("text-embedding-"))
               .filter((m: string) => !m.includes("embedding"));
+            models = getOpenAIChatModelOptions(discoveredModels, chatModel);
           } else {
             // For local providers, show non-embedding models
-            models = result.models.filter((m: string) => !m.includes("embed"));
-          }
-          
-          // Always include the currently configured model in the list
-          if (chatModel && !models.includes(chatModel)) {
-            models = [chatModel, ...models];
+            const discoveredModels = result.models.filter((m: string) => !m.includes("embed"));
+            models = mergeModelOptions(LOCAL_CHAT_MODELS, discoveredModels, chatModel);
           }
           
           setChatAvailableModels(models);
@@ -194,15 +216,15 @@ export default function SettingsPage() {
       if (result.success) {
         setEmbeddingConnectionStatus("connected");
         if (result.models && result.models.length > 0) {
-          const openaiModels = result.models.filter((m: string) => m.startsWith("text-embedding-"));
-          const localModels = result.models.filter((m: string) => m.includes("embed"));
-
-          let models = embeddingProvider === "openai" ? openaiModels : localModels;
-          
-          // Always include the currently configured model in the list
-          if (embeddingModel && !models.includes(embeddingModel)) {
-            models = [embeddingModel, ...models];
-          }
+          const discoveredModels =
+            embeddingProvider === "openai"
+              ? result.models.filter((m: string) => m.startsWith("text-embedding-"))
+              : result.models.filter((m: string) => m.includes("embed"));
+          const models = mergeModelOptions(
+            embeddingProvider === "openai" ? OPENAI_EMBEDDING_MODELS : LOCAL_EMBEDDING_MODELS,
+            discoveredModels,
+            embeddingModel
+          );
           
           setEmbeddingAvailableModels(models);
           // Don't auto-switch the model - keep the user's configured choice
@@ -217,26 +239,58 @@ export default function SettingsPage() {
     }
   };
 
+  const validateApiKey = async () => {
+    setOpenaiApiKeyStatus("validating");
+    setOpenaiApiKeyError(null);
+
+    try {
+      const result = await validateOpenAIApiKey(openaiApiKey);
+
+      if (!result.success) {
+        setOpenaiApiKeyStatus("invalid");
+        setOpenaiApiKeyError(result.error || "OpenAI API key validation failed");
+        return;
+      }
+
+      setOpenaiApiKeyStatus("valid");
+
+      if (result.models && result.models.length > 0) {
+        if (chatProvider === "openai") {
+          const discoveredChatModels = result.models
+            .filter((model) => !model.startsWith("text-embedding-"))
+            .filter((model) => !model.includes("embedding"));
+          setChatAvailableModels(getOpenAIChatModelOptions(discoveredChatModels, chatModel));
+        }
+
+        if (embeddingProvider === "openai") {
+          const discoveredEmbeddingModels = result.models.filter((model) =>
+            model.startsWith("text-embedding-")
+          );
+          setEmbeddingAvailableModels(
+            mergeModelOptions(OPENAI_EMBEDDING_MODELS, discoveredEmbeddingModels, embeddingModel)
+          );
+        }
+      }
+    } catch (error) {
+      setOpenaiApiKeyStatus("invalid");
+      setOpenaiApiKeyError(error instanceof Error ? error.message : "OpenAI API key validation failed");
+    }
+  };
+
   // Apply OpenAI defaults when switching provider
   useEffect(() => {
     if (chatProvider === "openai") {
-      setChatModel((prev) => (prev === "llama3.2:8b" ? "gpt-5.2" : prev));
-      // Set default OpenAI models until connection test
-      setChatAvailableModels([
-        "gpt-5.2",
-        "gpt-5-nano",
-        "gpt-5-mini",
-      ]);
+      setChatModel((prev) =>
+        prev === DEFAULT_LOCAL_CHAT_MODEL || isRemovedOpenAIChatModel(prev)
+          ? DEFAULT_OPENAI_CHAT_MODEL
+          : prev
+      );
+      setChatAvailableModels([...OPENAI_CHAT_MODELS]);
       setChatConnectionStatus("disconnected");
       setChatConnectionError(null);
     } else {
-      setChatModel((prev) => (prev.startsWith("gpt-") ? "llama3.2:8b" : prev));
-      // Reset to local models
-      setChatAvailableModels([
-        "llama3.2:8b",
-        "mistral:7b", 
-        "qwen2.5:7b",
-      ]);
+      setChatModel((prev) => (prev.startsWith("gpt-") ? DEFAULT_LOCAL_CHAT_MODEL : prev));
+      setChatAvailableModels([...LOCAL_CHAT_MODELS]);
       setChatConnectionStatus("disconnected");
       setChatConnectionError(null);
     }
@@ -244,21 +298,13 @@ export default function SettingsPage() {
 
   useEffect(() => {
     if (embeddingProvider === "openai") {
-      setEmbeddingModel((prev) => (prev === "nomic-embed-text" ? "text-embedding-3-small" : prev));
-      // Set default OpenAI embedding models until connection test
-      setEmbeddingAvailableModels([
-        "text-embedding-3-small",
-        "text-embedding-3-large",
-      ]);
+      setEmbeddingModel((prev) => (prev === DEFAULT_LOCAL_EMBEDDING_MODEL ? DEFAULT_OPENAI_EMBEDDING_MODEL : prev));
+      setEmbeddingAvailableModels([...OPENAI_EMBEDDING_MODELS]);
       setEmbeddingConnectionStatus("disconnected");
       setEmbeddingConnectionError(null);
     } else {
-      setEmbeddingModel((prev) => (prev.startsWith("text-embedding-") ? "nomic-embed-text" : prev));
-      // Reset to local models
-      setEmbeddingAvailableModels([
-        "nomic-embed-text",
-        "mxbai-embed-large",
-      ]);
+      setEmbeddingModel((prev) => (prev.startsWith("text-embedding-") ? DEFAULT_LOCAL_EMBEDDING_MODEL : prev));
+      setEmbeddingAvailableModels([...LOCAL_EMBEDDING_MODELS]);
       setEmbeddingConnectionStatus("disconnected");
       setEmbeddingConnectionError(null);
     }
@@ -520,16 +566,61 @@ export default function SettingsPage() {
                 <CardDescription>Used when you select OpenAI as provider</CardDescription>
               </CardHeader>
               <CardContent className="space-y-2">
-                <label className="text-sm font-medium">API Key</label>
+                <label className="text-sm font-medium" htmlFor="openai-secret-token">
+                  API Key
+                </label>
                 <Input
+                  id="openai-secret-token"
+                  name="manual-openai-token"
                   type="password"
                   value={openaiApiKey}
-                  onChange={(e) => setOpenaiApiKey(e.target.value)}
+                  autoComplete="new-password"
+                  autoCapitalize="none"
+                  autoCorrect="off"
+                  spellCheck={false}
+                  readOnly={!openaiApiKeyInputActive}
+                  data-lpignore="true"
+                  data-1p-ignore="true"
+                  data-form-type="other"
+                  onFocus={() => setOpenaiApiKeyInputActive(true)}
+                  onChange={(e) => {
+                    setOpenaiApiKey(e.target.value);
+                    setOpenaiApiKeyStatus("idle");
+                    setOpenaiApiKeyError(null);
+                  }}
                   placeholder="sk-..."
                 />
-                <p className="text-xs text-muted-foreground">
-                  Stored locally, never sent to our servers
-                </p>
+                <div className="flex flex-wrap items-center gap-2">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={validateApiKey}
+                    disabled={openaiApiKeyStatus === "validating" || !openaiApiKey.trim()}
+                  >
+                    {openaiApiKeyStatus === "validating" ? (
+                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    ) : openaiApiKeyStatus === "valid" ? (
+                      <CheckCircle className="mr-2 h-4 w-4 text-green-500" />
+                    ) : (
+                      <RefreshCw className="mr-2 h-4 w-4" />
+                    )}
+                    Validate API key
+                  </Button>
+                  {openaiApiKeyStatus === "valid" && (
+                    <Badge variant="outline" className="text-green-500 border-green-500">
+                      Valid
+                    </Badge>
+                  )}
+                  {openaiApiKeyStatus === "invalid" && (
+                    <Badge variant="outline" className="text-destructive border-destructive">
+                      Invalid
+                    </Badge>
+                  )}
+                  {openaiApiKeyError && (
+                    <span className="text-xs text-destructive">{openaiApiKeyError}</span>
+                  )}
+                </div>
+                <p className="text-xs text-muted-foreground">Stored locally and only used for OpenAI requests</p>
               </CardContent>
             </Card>
           )}
