@@ -1,7 +1,7 @@
 import { notFound } from "next/navigation";
 import Link from "next/link";
 import { DocumentImage } from "./document-image";
-import { ArrowLeft, ExternalLink, FileText, Video, Globe, Network, Calendar, Hash, MessageSquare } from "lucide-react";
+import { ArrowLeft, ExternalLink, FileText, Video, Globe, Network, Calendar, Hash } from "lucide-react";
 import { Header } from "@/components/layout/header";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -16,6 +16,8 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { ChatAboutButton } from "@/app/library/chat-about-button";
 import { CollectionEditor } from "./collection-editor";
+import { FlashcardsPanel } from "./flashcards-panel";
+import { getDocumentFlashcards, getDocumentSrsStats } from "@/actions/srs";
 
 const typeIcons = {
   article: Globe,
@@ -53,6 +55,11 @@ export default async function DocumentDetailPage({
   if (!document) {
     notFound();
   }
+
+  const [flashcards, srsStats] = await Promise.all([
+    getDocumentFlashcards(document.id),
+    getDocumentSrsStats(document.id),
+  ]);
 
   const Icon = typeIcons[document.type as keyof typeof typeIcons] || FileText;
   const colorClass = typeColors[document.type as keyof typeof typeColors] || typeColors.note;
@@ -142,6 +149,12 @@ export default async function DocumentDetailPage({
                   </CardContent>
                 </Card>
               )}
+
+              <FlashcardsPanel
+                documentId={document.id}
+                initialCards={flashcards}
+                initialStats={srsStats}
+              />
 
               {/* Chunks */}
               <Card>

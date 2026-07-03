@@ -4,10 +4,20 @@ import { createOpenAI } from "@ai-sdk/openai";
 import { retrieveContext, buildPromptContext } from "@/actions/chat";
 import { getChatConfigFromDB, type ChatConfig } from "@/lib/ai/config";
 import { createAIErrorResponse, getAIErrorMessage } from "@/lib/ai/errors";
+import {
+  dedupeChatSources,
+  detectChatCategoryFromContext,
+  fallbackTitleFromUserText,
+} from "@/lib/chat/helpers";
+import {
+  formatKnowledgeBaseSearchResults,
+  formatLookupEntityResults,
+  formatRelatedDocumentsResults,
+} from "@/lib/chat/tool-results";
 import { db } from "@/db";
 import { chatMessages, chatThreads, entities, documents } from "@/db/schema";
-import { eq, like, or, desc } from "drizzle-orm";
-import type { ChatMessageMetadata, ChatSourceReference, ChatEntityReference } from "@/lib/chat/types";
+import { eq, ilike, or, desc } from "drizzle-orm";
+import type { ChatMessageMetadata, ChatEntityReference } from "@/lib/chat/types";
 
 // Helper to create AI client from config
 function createAIClient(config: ChatConfig) {
@@ -15,12 +25,6 @@ function createAIClient(config: ChatConfig) {
     baseURL: config.baseUrl,
     apiKey: config.apiKey || "ollama",
   });
-}
-
-function fallbackTitleFromUserText(text: string): string {
-  const cleaned = text.replace(/\s+/g, " ").trim();
-  if (!cleaned) return "New chat";
-  return cleaned.length > 60 ? `${cleaned.slice(0, 57)}...` : cleaned;
 }
 
 // Helper to get model instance based on provider
@@ -41,52 +45,6 @@ function getLastUserText(messages: UIMessage[]): string | null {
     }
   }
   return null;
-}
-
-async function detectChatCategory(lastUserText: string | null): Promise<{
-  category: string;
-  entityId?: string;
-  documentId?: string;
-}> {
-  if (!lastUserText) {
-    return { category: 'general' };
-  }
-
-  try {
-    // Retrieve context to determine if this is entity or document specific
-    const retrievedData = await retrieveContext(lastUserText, 5);
-    
-    // Check if there's a dominant entity in the context
-    if (retrievedData.entities.length > 0) {
-      // Use the highest scoring/most relevant entity
-      const topEntity = retrievedData.entities[0];
-      return { 
-        category: 'entity', 
-        entityId: topEntity.id 
-      };
-    }
-    
-    // Check if there's a dominant document in the context
-    if (retrievedData.chunks.length > 0) {
-      // Group chunks by document and find the most referenced one
-      const documentCounts = retrievedData.chunks.reduce((acc, chunk) => {
-        acc[chunk.documentId] = (acc[chunk.documentId] || 0) + 1;
-        return acc;
-      }, {} as Record<string, number>);
-      
-      const topDocumentId = Object.entries(documentCounts)
-        .sort(([,a], [,b]) => b - a)[0][0];
-      
-      return { 
-        category: 'document', 
-        documentId: topDocumentId 
-      };
-    }
-  } catch (error) {
-    console.error("Failed to detect chat category:", error);
-  }
-  
-  return { category: 'general' };
 }
 
 async function ensureThread(threadId?: string | null, category?: string, entityId?: string, documentId?: string): Promise<string> {
@@ -129,28 +87,37 @@ async function handleChatPost(req: Request) {
   } = await req.json();
 
   const lastUserText = getLastUserText(messages);
-  
-  // For new threads, detect category automatically
-  let category, entityId, documentId;
-  if (!threadId) {
-    const detectedCategory = await detectChatCategory(lastUserText);
-    category = detectedCategory.category;
-    entityId = detectedCategory.entityId;
-    documentId = detectedCategory.documentId;
+
+  let contextString = "";
+  let retrievedData: Awaited<ReturnType<typeof retrieveContext>> = {
+    chunks: [],
+    entities: [],
+    graphContext: "",
+  };
+  let hasRetrievedForCurrentMessage = false;
+
+  // For new threads, retrieve once and derive the category from that same result.
+  let category: string | undefined;
+  let entityId: string | undefined;
+  let documentId: string | undefined;
+  if (!threadId && lastUserText) {
+    try {
+      retrievedData = await retrieveContext(lastUserText, 3);
+      hasRetrievedForCurrentMessage = true;
+      const detectedCategory = detectChatCategoryFromContext(retrievedData);
+      category = detectedCategory.category;
+      entityId = "entityId" in detectedCategory ? detectedCategory.entityId : undefined;
+      documentId = "documentId" in detectedCategory ? detectedCategory.documentId : undefined;
+    } catch (error) {
+      console.error("Failed to retrieve context for new chat:", error);
+      category = "general";
+    }
   }
 
   const effectiveThreadId = await ensureThread(threadId, category, entityId, documentId);
 
   // Load chat configuration from database
   const chatConfig = await getChatConfigFromDB();
-
-  // Retrieve relevant context using hybrid search
-  let contextString = "";
-  let retrievedData: Awaited<ReturnType<typeof retrieveContext>> = { 
-    chunks: [], 
-    entities: [], 
-    graphContext: "" 
-  };
 
   // Check if this is a context-specific chat
   let threadContext = null;
@@ -171,7 +138,9 @@ async function handleChatPost(req: Request) {
   if (lastUserText) {
     try {
       // For entity-specific chats, prioritize that entity in retrieval
-      if (threadContext?.category === "entity" && threadContext.entityId) {
+      if (hasRetrievedForCurrentMessage) {
+        // Reuse the retrieval result already used for new-thread category detection.
+      } else if (threadContext?.category === "entity" && threadContext.entityId) {
         // Get entity details for context
         const entityResult = await db
           .select({
@@ -240,19 +209,7 @@ async function handleChatPost(req: Request) {
     }
   }
 
-  // Deduplicate sources by documentId, keeping highest score
-  const sourceMap = new Map<string, ChatSourceReference>();
-  for (const c of retrievedData.chunks) {
-    const existing = sourceMap.get(c.documentId);
-    if (!existing || c.score > existing.score) {
-      sourceMap.set(c.documentId, {
-        documentId: c.documentId,
-        title: c.documentTitle,
-        score: c.score,
-      });
-    }
-  }
-  const dedupedSources = Array.from(sourceMap.values());
+  const dedupedSources = dedupeChatSources(retrievedData.chunks);
 
   const dedupedEntities: ChatEntityReference[] = retrievedData.entities.map((e) => ({
     id: e.id,
@@ -291,12 +248,11 @@ Guidelines:
               summary: documents.summary,
             })
             .from(documents)
-            .where(or(like(documents.title, `%${query}%`), like(documents.summary, `%${query}%`)))
+            .where(or(ilike(documents.title, `%${query}%`), ilike(documents.summary, `%${query}%`)))
             .orderBy(desc(documents.createdAt))
             .limit(5);
 
-          if (results.length === 0) return "No documents found matching the query.";
-          return results.map((d) => `[${d.title}] (${d.type}): ${d.summary?.slice(0, 200) || "No summary"}`).join("\n\n");
+          return formatKnowledgeBaseSearchResults(results);
         } catch {
           return "Failed to search the knowledge base.";
         }
@@ -342,13 +298,10 @@ Guidelines:
               description: entities.description,
             })
             .from(entities)
-            .where(like(entities.name, `%${name}%`))
+            .where(ilike(entities.name, `%${name}%`))
             .limit(5);
 
-          if (results.length === 0) return `No entity found matching "${name}".`;
-          return results
-            .map((e) => `**${e.name}** (${e.type}): ${e.description || "No description"}`)
-            .join("\n\n");
+          return formatLookupEntityResults(results, name);
         } catch {
           return "Failed to look up entity.";
         }
@@ -370,14 +323,11 @@ Guidelines:
               createdAt: documents.createdAt,
             })
             .from(documents)
-            .where(or(like(documents.title, `%${topic}%`), like(documents.summary, `%${topic}%`)))
+            .where(or(ilike(documents.title, `%${topic}%`), ilike(documents.summary, `%${topic}%`)))
             .orderBy(desc(documents.createdAt))
             .limit(8);
 
-          if (results.length === 0) return `No documents found related to "${topic}".`;
-          return results
-            .map((d) => `- **${d.title}** (${d.type}, ${d.createdAt.toLocaleDateString()}): ${d.summary?.slice(0, 150) || "No summary"}...`)
-            .join("\n");
+          return formatRelatedDocumentsResults(results, topic);
         } catch {
           return "Failed to find related documents.";
         }

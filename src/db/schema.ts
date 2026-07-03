@@ -143,7 +143,10 @@ export const chunks = pgTable(
       table.documentId,
       table.chunkIndex
     ),
-    contentHashIdx: uniqueIndex("chunks_content_hash_idx").on(table.contentHash),
+    contentHashIdx: uniqueIndex("chunks_document_content_hash_idx").on(
+      table.documentId,
+      table.contentHash
+    ),
     embeddingStatusIdx: index("chunks_embedding_status_idx").on(table.embeddingStatus),
   })
 );

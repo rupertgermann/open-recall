@@ -2,8 +2,26 @@
 
 import { db } from "@/db";
 import { chunks, documents, entities, relationships } from "@/db/schema";
-import { eq, sql, cosineDistance, isNotNull } from "drizzle-orm";
+import { and, cosineDistance, eq, ilike, inArray, isNotNull, or, sql } from "drizzle-orm";
 import { generateEmbeddingWithDBConfig } from "@/lib/ai";
+import {
+  buildEntityNameSearchTerms,
+  distanceToSimilarity,
+  filterByMinimumScore,
+  mergeEntityMatches,
+  scoreEntityNameMatch,
+  sortChunksByDocumentPriority,
+  type EntityMatch,
+} from "@/lib/retrieval";
+
+const MIN_CHUNK_RELEVANCE_SCORE = 0.2;
+const MIN_ENTITY_RELEVANCE_SCORE = 0.2;
+const CANDIDATE_MULTIPLIER = 3;
+const ENTITY_NAME_MATCH_LIMIT = 12;
+const ENTITY_NAME_MAX_WORDS = 5;
+const ENTITY_NAME_MAX_TERMS = 80;
+const MAX_GRAPH_RELATIONSHIPS = 40;
+const MAX_RELATED_ENTITIES = 8;
 
 export type RetrievedContext = {
   chunks: {
@@ -22,10 +40,36 @@ export type RetrievedContext = {
   graphContext: string;
 };
 
+type RetrieveContextOptions = {
+  prioritizedDocumentId?: string | null;
+};
+
+type RetrievedEntity = {
+  id: string;
+  name: string;
+  type: string;
+  description: string | null;
+};
+
+type RelationshipContextRow = {
+  sourceId: string;
+  targetId: string;
+  type: string;
+};
+
 /**
  * Hybrid retrieval: Vector search + Graph traversal
  */
-export async function retrieveContext(query: string, limit: number = 5): Promise<RetrievedContext> {
+export async function retrieveContext(
+  query: string,
+  limit: number = 5,
+  options: RetrieveContextOptions = {}
+): Promise<RetrievedContext> {
+  const resultLimit = Math.max(0, Math.floor(limit));
+  if (resultLimit === 0) {
+    return { chunks: [], entities: [], graphContext: "" };
+  }
+
   // 1. Generate query embedding
   let queryEmbedding: number[];
   try {
@@ -35,81 +79,211 @@ export async function retrieveContext(query: string, limit: number = 5): Promise
     return { chunks: [], entities: [], graphContext: "" };
   }
 
-  // 2. Vector search - find similar chunks
-  const similarChunks = await db
-    .select({
-      id: chunks.id,
-      content: chunks.content,
-      documentId: chunks.documentId,
-      documentTitle: documents.title,
-      distance: cosineDistance(chunks.embedding, queryEmbedding),
-    })
-    .from(chunks)
-    .innerJoin(documents, eq(documents.id, chunks.documentId))
-    .where(isNotNull(chunks.embedding)) // Only chunks with embeddings
-    .orderBy(cosineDistance(chunks.embedding, queryEmbedding))
-    .limit(limit);
+  const chunkDistance = cosineDistance(chunks.embedding, queryEmbedding);
+  const entityDistance = cosineDistance(entities.embedding, queryEmbedding);
+  const candidateLimit = resultLimit * CANDIDATE_MULTIPLIER;
 
-  // 3. Extract entities from query (simple keyword matching for MVP)
-  // In production, you'd use NER or the LLM
-  const allEntities = await db.select().from(entities);
-  const queryLower = query.toLowerCase();
-  const matchedEntities = allEntities.filter(
-    (e) => queryLower.includes(e.name.toLowerCase())
+  // 2. Bounded vector and name searches
+  const [similarChunks, vectorEntityRows, nameEntityRows] = await Promise.all([
+    db
+      .select({
+        id: chunks.id,
+        content: chunks.content,
+        documentId: chunks.documentId,
+        documentTitle: documents.title,
+        distance: chunkDistance,
+      })
+      .from(chunks)
+      .innerJoin(documents, eq(documents.id, chunks.documentId))
+      .where(isNotNull(chunks.embedding))
+      .orderBy(chunkDistance)
+      .limit(candidateLimit),
+    db
+      .select({
+        id: entities.id,
+        name: entities.name,
+        type: entities.type,
+        description: entities.description,
+        distance: entityDistance,
+      })
+      .from(entities)
+      .where(isNotNull(entities.embedding))
+      .orderBy(entityDistance)
+      .limit(candidateLimit),
+    findEntityNameMatches(query),
+  ]);
+
+  const retrievedChunks = sortChunksByDocumentPriority(
+    filterByMinimumScore(
+      similarChunks.map((chunk) => ({
+        id: chunk.id,
+        content: chunk.content,
+        documentId: chunk.documentId,
+        documentTitle: chunk.documentTitle,
+        score: distanceToSimilarity(chunk.distance as number | null),
+      })),
+      MIN_CHUNK_RELEVANCE_SCORE
+    ),
+    options.prioritizedDocumentId
+  ).slice(0, resultLimit);
+
+  const vectorEntityMatches = filterByMinimumScore(
+    vectorEntityRows.map((entity) => ({
+      id: entity.id,
+      name: entity.name,
+      type: entity.type,
+      description: entity.description,
+      score: distanceToSimilarity(entity.distance as number | null),
+    })),
+    MIN_ENTITY_RELEVANCE_SCORE
   );
 
-  // 4. Graph traversal - find related entities
-  const relatedEntities: typeof allEntities = [];
-  const seenIds = new Set(matchedEntities.map((e) => e.id));
+  const nameEntityMatches = nameEntityRows.flatMap((entity): EntityMatch[] => {
+    const score = scoreEntityNameMatch(query, entity.name);
+    if (score === null) {
+      return [];
+    }
 
-  for (const entity of matchedEntities) {
-    // Get entities connected to matched entities
-    const connected = await db
-      .select({
-        id: entities.id,
-        name: entities.name,
-        type: entities.type,
-        description: entities.description,
-        createdAt: entities.createdAt,
-        updatedAt: entities.updatedAt,
-        embedding: entities.embedding,
-      })
-      .from(relationships)
-      .innerJoin(entities, eq(entities.id, relationships.targetEntityId))
-      .where(eq(relationships.sourceEntityId, entity.id))
-      .limit(3);
+    return [
+      {
+        id: entity.id,
+        name: entity.name,
+        type: entity.type,
+        description: entity.description,
+        score,
+      },
+    ];
+  });
 
-    const connectedReverse = await db
-      .select({
-        id: entities.id,
-        name: entities.name,
-        type: entities.type,
-        description: entities.description,
-        createdAt: entities.createdAt,
-        updatedAt: entities.updatedAt,
-        embedding: entities.embedding,
-      })
-      .from(relationships)
-      .innerJoin(entities, eq(entities.id, relationships.sourceEntityId))
-      .where(eq(relationships.targetEntityId, entity.id))
-      .limit(3);
+  const matchedEntities = mergeEntityMatches(
+    vectorEntityMatches,
+    nameEntityMatches,
+    resultLimit
+  );
+  const { relatedEntities, relevantRelationships } = await expandGraphContext(
+    matchedEntities,
+    resultLimit
+  );
+  const relevantEntities = dedupeEntities([...matchedEntities, ...relatedEntities]);
+  const graphContext = buildGraphContext(relevantEntities, relevantRelationships);
 
-    for (const e of [...connected, ...connectedReverse]) {
-      if (!seenIds.has(e.id)) {
-        seenIds.add(e.id);
-        relatedEntities.push(e);
+  return {
+    chunks: retrievedChunks,
+    entities: relevantEntities.map((e) => ({
+      id: e.id,
+      name: e.name,
+      type: e.type,
+      description: e.description,
+    })),
+    graphContext,
+  };
+}
+
+async function findEntityNameMatches(query: string): Promise<RetrievedEntity[]> {
+  const trimmedQuery = query.trim();
+  const normalizedName = sql<string>`trim(regexp_replace(lower(${entities.name}), '[^a-z0-9]+', ' ', 'g'))`;
+  const nameTerms = buildEntityNameSearchTerms(query, {
+    maxWordsPerTerm: ENTITY_NAME_MAX_WORDS,
+    maxTerms: ENTITY_NAME_MAX_TERMS,
+  });
+  const conditions = [];
+
+  if (nameTerms.length > 0) {
+    conditions.push(inArray(normalizedName, nameTerms));
+  }
+
+  if (trimmedQuery) {
+    conditions.push(ilike(entities.name, trimmedQuery));
+    conditions.push(ilike(entities.name, `%${trimmedQuery}%`));
+  }
+
+  if (conditions.length === 0) {
+    return [];
+  }
+
+  return db
+    .select({
+      id: entities.id,
+      name: entities.name,
+      type: entities.type,
+      description: entities.description,
+    })
+    .from(entities)
+    .where(conditions.length === 1 ? conditions[0] : or(...conditions))
+    .limit(ENTITY_NAME_MATCH_LIMIT);
+}
+
+async function expandGraphContext(
+  matchedEntities: readonly EntityMatch[],
+  resultLimit: number
+): Promise<{
+  relatedEntities: RetrievedEntity[];
+  relevantRelationships: RelationshipContextRow[];
+}> {
+  const seedIds = matchedEntities.map((entity) => entity.id);
+
+  if (seedIds.length === 0) {
+    return { relatedEntities: [], relevantRelationships: [] };
+  }
+
+  const seedIdSet = new Set(seedIds);
+  const neighborhoodRelationships = await db
+    .select({
+      sourceId: relationships.sourceEntityId,
+      targetId: relationships.targetEntityId,
+      type: relationships.relationType,
+    })
+    .from(relationships)
+    .where(
+      or(
+        inArray(relationships.sourceEntityId, seedIds),
+        inArray(relationships.targetEntityId, seedIds)
+      )
+    )
+    .limit(MAX_GRAPH_RELATIONSHIPS);
+
+  const neighborIds: string[] = [];
+  const seenNeighborIds = new Set<string>();
+  const relatedLimit = Math.min(MAX_RELATED_ENTITIES, Math.max(resultLimit * 2, resultLimit));
+
+  for (const relationship of neighborhoodRelationships) {
+    for (const entityId of [relationship.sourceId, relationship.targetId]) {
+      if (
+        seedIdSet.has(entityId) ||
+        seenNeighborIds.has(entityId) ||
+        neighborIds.length >= relatedLimit
+      ) {
+        continue;
       }
+
+      seenNeighborIds.add(entityId);
+      neighborIds.push(entityId);
     }
   }
 
-  // 5. Build graph context string
-  let graphContext = "";
-  if (matchedEntities.length > 0 || relatedEntities.length > 0) {
-    const relevantEntities = [...matchedEntities, ...relatedEntities];
-    
-    // Get relationships between relevant entities
-    const entityIds = relevantEntities.map((e) => e.id);
-    const relevantRelationships = entityIds.length > 0
+  const relatedEntityRows =
+    neighborIds.length > 0
+      ? await db
+          .select({
+            id: entities.id,
+            name: entities.name,
+            type: entities.type,
+            description: entities.description,
+          })
+          .from(entities)
+          .where(inArray(entities.id, neighborIds))
+          .limit(relatedLimit)
+      : [];
+  const relatedEntityById = new Map(
+    relatedEntityRows.map((entity) => [entity.id, entity] as const)
+  );
+  const relatedEntities = neighborIds.flatMap((entityId) => {
+    const entity = relatedEntityById.get(entityId);
+    return entity ? [entity] : [];
+  });
+  const relevantEntityIds = Array.from(new Set([...seedIds, ...relatedEntities.map((e) => e.id)]));
+  const relevantRelationships =
+    relevantEntityIds.length >= 2
       ? await db
           .select({
             sourceId: relationships.sourceEntityId,
@@ -118,37 +292,54 @@ export async function retrieveContext(query: string, limit: number = 5): Promise
           })
           .from(relationships)
           .where(
-            sql`${relationships.sourceEntityId} IN ${entityIds} AND ${relationships.targetEntityId} IN ${entityIds}`
+            and(
+              inArray(relationships.sourceEntityId, relevantEntityIds),
+              inArray(relationships.targetEntityId, relevantEntityIds)
+            )
           )
+          .limit(MAX_GRAPH_RELATIONSHIPS)
       : [];
 
-    // Build context string
-    const entityMap = new Map(relevantEntities.map((e) => [e.id, e.name]));
-    const relationshipStrings = relevantRelationships.map(
-      (r) => `${entityMap.get(r.sourceId)} --[${r.type}]--> ${entityMap.get(r.targetId)}`
-    );
+  return { relatedEntities, relevantRelationships };
+}
 
-    if (relationshipStrings.length > 0) {
-      graphContext = `Knowledge Graph Context:\n${relationshipStrings.join("\n")}`;
+function dedupeEntities<T extends RetrievedEntity>(entitiesToDedupe: readonly T[]): T[] {
+  const byId = new Map<string, T>();
+
+  for (const entity of entitiesToDedupe) {
+    if (!byId.has(entity.id)) {
+      byId.set(entity.id, entity);
     }
   }
 
-  return {
-    chunks: similarChunks.map((c) => ({
-      id: c.id,
-      content: c.content,
-      documentId: c.documentId,
-      documentTitle: c.documentTitle,
-      score: 1 - (c.distance as number || 0), // Convert distance to similarity
-    })),
-    entities: [...matchedEntities, ...relatedEntities].map((e) => ({
-      id: e.id,
-      name: e.name,
-      type: e.type,
-      description: e.description,
-    })),
-    graphContext,
-  };
+  return Array.from(byId.values());
+}
+
+function buildGraphContext(
+  relevantEntities: readonly RetrievedEntity[],
+  relevantRelationships: readonly RelationshipContextRow[]
+): string {
+  if (relevantEntities.length === 0 || relevantRelationships.length === 0) {
+    return "";
+  }
+
+  const entityMap = new Map(relevantEntities.map((entity) => [entity.id, entity.name]));
+  const relationshipStrings = relevantRelationships.flatMap((relationship) => {
+    const sourceName = entityMap.get(relationship.sourceId);
+    const targetName = entityMap.get(relationship.targetId);
+
+    if (!sourceName || !targetName) {
+      return [];
+    }
+
+    return [`${sourceName} --[${relationship.type}]--> ${targetName}`];
+  });
+
+  if (relationshipStrings.length === 0) {
+    return "";
+  }
+
+  return `Knowledge Graph Context:\n${relationshipStrings.join("\n")}`;
 }
 
 /**

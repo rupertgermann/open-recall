@@ -5,8 +5,7 @@ import { documents, chunks, entities, entityMentions, relationships, tags, docum
 import { eq, desc, like, or, sql, count, inArray } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { generateTagsWithDBConfig } from "@/lib/ai";
-import { extractFromUrl, detectContentType, downloadDocumentImage } from "@/lib/content/extractor";
-import { reprocessDocument } from "@/actions/ingest";
+import { refreshDocument } from "@/lib/ingestion/service";
 
 export type DocumentWithStats = {
   id: string;
@@ -17,6 +16,7 @@ export type DocumentWithStats = {
   createdAt: Date;
   processingStatus: string;
   entityCount: number;
+  dueSrsCount: number;
   imagePath: string | null;
 };
 
@@ -71,6 +71,12 @@ export async function getDocuments(options?: {
         FROM entity_mentions 
         WHERE entity_mentions.document_id = documents.id
       )`.as("entity_count"),
+      dueSrsCount: sql<number>`(
+        SELECT COUNT(*)
+        FROM srs_items
+        WHERE srs_items.document_id = documents.id
+          AND srs_items.due_date <= NOW()
+      )`.as("due_srs_count"),
     })
     .from(documents)
     .where(conditions.length > 0 ? sql`${conditions.reduce((a, b) => sql`${a} AND ${b}`)}` : undefined)
@@ -87,6 +93,7 @@ export async function getDocuments(options?: {
     createdAt: r.createdAt,
     processingStatus: r.processingStatus,
     entityCount: Number(r.entityCount) || 0,
+    dueSrsCount: Number(r.dueSrsCount) || 0,
     imagePath: (r.metadata as { imagePath?: string } | null)?.imagePath ?? null,
   }));
 }
@@ -261,70 +268,12 @@ export async function generateDocumentTags(documentId: string) {
 }
 
 export async function updateDocumentFromSource(documentId: string) {
-  const [doc] = await db
-    .select({ id: documents.id, url: documents.url })
-    .from(documents)
-    .where(eq(documents.id, documentId))
-    .limit(1);
-
-  if (!doc) {
-    return { success: false, error: "Document not found" };
+  try {
+    await refreshDocument(documentId);
+    return { success: true };
+  } catch (error) {
+    return { success: false, error: error instanceof Error ? error.message : String(error) };
   }
-
-  if (!doc.url) {
-    return { success: false, error: "Document has no source URL" };
-  }
-
-  const contentType = detectContentType(doc.url);
-  const extracted = await extractFromUrl(doc.url);
-  if (!extracted) {
-    return { success: false, error: "Failed to extract content from URL" };
-  }
-
-  await db
-    .update(documents)
-    .set({
-      title: extracted.title,
-      type: contentType === "youtube" ? "youtube" : "article",
-      content: extracted.content,
-      processingStatus: "processing",
-      metadata: extracted.leadImageUrl
-        ? { leadImageUrl: extracted.leadImageUrl }
-        : undefined,
-      updatedAt: new Date(),
-    })
-    .where(eq(documents.id, documentId));
-
-  if (extracted.leadImageUrl) {
-    const image = await downloadDocumentImage(extracted.leadImageUrl, documentId);
-    if (image) {
-      await db
-        .update(documents)
-        .set({
-          metadata: {
-            leadImageUrl: image.url,
-            imagePath: image.publicPath,
-            imageContentType: image.contentType,
-          },
-          updatedAt: new Date(),
-        })
-        .where(eq(documents.id, documentId));
-    }
-  }
-
-  // Reprocess document content and regenerate derived data
-  await reprocessDocument(documentId, extracted.content);
-
-  await db
-    .update(documents)
-    .set({ processingStatus: "completed", updatedAt: new Date() })
-    .where(eq(documents.id, documentId));
-
-  revalidatePath("/library");
-  revalidatePath(`/library/${documentId}`);
-  revalidatePath("/graph");
-
-  return { success: true };
 }
 
 /**

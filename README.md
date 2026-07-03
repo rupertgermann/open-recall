@@ -14,7 +14,7 @@ Save web articles, notes, and PDFs -- then chat with your knowledge base using a
 - **Multi-Source Ingestion**: Save web articles, paste text, or upload PDFs -- content is chunked, embedded, and graph-indexed automatically
 - **Knowledge Graph Visualization**: Interactive force-directed graph with entity detail panels, web search integration, filtering by tags and collections, and contextual chat
 - **Discover**: Surface hidden connections, bridge entities, and knowledge clusters across your knowledge base with AI-generated insights
-- **Spaced Repetition**: AI-generated flashcards with FSRS scheduling for long-term retention
+- **Spaced Repetition**: AI-generated flashcards with due-date review scheduling
 - **Collections & AI Auto-Organize**: Organize documents into collections manually, via bulk selection, or let AI automatically assign unassigned documents to matching collections
 - **Projects**: Group related chat threads into projects for focused research workflows
 - **Flexible AI Providers**: Use local models (Ollama/LM Studio) or cloud providers (OpenAI) -- or mix and match chat and embedding providers independently
@@ -41,6 +41,9 @@ The landing page provides an at-a-glance overview: total documents, entities, re
 
 ### Library (`/library`)
 Browse, search, and filter documents by type (article, YouTube, PDF, note) or collection. Supports card and list view modes, paginated loading, bulk document selection with multi-assign to collections, and AI-powered auto-organize for unassigned documents. Each document links to a detail page with full content, entity tags, related chats, flashcards, and collection management.
+
+### Review (`/review`)
+Review due flashcards generated from document detail pages. Each answer can be rated Again, Hard, Good, or Easy to update the card's next due date.
 
 ### Knowledge Graph (`/graph`)
 An interactive 2D force-directed graph powered by `react-force-graph-2d`. Nodes are color-coded by entity type and sized by connection count. Click any entity to see its details, connected entities, source documents, and related chats. Supports filtering by tags and collections, entity search, web search for entities, zoom controls, and contextual "Chat about" actions.
@@ -174,7 +177,7 @@ The database schema supports a hybrid approach, handling both standard document 
 | **Entities** | Knowledge graph nodes (person, concept, technology, organization, location, event, product) with optional embeddings |
 | **Entity Mentions** | Links chunks to entities with confidence scores, enabling traceability from concept to source text |
 | **Relationships** | Knowledge graph edges with typed relations (e.g., "built_with", "parent_of"), weights, and source document provenance |
-| **SRS Items** | Spaced repetition flashcards with full FSRS parameters (stability, difficulty, reps, lapses, state, scheduling) |
+| **SRS Items** | Spaced repetition flashcards with FSRS-style scheduling fields (stability, difficulty, reps, lapses, state, due date) |
 | **Collections** | Named document groupings with color labels |
 | **Projects** | Chat thread groupings with goals and color labels |
 | **Chat Threads** | Persistent chat sessions with category classification (general, entity, document, project) |
