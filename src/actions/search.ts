@@ -2,22 +2,13 @@
 
 import { db } from "@/db";
 import { documents, entities, chatThreads } from "@/db/schema";
-import { like, or, desc, sql } from "drizzle-orm";
-
-export type SearchResult = {
-  id: string;
-  title: string;
-  type: "document" | "entity" | "chat";
-  subtype?: string;
-  description?: string;
-  href: string;
-};
+import { ilike, or, desc } from "drizzle-orm";
+import { buildGlobalSearchResults, type SearchResult } from "@/lib/search/results";
 
 export async function globalSearch(query: string): Promise<SearchResult[]> {
   if (!query.trim()) return [];
 
   const q = `%${query.trim()}%`;
-  const results: SearchResult[] = [];
 
   const [docs, ents, chats] = await Promise.all([
     db
@@ -28,7 +19,7 @@ export async function globalSearch(query: string): Promise<SearchResult[]> {
         summary: documents.summary,
       })
       .from(documents)
-      .where(or(like(documents.title, q), like(documents.summary, q)))
+      .where(or(ilike(documents.title, q), ilike(documents.summary, q)))
       .orderBy(desc(documents.createdAt))
       .limit(5),
     db
@@ -39,7 +30,7 @@ export async function globalSearch(query: string): Promise<SearchResult[]> {
         description: entities.description,
       })
       .from(entities)
-      .where(or(like(entities.name, q), like(entities.description, q)))
+      .where(or(ilike(entities.name, q), ilike(entities.description, q)))
       .limit(5),
     db
       .select({
@@ -48,42 +39,10 @@ export async function globalSearch(query: string): Promise<SearchResult[]> {
         category: chatThreads.category,
       })
       .from(chatThreads)
-      .where(like(chatThreads.title, q))
+      .where(ilike(chatThreads.title, q))
       .orderBy(desc(chatThreads.lastMessageAt))
       .limit(5),
   ]);
 
-  for (const doc of docs) {
-    results.push({
-      id: doc.id,
-      title: doc.title,
-      type: "document",
-      subtype: doc.type,
-      description: doc.summary?.slice(0, 100) || undefined,
-      href: `/library/${doc.id}`,
-    });
-  }
-
-  for (const ent of ents) {
-    results.push({
-      id: ent.id,
-      title: ent.name,
-      type: "entity",
-      subtype: ent.type,
-      description: ent.description?.slice(0, 100) || undefined,
-      href: `/graph?entity=${ent.id}`,
-    });
-  }
-
-  for (const chat of chats) {
-    results.push({
-      id: chat.id,
-      title: chat.title,
-      type: "chat",
-      subtype: chat.category,
-      href: `/chat/${chat.id}`,
-    });
-  }
-
-  return results;
+  return buildGlobalSearchResults({ documents: docs, entities: ents, chats });
 }

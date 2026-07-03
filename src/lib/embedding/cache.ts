@@ -5,9 +5,15 @@
 
 import { db } from "@/db";
 import { embeddingCache } from "@/db/schema";
+import {
+  generateContentHash as generateSharedContentHash,
+  normalizeTextForHash as normalizeSharedTextForHash,
+} from "@/lib/text";
 import { eq, and, inArray } from "drizzle-orm";
-import { createHash } from "crypto";
 import { metricsCollector } from "./metrics";
+
+export const generateContentHash = generateSharedContentHash;
+export const normalizeText = normalizeSharedTextForHash;
 
 export interface CachedEmbedding {
   id: string;
@@ -16,27 +22,6 @@ export interface CachedEmbedding {
   embedding: number[];
   purpose: "graph" | "retrieval";
   createdAt: Date;
-}
-
-/**
- * Generate SHA-256 hash of normalized text content
- */
-export function generateContentHash(text: string): string {
-  const normalized = normalizeText(text);
-  return createHash("sha256").update(normalized).digest("hex");
-}
-
-/**
- * Normalize text for consistent hashing
- * - Trim whitespace
- * - Collapse multiple whitespace to single space
- * - Lowercase for case-insensitive matching
- */
-export function normalizeText(text: string): string {
-  return text
-    .trim()
-    .replace(/\s+/g, " ")
-    .toLowerCase();
 }
 
 /**

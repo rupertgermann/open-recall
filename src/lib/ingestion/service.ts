@@ -1,0 +1,588 @@
+import { and, eq, inArray } from "drizzle-orm";
+import { revalidatePath } from "next/cache";
+
+import { db } from "@/db";
+import {
+  chunks,
+  documentTags,
+  documents,
+  entities,
+  entityMentions,
+  relationships,
+  tags,
+} from "@/db/schema";
+import { extractFromUrl, detectContentType, downloadDocumentImage } from "@/lib/content/extractor";
+import {
+  extractEntitiesWithDBConfig,
+  generateSummaryWithDBConfig,
+  generateTagsWithDBConfig,
+  type ExtractedEntity,
+  type ExtractedRelationship,
+} from "@/lib/ai";
+import {
+  chunkStructured,
+  generateContentHash,
+  generateGraphEmbeddings,
+  generateRetrievalEmbeddings,
+  getCurrentEmbeddingModel,
+  hasContentChanged,
+  metricsCollector,
+  type StructuredChunk,
+} from "@/lib/embedding";
+import { dedupeDocumentChunks } from "./chunks";
+import { planDocumentReingestCleanup } from "./cleanup";
+import { planEntityMentions } from "./mentions";
+import { planRelationshipInserts } from "./relationships";
+
+export type DocumentIngestionStep =
+  | "fetching"
+  | "chunking"
+  | "summarizing"
+  | "tagging"
+  | "extracting"
+  | "embedding"
+  | "saving"
+  | "complete"
+  | "error";
+
+export type DocumentIngestionEvent = {
+  step: DocumentIngestionStep;
+  message: string;
+  progress: number;
+  error?: boolean;
+  documentId?: string;
+};
+
+export type DocumentIngestionOptions = {
+  maxEntities?: number;
+  maxRelationships?: number;
+  onEvent?: (event: DocumentIngestionEvent) => void | Promise<void>;
+};
+
+export type DocumentIngestionResult = {
+  success: true;
+  documentId: string;
+  skipped: boolean;
+};
+
+type SourceContent = {
+  title: string;
+  content: string;
+  type: "article" | "youtube" | "note" | "pdf";
+  url: string | null;
+  leadImageUrl?: string;
+};
+
+type DerivedDocumentData = {
+  contentHash: string;
+  embeddingModel: string;
+  chunks: StructuredChunk[];
+  chunkEmbeddings: number[][];
+  summary: string | null;
+  tags: string[];
+  entities: ExtractedEntity[];
+  relationships: ExtractedRelationship[];
+  entityEmbeddings: number[][];
+  newEntityKeys: Set<string>;
+};
+
+type EntityIdRecord = {
+  id: string;
+  name: string;
+  type: string;
+};
+
+export async function ingestUrlDocument(
+  url: string,
+  options: DocumentIngestionOptions = {}
+): Promise<DocumentIngestionResult> {
+  const normalizedUrl = validateUrl(url);
+  await emit(options, "fetching", `Extracting content from ${normalizedUrl}...`, 10);
+
+  const source = await getUrlSource(normalizedUrl);
+  await emit(options, "saving", "Creating document record...", 20);
+
+  const [doc] = await db
+    .insert(documents)
+    .values({
+      url: source.url,
+      title: source.title,
+      type: source.type,
+      content: source.content,
+      processingStatus: "processing",
+      metadata: source.leadImageUrl ? { leadImageUrl: source.leadImageUrl } : undefined,
+    })
+    .returning({ id: documents.id });
+
+  try {
+    await saveLeadImage(doc.id, source.leadImageUrl);
+    const derived = await buildDerivedData(doc.id, source, options);
+    await saveDerivedData(doc.id, source, derived, false);
+    await complete(options, doc.id, "Document processed successfully!", false);
+    return { success: true, documentId: doc.id, skipped: false };
+  } catch (error) {
+    await markFailed(doc.id);
+    await emit(options, "error", error instanceof Error ? error.message : String(error), 0, true, doc.id);
+    throw error;
+  }
+}
+
+export async function ingestTextDocument(
+  input: { title: string; content: string },
+  options: DocumentIngestionOptions = {}
+): Promise<DocumentIngestionResult> {
+  if (!input.title.trim()) throw new Error("Title is required");
+  if (!input.content.trim()) throw new Error("Content is required");
+
+  const source: SourceContent = {
+    title: input.title.trim(),
+    content: input.content,
+    type: "note",
+    url: null,
+  };
+
+  await emit(options, "saving", "Creating document record...", 20);
+  const [doc] = await db
+    .insert(documents)
+    .values({
+      title: source.title,
+      type: "note",
+      content: source.content,
+      processingStatus: "processing",
+    })
+    .returning({ id: documents.id });
+
+  try {
+    const derived = await buildDerivedData(doc.id, source, options);
+    await saveDerivedData(doc.id, source, derived, false);
+    await complete(options, doc.id, "Document processed successfully!", false);
+    return { success: true, documentId: doc.id, skipped: false };
+  } catch (error) {
+    await markFailed(doc.id);
+    await emit(options, "error", error instanceof Error ? error.message : String(error), 0, true, doc.id);
+    throw error;
+  }
+}
+
+export async function refreshDocument(
+  documentId: string,
+  options: DocumentIngestionOptions = {}
+): Promise<DocumentIngestionResult> {
+  await emit(options, "fetching", "Validating document...", 5, false, documentId);
+
+  const [existing] = await db
+    .select({
+      id: documents.id,
+      url: documents.url,
+      contentHash: documents.contentHash,
+      embeddingModel: documents.embeddingModel,
+    })
+    .from(documents)
+    .where(eq(documents.id, documentId))
+    .limit(1);
+
+  if (!existing) throw new Error("Document not found");
+  if (!existing.url) throw new Error("Document has no source URL");
+
+  await emit(options, "fetching", "Fetching content from source...", 15, false, documentId);
+  const source = await getUrlSource(existing.url);
+  await saveLeadImage(documentId, source.leadImageUrl);
+
+  const embeddingModel = await getCurrentEmbeddingModel();
+  const contentHash = generateContentHash(source.content);
+  const unchanged =
+    !hasContentChanged(source.content, existing.contentHash) &&
+    existing.embeddingModel === embeddingModel;
+
+  if (unchanged) {
+    await emit(options, "saving", "Source and embedding model unchanged; keeping derived data.", 85, false, documentId);
+    await db
+      .update(documents)
+      .set({
+        title: source.title,
+        type: source.type,
+        content: source.content,
+        contentHash,
+        embeddingModel,
+        processingStatus: "completed",
+        updatedAt: new Date(),
+      })
+      .where(eq(documents.id, documentId));
+    revalidateDocument(documentId);
+    await complete(options, documentId, "Document refresh skipped; derived data is unchanged.", true);
+    return { success: true, documentId, skipped: true };
+  }
+
+  await db
+    .update(documents)
+    .set({ processingStatus: "processing", updatedAt: new Date() })
+    .where(eq(documents.id, documentId));
+
+  try {
+    const derived = await buildDerivedData(documentId, source, options);
+    await saveDerivedData(documentId, source, derived, true);
+    await complete(options, documentId, "Document updated successfully!", false);
+    return { success: true, documentId, skipped: false };
+  } catch (error) {
+    await markFailed(documentId);
+    await emit(options, "error", error instanceof Error ? error.message : String(error), 0, true, documentId);
+    throw error;
+  }
+}
+
+async function buildDerivedData(
+  documentId: string,
+  source: SourceContent,
+  options: DocumentIngestionOptions
+): Promise<DerivedDocumentData> {
+  metricsCollector.startIngestion(documentId);
+
+  try {
+    const embeddingModel = await getCurrentEmbeddingModel();
+    const contentHash = generateContentHash(source.content);
+
+    await emit(options, "chunking", "Splitting content into chunks...", 25, false, documentId);
+    const textChunks = chunkStructured(source.content, {
+      minChunkTokens: 100,
+      maxChunkTokens: 800,
+      targetChunkTokens: 500,
+    });
+    const dedupedChunks = dedupeDocumentChunks(
+      textChunks.map((chunk) => ({ ...chunk, chunkIndex: chunk.index }))
+    );
+    const uniqueChunks = dedupedChunks.uniqueChunks;
+    metricsCollector.recordChunking(uniqueChunks.length);
+    const dedupeMsg =
+      dedupedChunks.duplicateCount > 0
+        ? ` (${dedupedChunks.duplicateCount} duplicates removed)`
+        : "";
+    await emit(options, "chunking", `Created ${uniqueChunks.length} chunks${dedupeMsg}`, 30, false, documentId);
+
+    await emit(options, "summarizing", "Generating AI summary...", 35, false, documentId);
+    const summary = await generateSummaryWithDBConfig(source.content.slice(0, 8000));
+    await emit(options, "summarizing", "Summary generated", 45, false, documentId);
+
+    await emit(options, "tagging", "Generating tags...", 47, false, documentId);
+    const aiTags = await generateTagsWithDBConfig({
+      title: source.title,
+      summary,
+      content: source.content.slice(0, 8000),
+    });
+    await emit(options, "tagging", aiTags.length > 0 ? `Generated ${aiTags.length} tags` : "No tags generated", 49, false, documentId);
+
+    await emit(options, "extracting", "Extracting entities and relationships...", 50, false, documentId);
+    const extractedData = await extractEntitiesWithDBConfig(source.content.slice(0, 8000), {
+      maxEntities: options.maxEntities,
+      maxRelationships: options.maxRelationships,
+    });
+    await emit(
+      options,
+      "extracting",
+      `Found ${extractedData.entities.length} entities, ${extractedData.relationships.length} relationships`,
+      60,
+      false,
+      documentId
+    );
+
+    await emit(options, "embedding", `Generating embeddings for ${uniqueChunks.length} chunks...`, 65, false, documentId);
+    const chunkEmbeddingResult = await generateRetrievalEmbeddings(uniqueChunks.map((chunk) => chunk.content));
+    await emit(options, "embedding", `Generated ${chunkEmbeddingResult.embeddings.length} chunk embeddings`, 75, false, documentId);
+
+    const uniqueEntities = dedupeEntities(extractedData.entities);
+    const newEntities = await getNewEntities(uniqueEntities);
+    const entityEmbeddings =
+      newEntities.length > 0
+        ? (await generateGraphEmbeddings(
+            newEntities.map((entity) => entity.name + (entity.description ? `: ${entity.description}` : ""))
+          )).embeddings
+        : [];
+
+    return {
+      contentHash,
+      embeddingModel,
+      chunks: uniqueChunks,
+      chunkEmbeddings: chunkEmbeddingResult.embeddings,
+      summary,
+      tags: aiTags,
+      entities: uniqueEntities,
+      relationships: extractedData.relationships,
+      entityEmbeddings,
+      newEntityKeys: new Set(newEntities.map(getEntityKey)),
+    };
+  } finally {
+    metricsCollector.finishIngestion();
+  }
+}
+
+async function saveDerivedData(
+  documentId: string,
+  source: SourceContent,
+  derived: DerivedDocumentData,
+  replaceExisting: boolean
+) {
+  await db.transaction(async (tx) => {
+    const cleanup = planDocumentReingestCleanup(documentId);
+
+    if (replaceExisting) {
+      await tx.delete(relationships).where(eq(relationships.sourceDocumentId, cleanup.targets.relationships.sourceDocumentId));
+      await tx.delete(entityMentions).where(eq(entityMentions.documentId, cleanup.targets.entityMentions.documentId));
+      await tx.delete(documentTags).where(eq(documentTags.documentId, cleanup.documentId));
+      await tx.delete(chunks).where(eq(chunks.documentId, cleanup.targets.chunks.documentId));
+    }
+
+    await tx
+      .update(documents)
+      .set({
+        title: source.title,
+        type: source.type,
+        content: source.content,
+        contentHash: derived.contentHash,
+        summary: derived.summary,
+        embeddingModel: derived.embeddingModel,
+        embeddingVersion: "1.0",
+        processingStatus: "completed",
+        updatedAt: new Date(),
+      })
+      .where(eq(documents.id, documentId));
+
+    const insertedChunks =
+      derived.chunks.length > 0
+        ? await tx
+            .insert(chunks)
+            .values(
+              derived.chunks.map((chunk, i) => ({
+                documentId,
+                content: chunk.content,
+                contentHash: chunk.contentHash,
+                chunkIndex: chunk.index,
+                tokenCount: chunk.tokenCount,
+                embedding: derived.chunkEmbeddings[i] ?? null,
+                embeddingStatus: derived.chunkEmbeddings[i] ? "embedded" : "pending",
+                embeddingPurpose: "retrieval",
+              }))
+            )
+            .returning({
+              id: chunks.id,
+              content: chunks.content,
+            })
+        : [];
+
+    await saveDocumentTags(tx, documentId, derived.tags);
+    const entityRecords = await saveEntities(tx, derived);
+    const mentionRows = planEntityMentions({
+      documentId,
+      entities: entityRecords,
+      chunks: insertedChunks,
+    }).mentions.map((mention) => ({
+      documentId,
+      entityId: mention.entityId,
+      chunkId: mention.chunkId,
+      confidence: mention.confidence,
+    }));
+
+    if (mentionRows.length > 0) {
+      await tx.insert(entityMentions).values(mentionRows);
+    }
+
+    const relationshipPlan = planRelationshipInserts({
+      sourceDocumentId: documentId,
+      entityIdMap: new Map(entityRecords.map((entity) => [getEntityKey(entity), entity.id])),
+      relationships: derived.relationships,
+    });
+    const { values, dropped } = relationshipPlan;
+    if (dropped.length > 0) {
+      metricsCollector.log(`[INGEST] Dropped ${dropped.length} unresolved relationships for ${documentId}`);
+    }
+    if (values.length > 0) {
+      await tx.insert(relationships).values(values);
+    }
+  });
+
+  revalidateDocument(documentId);
+}
+
+async function saveEntities(
+  tx: Parameters<Parameters<typeof db.transaction>[0]>[0],
+  derived: DerivedDocumentData
+): Promise<EntityIdRecord[]> {
+  const records: EntityIdRecord[] = [];
+  let newEntityIndex = 0;
+
+  for (const entity of derived.entities) {
+    const key = getEntityKey(entity);
+    const [existing] = await tx
+      .select({ id: entities.id, name: entities.name, type: entities.type })
+      .from(entities)
+      .where(and(eq(entities.name, entity.name), eq(entities.type, entity.type)))
+      .limit(1);
+
+    if (existing) {
+      records.push(existing);
+      continue;
+    }
+
+    const [inserted] = await tx
+      .insert(entities)
+      .values({
+        name: entity.name,
+        type: entity.type,
+        description: entity.description,
+        embedding: derived.newEntityKeys.has(key) ? derived.entityEmbeddings[newEntityIndex++] ?? null : null,
+      })
+      .onConflictDoNothing({ target: [entities.name, entities.type] })
+      .returning({ id: entities.id, name: entities.name, type: entities.type });
+
+    if (inserted) {
+      records.push(inserted);
+      continue;
+    }
+
+    const [createdConcurrently] = await tx
+      .select({ id: entities.id, name: entities.name, type: entities.type })
+      .from(entities)
+      .where(and(eq(entities.name, entity.name), eq(entities.type, entity.type)))
+      .limit(1);
+
+    if (createdConcurrently) {
+      records.push(createdConcurrently);
+    }
+  }
+
+  return records;
+}
+
+async function saveDocumentTags(
+  tx: Parameters<Parameters<typeof db.transaction>[0]>[0],
+  documentId: string,
+  nextTags: string[]
+) {
+  const normalized = Array.from(
+    new Set(nextTags.map((tag) => tag.trim().toLowerCase()).filter((tag) => tag.length > 0))
+  );
+
+  if (normalized.length === 0) return;
+
+  await tx.insert(tags).values(normalized.map((name) => ({ name }))).onConflictDoNothing();
+  const tagRows = await tx
+    .select({ id: tags.id, name: tags.name })
+    .from(tags)
+    .where(inArray(tags.name, normalized));
+
+  if (tagRows.length > 0) {
+    await tx.insert(documentTags).values(tagRows.map((tag) => ({ documentId, tagId: tag.id })));
+  }
+}
+
+async function getNewEntities(uniqueEntities: ExtractedEntity[]): Promise<ExtractedEntity[]> {
+  const newEntities: ExtractedEntity[] = [];
+
+  for (const entity of uniqueEntities) {
+    const existing = await db
+      .select({ id: entities.id })
+      .from(entities)
+      .where(and(eq(entities.name, entity.name), eq(entities.type, entity.type)))
+      .limit(1);
+
+    if (existing.length === 0) {
+      newEntities.push(entity);
+    }
+  }
+
+  return newEntities;
+}
+
+async function getUrlSource(url: string): Promise<SourceContent> {
+  const extracted = await extractFromUrl(url);
+  if (!extracted) throw new Error("Failed to extract content from URL");
+
+  const contentType = detectContentType(url);
+  return {
+    title: extracted.title,
+    content: extracted.content,
+    type: contentType === "youtube" ? "youtube" : "article",
+    url,
+    leadImageUrl: extracted.leadImageUrl,
+  };
+}
+
+function validateUrl(url: string): string {
+  if (!url || url.trim().length === 0) throw new Error("URL is required");
+  const parsed = new URL(url);
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+    throw new Error(`Unsupported URL scheme: ${parsed.protocol}`);
+  }
+  return parsed.toString();
+}
+
+async function saveLeadImage(documentId: string, leadImageUrl?: string) {
+  if (!leadImageUrl) return;
+  const image = await downloadDocumentImage(leadImageUrl, documentId);
+  if (!image) return;
+
+  await db
+    .update(documents)
+    .set({
+      metadata: {
+        leadImageUrl: image.url,
+        imagePath: image.publicPath,
+        imageContentType: image.contentType,
+      },
+      updatedAt: new Date(),
+    })
+    .where(eq(documents.id, documentId));
+}
+
+async function markFailed(documentId: string) {
+  await db
+    .update(documents)
+    .set({ processingStatus: "failed", updatedAt: new Date() })
+    .where(eq(documents.id, documentId));
+}
+
+async function complete(
+  options: DocumentIngestionOptions,
+  documentId: string,
+  message: string,
+  skipped: boolean
+) {
+  await emit(options, "complete", message, 100, false, documentId);
+  revalidateDocument(documentId);
+  if (skipped) {
+    metricsCollector.log(`[INGEST] Document ${documentId} unchanged, skipped derived rebuild`);
+  }
+}
+
+async function emit(
+  options: DocumentIngestionOptions,
+  step: DocumentIngestionStep,
+  message: string,
+  progress: number,
+  error = false,
+  documentId?: string
+) {
+  await options.onEvent?.({ step, message, progress, error, documentId });
+}
+
+function revalidateDocument(documentId: string) {
+  revalidatePath("/library");
+  revalidatePath(`/library/${documentId}`);
+  revalidatePath("/graph");
+}
+
+function getEntityKey(entity: Pick<EntityIdRecord, "name" | "type">): string {
+  return `${entity.name}||${entity.type}`;
+}
+
+function dedupeEntities<T extends ExtractedEntity>(entityRows: T[]): T[] {
+  const seen = new Set<string>();
+  const unique: T[] = [];
+
+  for (const entity of entityRows) {
+    const key = getEntityKey(entity);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    unique.push(entity);
+  }
+
+  return unique;
+}

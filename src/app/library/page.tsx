@@ -127,6 +127,9 @@ function DocumentListItem({
               ) : (
                 <Badge variant="outline">Processing...</Badge>
               )}
+              {doc.dueSrsCount > 0 && (
+                <Badge variant="default">{doc.dueSrsCount} due</Badge>
+              )}
               <span>{doc.createdAt.toLocaleDateString()}</span>
             </div>
             {doc.url && (
@@ -1089,6 +1092,9 @@ export default function LibraryPage() {
                             <Badge variant="secondary">{doc.entityCount} entities</Badge>
                           ) : (
                             <Badge variant="outline">Processing...</Badge>
+                          )}
+                          {doc.dueSrsCount > 0 && (
+                            <Badge variant="default">{doc.dueSrsCount} due</Badge>
                           )}
                         </div>
                         <span className="text-muted-foreground">

@@ -3,7 +3,7 @@
  * Replaces fixed-size chunking with semantic-aware splitting
  */
 
-import { createHash } from "crypto";
+import { estimateTokens, generateContentHash, normalizeText } from "../text/index.ts";
 
 export interface StructuredChunk {
   content: string;
@@ -24,28 +24,6 @@ const DEFAULT_OPTIONS: Required<StructuredChunkerOptions> = {
   maxChunkTokens: 800,   // Split chunks larger than 800 tokens
   targetChunkTokens: 500, // Target 300-800 token range
 };
-
-/**
- * Estimate token count (rough approximation: ~4 chars per token)
- */
-function estimateTokens(text: string): number {
-  return Math.ceil(text.length / 4);
-}
-
-/**
- * Generate SHA-256 hash of normalized text
- */
-function generateHash(text: string): string {
-  const normalized = text.trim().replace(/\s+/g, " ").toLowerCase();
-  return createHash("sha256").update(normalized).digest("hex");
-}
-
-/**
- * Normalize text: trim and collapse whitespace
- */
-function normalizeText(text: string): string {
-  return text.trim().replace(/\s+/g, " ");
-}
 
 /**
  * Split text by markdown headings
@@ -238,7 +216,7 @@ export function chunkStructured(
       content: normalized,
       index,
       tokenCount: estimateTokens(normalized),
-      contentHash: generateHash(normalized),
+      contentHash: generateContentHash(normalized),
       type: "merged",
     });
     index++;
