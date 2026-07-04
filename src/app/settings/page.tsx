@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState, useEffect } from "react";
-import { RefreshCw, CheckCircle, Loader2, Server, Cpu, Database, MessageSquare, Binary } from "lucide-react";
+import { RefreshCw, CheckCircle, Loader2, Server, Cpu, Database, MessageSquare, Binary, HardDrive } from "lucide-react";
 import { getAISettings, saveAISettings, getDatabaseStats, testAIConnection, validateOpenAIApiKey } from "@/actions/settings";
 import { Header } from "@/components/layout/header";
 import { Button } from "@/components/ui/button";
@@ -27,6 +27,20 @@ import {
 type Provider = "local" | "openai";
 type ConnectionStatus = "connected" | "disconnected" | "testing";
 type ApiKeyValidationStatus = "idle" | "validating" | "valid" | "invalid";
+type GogStatusResponse =
+  | {
+      state: "not_installed";
+      installInstructions: string;
+    }
+  | {
+      state: "not_authenticated";
+      authCommand: string;
+    }
+  | {
+      state: "ready";
+      version: string;
+      accountEmail: string;
+    };
 
 export default function SettingsPage() {
   const [isLoading, setIsLoading] = useState(true);
@@ -60,6 +74,8 @@ export default function SettingsPage() {
   const [isSaving, setIsSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [dbStats, setDbStats] = useState({ documents: 0, entities: 0, relationships: 0 });
+  const [gogStatus, setGogStatus] = useState<GogStatusResponse | null>(null);
+  const [gogStatusError, setGogStatusError] = useState<string | null>(null);
 
   // Auto-save function with debouncing
   const autoSave = React.useCallback(
@@ -158,6 +174,36 @@ export default function SettingsPage() {
       }
     }
     loadSettings();
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadGogStatus() {
+      try {
+        const response = await fetch("/api/drive/status", { cache: "no-store" });
+        if (!response.ok) {
+          throw new Error("Unable to read gogcli status");
+        }
+
+        const status = (await response.json()) as GogStatusResponse;
+        if (!cancelled) {
+          setGogStatus(status);
+          setGogStatusError(null);
+        }
+      } catch (error) {
+        if (!cancelled) {
+          setGogStatus(null);
+          setGogStatusError(error instanceof Error ? error.message : "Unable to read gogcli status");
+        }
+      }
+    }
+
+    loadGogStatus();
+
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   // Auto-save when any setting changes
@@ -523,6 +569,66 @@ export default function SettingsPage() {
     </Card>
   );
 
+  const GogStatusCard = () => {
+    const label = gogStatusError
+      ? "Unavailable"
+      : gogStatus?.state === "ready"
+        ? "Ready"
+        : gogStatus?.state === "not_authenticated"
+          ? "Not authenticated"
+          : gogStatus?.state === "not_installed"
+            ? "Not installed"
+            : "Checking";
+    const badgeClassName = gogStatusError
+      ? "text-destructive border-destructive"
+      : gogStatus?.state === "ready"
+        ? "text-green-500 border-green-500"
+        : "text-muted-foreground";
+    const detail = gogStatusError
+      ? gogStatusError
+      : gogStatus?.state === "ready"
+        ? `${gogStatus.version} authenticated as ${gogStatus.accountEmail}`
+        : gogStatus?.state === "not_authenticated"
+          ? "gogcli is installed but Drive access is not authenticated"
+          : gogStatus?.state === "not_installed"
+            ? gogStatus.installInstructions
+            : "Checking gogcli on the host";
+    const command =
+      gogStatus?.state === "not_authenticated"
+        ? gogStatus.authCommand
+        : gogStatus?.state === "not_installed"
+          ? gogStatus.installInstructions
+          : null;
+
+    return (
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <HardDrive className="h-5 w-5" />
+            Drive
+          </CardTitle>
+          <CardDescription>gogcli host status for Drive ingestion</CardDescription>
+        </CardHeader>
+        <CardContent>
+          <div className="flex items-start justify-between gap-4">
+            <div className="space-y-1">
+              <p className="text-sm font-medium">gogcli</p>
+              <p className="text-xs text-muted-foreground">{detail}</p>
+            </div>
+            <Badge variant="outline" className={badgeClassName}>
+              {label}
+            </Badge>
+          </div>
+          {command && (
+            <div className="mt-4 rounded-md border bg-muted/50 px-3 py-2 font-mono text-xs">
+              {command}
+            </div>
+          )}
+        </CardContent>
+      </Card>
+    );
+  };
+
   return (
     <div className="min-h-screen">
       <Header />
@@ -668,6 +774,8 @@ export default function SettingsPage() {
             // Embedding provider doesn't use OpenAI-specific options
             isChatProvider={false}
           />
+
+          <GogStatusCard />
 
           {/* Database Status */}
           <Card>

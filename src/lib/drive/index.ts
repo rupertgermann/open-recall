@@ -328,11 +328,11 @@ function isGogSetupError(error: unknown): boolean {
   return isMissingGogError(error) || isUnauthenticatedGogError(error);
 }
 
-function isMissingGogError(error: unknown): boolean {
+export function isMissingGogError(error: unknown): boolean {
   return isRecord(error) && error.code === "ENOENT";
 }
 
-function isUnauthenticatedGogError(error: unknown): boolean {
+export function isUnauthenticatedGogError(error: unknown): boolean {
   const message = error instanceof Error ? error.message : String(error);
   return /auth|credential|account|login/i.test(message) && /not|no|missing|unauth/i.test(message);
 }
