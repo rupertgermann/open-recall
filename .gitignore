@@ -39,9 +39,6 @@ Thumbs.db
 *.tsbuildinfo
 next-env.d.ts
 
-# Drizzle
-drizzle/
-
 # Misc
 *.log
 

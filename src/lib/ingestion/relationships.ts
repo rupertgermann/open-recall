@@ -1,3 +1,5 @@
+import { parseEntityKey, type EntityKey } from "./entity-key.ts";
+
 export type ExtractedRelationshipCandidate = {
   source: string;
   target: string;
@@ -27,7 +29,7 @@ export type DroppedRelationship = {
 
 export type PlanRelationshipInsertsInput = {
   sourceDocumentId: string;
-  entityIdMap: ReadonlyMap<string, string>;
+  entityIdMap: ReadonlyMap<EntityKey, string>;
   relationships: readonly ExtractedRelationshipCandidate[];
 };
 
@@ -87,11 +89,11 @@ export function planRelationshipInserts({
   return { values, dropped, duplicateCount };
 }
 
-function buildEntityNameIndex(entityIdMap: ReadonlyMap<string, string>): Map<string, Set<string>> {
+function buildEntityNameIndex(entityIdMap: ReadonlyMap<EntityKey, string>): Map<string, Set<string>> {
   const index = new Map<string, Set<string>>();
 
   for (const [entityKey, entityId] of entityIdMap.entries()) {
-    const entityName = parseEntityName(entityKey);
+    const entityName = parseEntityKey(entityKey).name;
     const normalizedName = normalizeKey(entityName);
     if (!normalizedName) continue;
 
@@ -101,10 +103,6 @@ function buildEntityNameIndex(entityIdMap: ReadonlyMap<string, string>): Map<str
   }
 
   return index;
-}
-
-function parseEntityName(entityKey: string): string {
-  return entityKey.split("||", 1)[0] ?? entityKey;
 }
 
 function resolveEntityName(entityNameIndex: ReadonlyMap<string, ReadonlySet<string>>, name: string): EntityResolution {

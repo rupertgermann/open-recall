@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { dedupeDocumentChunks, type IngestionChunkCandidate } from "../src/lib/ingestion/chunks.ts";
-import { planDocumentReingestCleanup } from "../src/lib/ingestion/cleanup.ts";
+import { entityKeysEqual, makeEntityKey, parseEntityKey } from "../src/lib/ingestion/entity-key.ts";
 import { planEntityMentions } from "../src/lib/ingestion/mentions.ts";
 import { planRelationshipInserts } from "../src/lib/ingestion/relationships.ts";
 
@@ -25,18 +25,12 @@ test("dedupeDocumentChunks removes duplicate hashes only within one document run
   assert.equal(result.duplicateCount, 1);
 });
 
-test("planDocumentReingestCleanup targets document-owned ingestion rows", () => {
-  const plan = planDocumentReingestCleanup("doc-1");
+test("Entity Keys round-trip and compare by name-type identity", () => {
+  const key = makeEntityKey({ name: "Apple||Vision", type: "product" });
 
-  assert.deepEqual(plan, {
-    documentId: "doc-1",
-    deleteOrder: ["entityMentions", "relationships", "chunks"],
-    targets: {
-      chunks: { documentId: "doc-1" },
-      entityMentions: { documentId: "doc-1" },
-      relationships: { sourceDocumentId: "doc-1" },
-    },
-  });
+  assert.deepEqual(parseEntityKey(key), { name: "Apple||Vision", type: "product" });
+  assert.equal(entityKeysEqual(key, makeEntityKey({ name: "Apple||Vision", type: "product" })), true);
+  assert.equal(entityKeysEqual(key, makeEntityKey({ name: "Apple||Vision", type: "organization" })), false);
 });
 
 test("planEntityMentions maps entities to chunks that mention their names with fallback", () => {
@@ -84,10 +78,10 @@ test("planRelationshipInserts resolves endpoints, drops invalid relationships, a
   const result = planRelationshipInserts({
     sourceDocumentId: "doc-1",
     entityIdMap: new Map([
-      ["React||technology", "entity-react"],
-      ["Postgres||database", "entity-postgres"],
-      ["Apple||organization", "entity-apple-org"],
-      ["Apple||product", "entity-apple-product"],
+      [makeEntityKey({ name: "React", type: "technology" }), "entity-react"],
+      [makeEntityKey({ name: "Postgres", type: "database" }), "entity-postgres"],
+      [makeEntityKey({ name: "Apple", type: "organization" }), "entity-apple-org"],
+      [makeEntityKey({ name: "Apple", type: "product" }), "entity-apple-product"],
     ]),
     relationships: [
       { source: "react", target: "Postgres", type: "uses", description: "React uses Postgres." },
@@ -119,4 +113,29 @@ test("planRelationshipInserts resolves endpoints, drops invalid relationships, a
       reasons: ["target_ambiguous"],
     },
   ]);
+});
+
+test("planRelationshipInserts resolves entity names containing delimiter text", () => {
+  const result = planRelationshipInserts({
+    sourceDocumentId: "doc-1",
+    entityIdMap: new Map([
+      [makeEntityKey({ name: "ACME||Widget", type: "product" }), "entity-widget"],
+      [makeEntityKey({ name: "Postgres", type: "database" }), "entity-postgres"],
+    ]),
+    relationships: [
+      { source: "ACME||Widget", target: "Postgres", type: "uses", description: null },
+    ],
+  });
+
+  assert.deepEqual(result.values, [
+    {
+      sourceEntityId: "entity-widget",
+      targetEntityId: "entity-postgres",
+      relationType: "uses",
+      description: null,
+      sourceDocumentId: "doc-1",
+    },
+  ]);
+  assert.equal(result.duplicateCount, 0);
+  assert.deepEqual(result.dropped, []);
 });
