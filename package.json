@@ -69,6 +69,8 @@
     "zod": "^3.23.8"
   },
   "devDependencies": {
+    "@electric-sql/pglite": "0.5.4",
+    "@electric-sql/pglite-pgvector": "0.0.5",
     "@types/jsdom": "^21.1.7",
     "@types/node": "^22.9.0",
     "@types/react": "^18.3.12",

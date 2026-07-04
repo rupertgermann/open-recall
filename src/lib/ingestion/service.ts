@@ -1,15 +1,10 @@
-import { and, eq, inArray } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 
 import { db } from "@/db";
 import {
-  chunks,
-  documentTags,
   documents,
   entities,
-  entityMentions,
-  relationships,
-  tags,
 } from "@/db/schema";
 import { extractFromUrl, detectContentType, downloadDocumentImage } from "@/lib/content/extractor";
 import {
@@ -30,9 +25,8 @@ import {
   type StructuredChunk,
 } from "@/lib/embedding";
 import { dedupeDocumentChunks } from "./chunks";
-import { planDocumentReingestCleanup } from "./cleanup";
-import { planEntityMentions } from "./mentions";
-import { planRelationshipInserts } from "./relationships";
+import { entityKeysEqual, makeEntityKey, type EntityKey } from "./entity-key";
+import { persistDerivedDocumentData } from "./persistence";
 
 export type DocumentIngestionStep =
   | "fetching"
@@ -82,14 +76,7 @@ type DerivedDocumentData = {
   tags: string[];
   entities: ExtractedEntity[];
   relationships: ExtractedRelationship[];
-  entityEmbeddings: number[][];
-  newEntityKeys: Set<string>;
-};
-
-type EntityIdRecord = {
-  id: string;
-  name: string;
-  type: string;
+  entityEmbeddingsByKey: ReadonlyMap<EntityKey, number[]>;
 };
 
 export async function ingestUrlDocument(
@@ -117,7 +104,13 @@ export async function ingestUrlDocument(
   try {
     await saveLeadImage(doc.id, source.leadImageUrl);
     const derived = await buildDerivedData(doc.id, source, options);
-    await saveDerivedData(doc.id, source, derived, false);
+    const persistence = await persistDerivedDocumentData(db, {
+      documentId: doc.id,
+      source,
+      derived,
+      replaceExisting: false,
+    });
+    afterPersistDerivedDocumentData(doc.id, persistence.droppedRelationshipCount);
     await complete(options, doc.id, "Document processed successfully!", false);
     return { success: true, documentId: doc.id, skipped: false };
   } catch (error) {
@@ -154,7 +147,13 @@ export async function ingestTextDocument(
 
   try {
     const derived = await buildDerivedData(doc.id, source, options);
-    await saveDerivedData(doc.id, source, derived, false);
+    const persistence = await persistDerivedDocumentData(db, {
+      documentId: doc.id,
+      source,
+      derived,
+      replaceExisting: false,
+    });
+    afterPersistDerivedDocumentData(doc.id, persistence.droppedRelationshipCount);
     await complete(options, doc.id, "Document processed successfully!", false);
     return { success: true, documentId: doc.id, skipped: false };
   } catch (error) {
@@ -220,7 +219,13 @@ export async function refreshDocument(
 
   try {
     const derived = await buildDerivedData(documentId, source, options);
-    await saveDerivedData(documentId, source, derived, true);
+    const persistence = await persistDerivedDocumentData(db, {
+      documentId,
+      source,
+      derived,
+      replaceExisting: true,
+    });
+    afterPersistDerivedDocumentData(documentId, persistence.droppedRelationshipCount);
     await complete(options, documentId, "Document updated successfully!", false);
     return { success: true, documentId, skipped: false };
   } catch (error) {
@@ -290,12 +295,19 @@ async function buildDerivedData(
 
     const uniqueEntities = dedupeEntities(extractedData.entities);
     const newEntities = await getNewEntities(uniqueEntities);
-    const entityEmbeddings =
+    const generatedEntityEmbeddings =
       newEntities.length > 0
         ? (await generateGraphEmbeddings(
             newEntities.map((entity) => entity.name + (entity.description ? `: ${entity.description}` : ""))
           )).embeddings
         : [];
+    const entityEmbeddingsByKey = new Map<EntityKey, number[]>();
+    newEntities.forEach((entity, index) => {
+      const embedding = generatedEntityEmbeddings[index];
+      if (embedding) {
+        entityEmbeddingsByKey.set(makeEntityKey(entity), embedding);
+      }
+    });
 
     return {
       contentHash,
@@ -306,170 +318,10 @@ async function buildDerivedData(
       tags: aiTags,
       entities: uniqueEntities,
       relationships: extractedData.relationships,
-      entityEmbeddings,
-      newEntityKeys: new Set(newEntities.map(getEntityKey)),
+      entityEmbeddingsByKey,
     };
   } finally {
     metricsCollector.finishIngestion();
-  }
-}
-
-async function saveDerivedData(
-  documentId: string,
-  source: SourceContent,
-  derived: DerivedDocumentData,
-  replaceExisting: boolean
-) {
-  await db.transaction(async (tx) => {
-    const cleanup = planDocumentReingestCleanup(documentId);
-
-    if (replaceExisting) {
-      await tx.delete(relationships).where(eq(relationships.sourceDocumentId, cleanup.targets.relationships.sourceDocumentId));
-      await tx.delete(entityMentions).where(eq(entityMentions.documentId, cleanup.targets.entityMentions.documentId));
-      await tx.delete(documentTags).where(eq(documentTags.documentId, cleanup.documentId));
-      await tx.delete(chunks).where(eq(chunks.documentId, cleanup.targets.chunks.documentId));
-    }
-
-    await tx
-      .update(documents)
-      .set({
-        title: source.title,
-        type: source.type,
-        content: source.content,
-        contentHash: derived.contentHash,
-        summary: derived.summary,
-        embeddingModel: derived.embeddingModel,
-        embeddingVersion: "1.0",
-        processingStatus: "completed",
-        updatedAt: new Date(),
-      })
-      .where(eq(documents.id, documentId));
-
-    const insertedChunks =
-      derived.chunks.length > 0
-        ? await tx
-            .insert(chunks)
-            .values(
-              derived.chunks.map((chunk, i) => ({
-                documentId,
-                content: chunk.content,
-                contentHash: chunk.contentHash,
-                chunkIndex: chunk.index,
-                tokenCount: chunk.tokenCount,
-                embedding: derived.chunkEmbeddings[i] ?? null,
-                embeddingStatus: derived.chunkEmbeddings[i] ? "embedded" : "pending",
-                embeddingPurpose: "retrieval",
-              }))
-            )
-            .returning({
-              id: chunks.id,
-              content: chunks.content,
-            })
-        : [];
-
-    await saveDocumentTags(tx, documentId, derived.tags);
-    const entityRecords = await saveEntities(tx, derived);
-    const mentionRows = planEntityMentions({
-      documentId,
-      entities: entityRecords,
-      chunks: insertedChunks,
-    }).mentions.map((mention) => ({
-      documentId,
-      entityId: mention.entityId,
-      chunkId: mention.chunkId,
-      confidence: mention.confidence,
-    }));
-
-    if (mentionRows.length > 0) {
-      await tx.insert(entityMentions).values(mentionRows);
-    }
-
-    const relationshipPlan = planRelationshipInserts({
-      sourceDocumentId: documentId,
-      entityIdMap: new Map(entityRecords.map((entity) => [getEntityKey(entity), entity.id])),
-      relationships: derived.relationships,
-    });
-    const { values, dropped } = relationshipPlan;
-    if (dropped.length > 0) {
-      metricsCollector.log(`[INGEST] Dropped ${dropped.length} unresolved relationships for ${documentId}`);
-    }
-    if (values.length > 0) {
-      await tx.insert(relationships).values(values);
-    }
-  });
-
-  revalidateDocument(documentId);
-}
-
-async function saveEntities(
-  tx: Parameters<Parameters<typeof db.transaction>[0]>[0],
-  derived: DerivedDocumentData
-): Promise<EntityIdRecord[]> {
-  const records: EntityIdRecord[] = [];
-  let newEntityIndex = 0;
-
-  for (const entity of derived.entities) {
-    const key = getEntityKey(entity);
-    const [existing] = await tx
-      .select({ id: entities.id, name: entities.name, type: entities.type })
-      .from(entities)
-      .where(and(eq(entities.name, entity.name), eq(entities.type, entity.type)))
-      .limit(1);
-
-    if (existing) {
-      records.push(existing);
-      continue;
-    }
-
-    const [inserted] = await tx
-      .insert(entities)
-      .values({
-        name: entity.name,
-        type: entity.type,
-        description: entity.description,
-        embedding: derived.newEntityKeys.has(key) ? derived.entityEmbeddings[newEntityIndex++] ?? null : null,
-      })
-      .onConflictDoNothing({ target: [entities.name, entities.type] })
-      .returning({ id: entities.id, name: entities.name, type: entities.type });
-
-    if (inserted) {
-      records.push(inserted);
-      continue;
-    }
-
-    const [createdConcurrently] = await tx
-      .select({ id: entities.id, name: entities.name, type: entities.type })
-      .from(entities)
-      .where(and(eq(entities.name, entity.name), eq(entities.type, entity.type)))
-      .limit(1);
-
-    if (createdConcurrently) {
-      records.push(createdConcurrently);
-    }
-  }
-
-  return records;
-}
-
-async function saveDocumentTags(
-  tx: Parameters<Parameters<typeof db.transaction>[0]>[0],
-  documentId: string,
-  nextTags: string[]
-) {
-  const normalized = Array.from(
-    new Set(nextTags.map((tag) => tag.trim().toLowerCase()).filter((tag) => tag.length > 0))
-  );
-
-  if (normalized.length === 0) return;
-
-  await tx.insert(tags).values(normalized.map((name) => ({ name }))).onConflictDoNothing();
-  const tagRows = await tx
-    .select({ id: tags.id, name: tags.name })
-    .from(tags)
-    .where(inArray(tags.name, normalized));
-
-  if (tagRows.length > 0) {
-    await tx.insert(documentTags).values(tagRows.map((tag) => ({ documentId, tagId: tag.id })));
   }
 }
 
@@ -489,6 +341,14 @@ async function getNewEntities(uniqueEntities: ExtractedEntity[]): Promise<Extrac
   }
 
   return newEntities;
+}
+
+function afterPersistDerivedDocumentData(documentId: string, droppedRelationshipCount: number) {
+  if (droppedRelationshipCount > 0) {
+    metricsCollector.log(`[INGEST] Dropped ${droppedRelationshipCount} unresolved relationships for ${documentId}`);
+  }
+
+  revalidateDocument(documentId);
 }
 
 async function getUrlSource(url: string): Promise<SourceContent> {
@@ -569,18 +429,14 @@ function revalidateDocument(documentId: string) {
   revalidatePath("/graph");
 }
 
-function getEntityKey(entity: Pick<EntityIdRecord, "name" | "type">): string {
-  return `${entity.name}||${entity.type}`;
-}
-
 function dedupeEntities<T extends ExtractedEntity>(entityRows: T[]): T[] {
-  const seen = new Set<string>();
+  const seen: EntityKey[] = [];
   const unique: T[] = [];
 
   for (const entity of entityRows) {
-    const key = getEntityKey(entity);
-    if (seen.has(key)) continue;
-    seen.add(key);
+    const key = makeEntityKey(entity);
+    if (seen.some((existingKey) => entityKeysEqual(existingKey, key))) continue;
+    seen.push(key);
     unique.push(entity);
   }
 
