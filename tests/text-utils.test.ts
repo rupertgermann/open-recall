@@ -40,3 +40,48 @@ test("chunkStructured produces stable hashes for normalized-equivalent input", (
   );
   assert.equal(first[0].contentHash, generateContentHash("Alpha Beta Gamma"));
 });
+
+test("chunkStructured bounds chunk size even without sentence punctuation", () => {
+  // Simulates Drive files like logs or CSV exports: one huge block with no
+  // sentence-ending punctuation and no paragraph breaks.
+  const word = "alphabeta";
+  const text = Array.from({ length: 2000 }, () => word).join(" ");
+  const maxChunkTokens = 800;
+
+  const chunks = chunkStructured(text, {
+    minChunkTokens: 100,
+    maxChunkTokens,
+    targetChunkTokens: 500,
+  });
+
+  assert.ok(chunks.length > 1);
+  for (const chunk of chunks) {
+    assert.ok(
+      chunk.tokenCount <= maxChunkTokens,
+      `chunk ${chunk.index} has ${chunk.tokenCount} tokens, exceeds ${maxChunkTokens}`
+    );
+  }
+  // No content lost
+  assert.equal(chunks.map((c) => c.content).join(" "), text);
+});
+
+test("chunkStructured bounds chunk size for one unbroken character run", () => {
+  // Simulates a base64 blob or minified file: no whitespace at all.
+  const text = "a".repeat(40_000);
+  const maxChunkTokens = 800;
+
+  const chunks = chunkStructured(text, {
+    minChunkTokens: 100,
+    maxChunkTokens,
+    targetChunkTokens: 500,
+  });
+
+  assert.ok(chunks.length > 1);
+  for (const chunk of chunks) {
+    assert.ok(
+      chunk.tokenCount <= maxChunkTokens,
+      `chunk ${chunk.index} has ${chunk.tokenCount} tokens, exceeds ${maxChunkTokens}`
+    );
+  }
+  assert.equal(chunks.map((c) => c.content).join(""), text);
+});
