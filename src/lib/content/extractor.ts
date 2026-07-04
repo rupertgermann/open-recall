@@ -154,6 +154,59 @@ export async function extractFromUrl(
   return extractFromHtml(html, url);
 }
 
+export async function extractPdfFromUrl(url: string): Promise<ExtractedContent> {
+  const response = await fetch(url, {
+    headers: {
+      "User-Agent":
+        "Mozilla/5.0 (compatible; open-recall/1.0; +https://github.com/open-recall)",
+    },
+  });
+
+  if (!response.ok) {
+    throw new Error(`Failed to fetch PDF: ${response.status}`);
+  }
+
+  const content = await extractPdfText(Buffer.from(await response.arrayBuffer()));
+  return {
+    title: titleFromUrl(url),
+    content,
+  };
+}
+
+export async function extractPdfText(data: Buffer | Uint8Array): Promise<string> {
+  const pdfjs = await import("pdfjs-dist/legacy/build/pdf.mjs");
+  const bytes = data instanceof Buffer ? new Uint8Array(data) : data;
+  const loadingTask = pdfjs.getDocument({
+    data: bytes,
+    disableFontFace: true,
+    isEvalSupported: false,
+  });
+  const pdf = await loadingTask.promise;
+  const pages: string[] = [];
+
+  for (let pageNumber = 1; pageNumber <= pdf.numPages; pageNumber++) {
+    const page = await pdf.getPage(pageNumber);
+    const textContent = await page.getTextContent();
+    const text = textContent.items
+      .map((item) => ("str" in item && typeof item.str === "string" ? item.str : ""))
+      .join(" ")
+      .replace(/\s+/g, " ")
+      .trim();
+
+    if (text) pages.push(text);
+  }
+
+  const content = pages.join("\n\n").trim();
+  if (!content) throw new Error("PDF did not contain extractable text");
+  return content;
+}
+
+function titleFromUrl(url: string): string {
+  const pathname = new URL(url).pathname;
+  const fileName = decodeURIComponent(pathname.split("/").filter(Boolean).pop() ?? "");
+  return fileName || "Untitled PDF";
+}
+
 /**
  * Detect content type from URL
  */

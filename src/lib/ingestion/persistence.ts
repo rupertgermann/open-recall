@@ -20,8 +20,9 @@ type DocumentPersistenceDatabase = {
 type SourceContent = {
   title: string;
   content: string;
-  type: "article" | "youtube" | "note" | "pdf";
+  type: "article" | "youtube" | "note" | "pdf" | "gdoc";
   url: string | null;
+  metadata?: Record<string, unknown>;
 };
 
 type DerivedDocumentData = {
@@ -95,6 +96,7 @@ export async function persistDerivedDocumentData(
         embeddingModel: derived.embeddingModel,
         embeddingVersion: "1.0",
         processingStatus: "completed",
+        ...(source.metadata ? { metadata: source.metadata } : {}),
         updatedAt: new Date(),
       })
       .where(eq(documents.id, documentId));

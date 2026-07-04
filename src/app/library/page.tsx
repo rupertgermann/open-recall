@@ -38,6 +38,7 @@ const typeIcons = {
   youtube: Video,
   pdf: FileText,
   note: FileText,
+  gdoc: FileText,
 };
 
 const typeColors = {
@@ -45,7 +46,14 @@ const typeColors = {
   youtube: "bg-red-500/10 text-red-500",
   pdf: "bg-orange-500/10 text-orange-500",
   note: "bg-green-500/10 text-green-500",
+  gdoc: "bg-sky-500/10 text-sky-600",
 };
+
+function formatDocumentType(type: string): string {
+  if (type === "note") return "text";
+  if (type === "gdoc") return "Google Doc";
+  return type;
+}
 
 // Document List Item Component
 function DocumentListItem({
@@ -120,7 +128,7 @@ function DocumentListItem({
             )}
             <div className="flex items-center gap-4 text-sm text-muted-foreground">
               <Badge variant="outline" className="capitalize">
-                {doc.type}
+                {formatDocumentType(doc.type)}
               </Badge>
               {doc.processingStatus === "completed" ? (
                 <Badge variant="secondary">{doc.entityCount} entities</Badge>
@@ -705,7 +713,7 @@ export default function LibraryPage() {
               )}
             </div>
             <div className="flex gap-2">
-              {["article", "youtube", "pdf", "note"].map((type) => (
+              {["article", "youtube", "pdf", "note", "gdoc"].map((type) => (
                 <Button
                   key={type}
                   variant={filterType === type ? "secondary" : "outline"}
@@ -713,7 +721,7 @@ export default function LibraryPage() {
                   onClick={() => setFilterType(filterType === type ? null : type)}
                   className="capitalize"
                 >
-                  {type === "note" ? "text" : type}
+                  {formatDocumentType(type)}
                 </Button>
               ))}
             </div>
