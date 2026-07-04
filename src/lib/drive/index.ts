@@ -4,9 +4,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
 
+import { extractPdfText } from "../content/extractor.ts";
+
 const execFileAsync = promisify(execFile);
 
 export const GOOGLE_DOC_MIME_TYPE = "application/vnd.google-apps.document";
+export const PDF_MIME_TYPE = "application/pdf";
 export const GOGCLI_INSTALL_INSTRUCTIONS = "Install gogcli with: brew install openclaw/tap/gogcli";
 export const GOGCLI_AUTH_COMMAND = "gog auth add <email> --services drive";
 
@@ -31,7 +34,7 @@ export type DriveLink = DriveFileLink | DriveFolderLink;
 export type DriveSourceContent = {
   title: string;
   content: string;
-  type: "gdoc";
+  type: "gdoc" | "pdf" | "note";
   url: string;
   metadata: {
     driveFileId: string;
@@ -46,6 +49,17 @@ type DriveFileMetadata = {
   mimeType: string;
   modifiedTime?: string;
 };
+
+export type DriveFileSupport =
+  | {
+      supported: true;
+      type: "gdoc" | "pdf" | "note";
+      format?: "md" | "txt";
+    }
+  | {
+      supported: false;
+      reason: string;
+    };
 
 export function canonicalizeDriveFileUrl(fileId: string): string {
   return `https://drive.google.com/file/d/${fileId}/view`;
@@ -109,16 +123,17 @@ export async function resolveDriveFileSource(
 
   const runner = options.runner ?? createGogRunner();
   const metadata = await getDriveFileMetadata(parsed.fileId, runner);
-  if (metadata.mimeType !== GOOGLE_DOC_MIME_TYPE) {
-    throw new Error(`Unsupported Drive file type: ${metadata.mimeType}`);
+  const support = getDriveFileSupport(metadata);
+  if (!support.supported) {
+    throw new Error(`Unsupported Drive file type: ${support.reason}`);
   }
 
-  const content = await exportGoogleDocWithFallback(metadata.id, runner);
+  const content = await readSupportedDriveFile(metadata, support, runner);
 
   return {
-    title: metadata.name || "Untitled Google Doc",
+    title: metadata.name || "Untitled Drive File",
     content,
-    type: "gdoc",
+    type: support.type,
     url: canonicalizeDriveFileUrl(metadata.id),
     metadata: {
       driveFileId: metadata.id,
@@ -126,6 +141,27 @@ export async function resolveDriveFileSource(
       ...(metadata.modifiedTime ? { driveModifiedTime: metadata.modifiedTime } : {}),
     },
   };
+}
+
+export function getDriveFileSupport(metadata: Pick<DriveFileMetadata, "mimeType" | "name">): DriveFileSupport {
+  if (metadata.mimeType === GOOGLE_DOC_MIME_TYPE) {
+    return { supported: true, type: "gdoc", format: "md" };
+  }
+
+  if (metadata.mimeType === PDF_MIME_TYPE) {
+    return { supported: true, type: "pdf" };
+  }
+
+  const extension = fileExtension(metadata.name);
+  if (metadata.mimeType === "text/markdown" || extension === "md" || extension === "markdown") {
+    return { supported: true, type: "note", format: "md" };
+  }
+
+  if (metadata.mimeType === "text/plain" || extension === "txt") {
+    return { supported: true, type: "note", format: "txt" };
+  }
+
+  return { supported: false, reason: metadata.mimeType || metadata.name || "unknown" };
 }
 
 async function getDriveFileMetadata(fileId: string, runner: GogRunner): Promise<DriveFileMetadata> {
@@ -161,21 +197,49 @@ async function exportGoogleDocWithFallback(fileId: string, runner: GogRunner): P
   }
 }
 
+async function readSupportedDriveFile(
+  metadata: DriveFileMetadata,
+  support: Extract<DriveFileSupport, { supported: true }>,
+  runner: GogRunner
+): Promise<string> {
+  if (support.type === "gdoc") {
+    return exportGoogleDocWithFallback(metadata.id, runner);
+  }
+
+  if (support.type === "note") {
+    const buffer = await downloadDriveFile(metadata.id, runner, support.format ?? fileExtension(metadata.name) ?? "txt");
+    return buffer.toString("utf8");
+  }
+
+  const buffer = await downloadDriveFile(metadata.id, runner, "pdf");
+  return extractPdfText(buffer);
+}
+
 async function exportDriveFile(
   fileId: string,
   format: "md" | "txt",
   runner: GogRunner
 ): Promise<string> {
+  const buffer = await downloadDriveFile(fileId, runner, format, format);
+  return buffer.toString("utf8");
+}
+
+async function downloadDriveFile(
+  fileId: string,
+  runner: GogRunner,
+  extension: string,
+  format?: "md" | "txt"
+): Promise<Buffer> {
   const dir = await mkdtemp(join(tmpdir(), "open-recall-drive-"));
-  const outPath = join(dir, `${fileId}.${format}`);
+  const outPath = join(dir, `${fileId}.${extension}`);
 
   try {
+    const formatArgs = format ? ["--format", format] : [];
     await runner([
       "drive",
       "download",
       fileId,
-      "--format",
-      format,
+      ...formatArgs,
       "--out",
       outPath,
       "--overwrite",
@@ -184,7 +248,7 @@ async function exportDriveFile(
       "--no-input",
       "--readonly",
     ]);
-    return await readFile(outPath, "utf8");
+    return await readFile(outPath);
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
@@ -222,6 +286,11 @@ function stringField(record: Record<string, unknown>, field: string): string | u
 function matchPathId(pathname: string, pattern: RegExp): string | null {
   const match = pathname.match(pattern);
   return match?.[1] ? decodeURIComponent(match[1]) : null;
+}
+
+function fileExtension(fileName: string): string | undefined {
+  const match = fileName.toLowerCase().match(/\.([a-z0-9]+)$/);
+  return match?.[1];
 }
 
 function fileLink(fileId: string): DriveFileLink {

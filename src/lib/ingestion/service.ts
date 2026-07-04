@@ -6,7 +6,7 @@ import {
   documents,
   entities,
 } from "@/db/schema";
-import { extractFromUrl, detectContentType, downloadDocumentImage } from "@/lib/content/extractor";
+import { extractFromUrl, extractPdfFromUrl, detectContentType, downloadDocumentImage } from "@/lib/content/extractor";
 import { parseDriveUrl, resolveDriveFileSource } from "@/lib/drive";
 import {
   extractEntitiesWithDBConfig,
@@ -358,10 +358,20 @@ async function getUrlSource(url: string): Promise<SourceContent> {
     return resolveDriveFileSource(url);
   }
 
+  const contentType = detectContentType(url);
+  if (contentType === "pdf") {
+    const extracted = await extractPdfFromUrl(url);
+    return {
+      title: extracted.title,
+      content: extracted.content,
+      type: "pdf",
+      url,
+    };
+  }
+
   const extracted = await extractFromUrl(url);
   if (!extracted) throw new Error("Failed to extract content from URL");
 
-  const contentType = detectContentType(url);
   return {
     title: extracted.title,
     content: extracted.content,

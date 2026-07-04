@@ -6,10 +6,12 @@ import {
   GOGCLI_AUTH_COMMAND,
   GOGCLI_INSTALL_INSTRUCTIONS,
   canonicalizeDriveFileUrl,
+  getDriveFileSupport,
   parseDriveUrl,
   resolveDriveFileSource,
   type GogRunner,
 } from "../src/lib/drive/index.ts";
+import { extractPdfText } from "../src/lib/content/extractor.ts";
 import { chunkStructured } from "../src/lib/embedding/chunker.ts";
 
 test("Drive file links canonicalize common URL forms by Drive file ID", () => {
@@ -76,6 +78,81 @@ test("resolveDriveFileSource falls back to plain text when markdown export fails
   );
 });
 
+test("Drive file support classifies PDFs, text, markdown, and unsupported files before download", () => {
+  assert.deepEqual(
+    getDriveFileSupport({ name: "Paper.pdf", mimeType: "application/pdf" }),
+    { supported: true, type: "pdf" }
+  );
+  assert.deepEqual(
+    getDriveFileSupport({ name: "Notes.md", mimeType: "application/octet-stream" }),
+    { supported: true, type: "note", format: "md" }
+  );
+  assert.deepEqual(
+    getDriveFileSupport({ name: "Notes.txt", mimeType: "text/plain" }),
+    { supported: true, type: "note", format: "txt" }
+  );
+  assert.deepEqual(
+    getDriveFileSupport({ name: "Budget", mimeType: "application/vnd.google-apps.spreadsheet" }),
+    { supported: false, reason: "application/vnd.google-apps.spreadsheet" }
+  );
+});
+
+test("extractPdfText returns text from a PDF buffer", async () => {
+  const text = await extractPdfText(buildSimplePdf("Drive PDF text"));
+
+  assert.match(text, /Drive PDF text/);
+});
+
+test("resolveDriveFileSource downloads markdown and text Drive Files as note Documents", async () => {
+  const markdown = await resolveDriveFileSource("https://drive.google.com/file/d/md-123/view", {
+    runner: fakeDriveRunner({
+      metadata: {
+        id: "md-123",
+        name: "Notes.md",
+        mimeType: "text/markdown",
+        modifiedTime: "2026-07-04T11:00:00.000Z",
+      },
+      content: "# Notes\n\nDrive markdown.",
+    }),
+  });
+  assert.equal(markdown.type, "note");
+  assert.equal(markdown.content, "# Notes\n\nDrive markdown.");
+
+  const text = await resolveDriveFileSource("https://drive.google.com/open?id=txt-123", {
+    runner: fakeDriveRunner({
+      metadata: {
+        id: "txt-123",
+        name: "Notes.txt",
+        mimeType: "text/plain",
+        modifiedTime: "2026-07-04T11:00:00.000Z",
+      },
+      content: "Drive plain text.",
+    }),
+  });
+  assert.equal(text.type, "note");
+  assert.equal(text.content, "Drive plain text.");
+});
+
+test("resolveDriveFileSource rejects unsupported Drive types before download", async () => {
+  const calls: string[][] = [];
+
+  await assert.rejects(
+    resolveDriveFileSource("https://docs.google.com/spreadsheets/d/sheet-123/edit", {
+      runner: fakeDriveRunner({
+        metadata: {
+          id: "sheet-123",
+          name: "Budget",
+          mimeType: "application/vnd.google-apps.spreadsheet",
+        },
+        calls,
+      }),
+    }),
+    /Unsupported Drive file type: application\/vnd\.google-apps\.spreadsheet/
+  );
+
+  assert.equal(calls.some((args) => args[0] === "drive" && args[1] === "download"), false);
+});
+
 test("resolveDriveFileSource maps gogcli setup failures to actionable messages", async () => {
   await assert.rejects(
     resolveDriveFileSource("https://drive.google.com/open?id=doc-123", {
@@ -138,4 +215,52 @@ function fakeGoogleDocRunner(options: {
 
     throw new Error(`Unexpected gog args: ${args.join(" ")}`);
   };
+}
+
+function fakeDriveRunner(options: {
+  metadata: { id: string; name: string; mimeType: string; modifiedTime?: string };
+  content?: string;
+  calls?: string[][];
+}): GogRunner {
+  return async (args) => {
+    options.calls?.push(args);
+
+    if (args[0] === "drive" && args[1] === "get") {
+      return options.metadata;
+    }
+
+    if (args[0] === "drive" && args[1] === "download") {
+      return writeExportFile(args, options.content ?? "");
+    }
+
+    throw new Error(`Unexpected gog args: ${args.join(" ")}`);
+  };
+}
+
+function buildSimplePdf(text: string): Buffer {
+  const escapedText = text.replace(/\\/g, "\\\\").replace(/\(/g, "\\(").replace(/\)/g, "\\)");
+  const stream = `BT /F1 24 Tf 100 700 Td (${escapedText}) Tj ET`;
+  const objects = [
+    "<< /Type /Catalog /Pages 2 0 R >>",
+    "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+    "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>",
+    `<< /Length ${Buffer.byteLength(stream)} >>\nstream\n${stream}\nendstream`,
+    "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+  ];
+  const offsets: number[] = [];
+  let pdf = "%PDF-1.4\n";
+
+  objects.forEach((object, index) => {
+    offsets.push(Buffer.byteLength(pdf));
+    pdf += `${index + 1} 0 obj\n${object}\nendobj\n`;
+  });
+
+  const xrefOffset = Buffer.byteLength(pdf);
+  pdf += `xref\n0 ${objects.length + 1}\n0000000000 65535 f \n`;
+  for (const offset of offsets) {
+    pdf += `${String(offset).padStart(10, "0")} 00000 n \n`;
+  }
+  pdf += `trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xrefOffset}\n%%EOF\n`;
+
+  return Buffer.from(pdf);
 }
