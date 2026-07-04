@@ -31,6 +31,19 @@ test("Drive file links canonicalize common URL forms by Drive file ID", () => {
   assert.equal(canonicalizeDriveFileUrl("drive-file-123"), canonical);
 });
 
+test("Drive folder links canonicalize common URL forms by Drive folder ID", () => {
+  const canonical = "https://drive.google.com/drive/folders/folder-root";
+  const urls = [
+    "https://drive.google.com/drive/folders/folder-root",
+    "https://drive.google.com/drive/u/0/folders/folder-root",
+  ];
+
+  assert.deepEqual(
+    urls.map((url) => parseDriveUrl(url)),
+    urls.map(() => ({ kind: "folder", folderId: "folder-root", canonicalUrl: canonical }))
+  );
+});
+
 test("resolveDriveFileSource exports a Google Doc as markdown-backed gdoc SourceContent", async () => {
   const runner = fakeGoogleDocRunner({
     markdown: "# Strategy\n\nGoogle Docs headings should survive export.",
@@ -203,7 +216,7 @@ test("buildDriveFolderImportPlan lists folders recursively and splits supported 
   };
 
   const plan = await buildDriveFolderImportPlan(
-    "https://drive.google.com/drive/folders/folder-root",
+    "https://drive.google.com/drive/u/0/folders/folder-root",
     { runner }
   );
 

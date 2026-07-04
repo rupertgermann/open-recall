@@ -103,7 +103,7 @@ export function parseDriveUrl(input: string): DriveLink | null {
 
   if (hostname !== "drive.google.com") return null;
 
-  const folderId = matchPathId(parsed.pathname, /^\/drive\/folders\/([^/]+)/);
+  const folderId = matchPathId(parsed.pathname, /^\/drive\/(?:u\/\d+\/)?folders\/([^/]+)/);
   if (folderId) {
     return {
       kind: "folder",

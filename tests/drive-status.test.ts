@@ -83,8 +83,8 @@ test("resolveGogStatus reports version and account email when gogcli is ready", 
     version: "gogcli 0.9.0",
     accountEmail: "reader@example.com",
   });
-  assert.deepEqual(calls.map((args) => args.slice(0, 2)), [
+  assert.deepEqual(calls, [
     ["version", "--json"],
-    ["auth", "list"],
+    ["auth", "list", "--json", "--results-only", "--no-input"],
   ]);
 });

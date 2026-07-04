@@ -6,7 +6,8 @@
       "Bash(npm *:*)",
       "Bash(grep *:*)",
       "Bash(npx drizzle-kit:*)",
-      "WebFetch(domain:github.com)"
+      "WebFetch(domain:github.com)",
+      "Bash(grep -rn \"File .*of\\\\|File \\\\${\" /Users/rupertgermann/AI/open-recall/src)"
     ]
   }
 }
