@@ -1,33 +1,18 @@
 import { and, eq } from "drizzle-orm";
-import { revalidatePath } from "next/cache";
+import { revalidatePath as nextRevalidatePath } from "next/cache.js";
 
-import { db } from "@/db";
 import {
   documents,
   entities,
-} from "@/db/schema";
-import { extractFromUrl, extractPdfFromUrl, detectContentType, downloadDocumentImage } from "@/lib/content/extractor";
-import { parseDriveUrl, resolveDriveFileSource } from "@/lib/drive";
-import {
-  extractEntitiesWithDBConfig,
-  generateSummaryWithDBConfig,
-  generateTagsWithDBConfig,
-  type ExtractedEntity,
-  type ExtractedRelationship,
-} from "@/lib/ai";
-import {
-  chunkStructured,
-  generateContentHash,
-  generateGraphEmbeddings,
-  generateRetrievalEmbeddings,
-  getCurrentEmbeddingModel,
-  hasContentChanged,
-  metricsCollector,
-  type StructuredChunk,
-} from "@/lib/embedding";
-import { dedupeDocumentChunks } from "./chunks";
-import { entityKeysEqual, makeEntityKey, type EntityKey } from "./entity-key";
-import { persistDerivedDocumentData } from "./persistence";
+} from "../../db/schema.ts";
+import { extractFromUrl, extractPdfFromUrl, detectContentType, downloadDocumentImage } from "../content/extractor.ts";
+import { parseDriveUrl, resolveDriveFileSource, type GogRunner } from "../drive/index.ts";
+import { metricsCollector } from "../embedding/metrics.ts";
+import type { StructuredChunk } from "../embedding/chunker.ts";
+import { generateContentHash } from "../text/index.ts";
+import { dedupeDocumentChunks } from "./chunks.ts";
+import { entityKeysEqual, makeEntityKey, type EntityKey } from "./entity-key.ts";
+import { persistDerivedDocumentData } from "./persistence.ts";
 
 export type DocumentIngestionStep =
   | "fetching"
@@ -51,6 +36,7 @@ export type DocumentIngestionEvent = {
 export type DocumentIngestionOptions = {
   maxEntities?: number;
   maxRelationships?: number;
+  driveRunner?: GogRunner;
   onEvent?: (event: DocumentIngestionEvent) => void | Promise<void>;
 };
 
@@ -60,7 +46,7 @@ export type DocumentIngestionResult = {
   skipped: boolean;
 };
 
-type SourceContent = {
+export type SourceContent = {
   title: string;
   content: string;
   type: "article" | "youtube" | "note" | "pdf" | "gdoc";
@@ -69,7 +55,20 @@ type SourceContent = {
   metadata?: Record<string, unknown>;
 };
 
-type DerivedDocumentData = {
+type ExtractedEntity = {
+  name: string;
+  type: string;
+  description: string | null;
+};
+
+type ExtractedRelationship = {
+  source: string;
+  target: string;
+  type: string;
+  description: string | null;
+};
+
+export type DerivedDocumentData = {
   contentHash: string;
   embeddingModel: string;
   chunks: StructuredChunk[];
@@ -81,17 +80,105 @@ type DerivedDocumentData = {
   entityEmbeddingsByKey: ReadonlyMap<EntityKey, number[]>;
 };
 
+type IngestionDatabase = any;
+
+type BuildDerivedDocumentData = (
+  documentId: string,
+  source: SourceContent,
+  options: DocumentIngestionOptions
+) => Promise<DerivedDocumentData>;
+
+type DocumentIngestionServiceContext = {
+  database: IngestionDatabase;
+  buildDerivedData: BuildDerivedDocumentData;
+  getCurrentEmbeddingModel: () => Promise<string>;
+  revalidatePath: (path: string) => void;
+};
+
+export type DocumentIngestionServiceDependencies = {
+  database: IngestionDatabase;
+  buildDerivedData?: BuildDerivedDocumentData;
+  getCurrentEmbeddingModel?: () => Promise<string>;
+  revalidatePath?: (path: string) => void;
+};
+
+export function createDocumentIngestionService(
+  dependencies: DocumentIngestionServiceDependencies
+) {
+  const context: DocumentIngestionServiceContext = {
+    database: dependencies.database,
+    buildDerivedData:
+      dependencies.buildDerivedData ??
+      ((documentId, source, options) =>
+        buildDerivedData(dependencies.database, documentId, source, options)),
+    getCurrentEmbeddingModel:
+      dependencies.getCurrentEmbeddingModel ?? getDefaultCurrentEmbeddingModel,
+    revalidatePath: dependencies.revalidatePath ?? nextRevalidatePath,
+  };
+
+  return {
+    ingestUrlDocument: (url: string, options: DocumentIngestionOptions = {}) =>
+      ingestUrlDocumentWithContext(context, url, options),
+    ingestTextDocument: (
+      input: { title: string; content: string },
+      options: DocumentIngestionOptions = {}
+    ) => ingestTextDocumentWithContext(context, input, options),
+    refreshDocument: (documentId: string, options: DocumentIngestionOptions = {}) =>
+      refreshDocumentWithContext(context, documentId, options),
+  };
+}
+
+let defaultDatabasePromise: Promise<IngestionDatabase> | null = null;
+
+async function getDefaultDatabase(): Promise<IngestionDatabase> {
+  defaultDatabasePromise ??= import("@/db").then((module) => module.db);
+  return defaultDatabasePromise;
+}
+
+async function getDefaultService() {
+  return createDocumentIngestionService({
+    database: await getDefaultDatabase(),
+    revalidatePath: nextRevalidatePath,
+  });
+}
+
+async function getDefaultCurrentEmbeddingModel(): Promise<string> {
+  const { getCurrentEmbeddingModel } = await import("../embedding/service.ts");
+  return getCurrentEmbeddingModel();
+}
+
 export async function ingestUrlDocument(
+  url: string,
+  options: DocumentIngestionOptions = {}
+): Promise<DocumentIngestionResult> {
+  return (await getDefaultService()).ingestUrlDocument(url, options);
+}
+
+async function ingestUrlDocumentWithContext(
+  context: DocumentIngestionServiceContext,
   url: string,
   options: DocumentIngestionOptions = {}
 ): Promise<DocumentIngestionResult> {
   const normalizedUrl = validateUrl(url);
   await emit(options, "fetching", `Extracting content from ${normalizedUrl}...`, 10);
 
-  const source = await getUrlSource(normalizedUrl);
+  const existingDriveDocumentId = await findExistingDriveDocumentId(context.database, normalizedUrl);
+  if (existingDriveDocumentId) {
+    await emit(
+      options,
+      "fetching",
+      "Existing Drive File found; refreshing source.",
+      15,
+      false,
+      existingDriveDocumentId
+    );
+    return refreshDocumentWithContext(context, existingDriveDocumentId, options);
+  }
+
+  const source = await getUrlSource(normalizedUrl, options);
   await emit(options, "saving", "Creating document record...", 20);
 
-  const [doc] = await db
+  const [doc] = await context.database
     .insert(documents)
     .values({
       url: source.url,
@@ -104,25 +191,33 @@ export async function ingestUrlDocument(
     .returning({ id: documents.id });
 
   try {
-    await saveLeadImage(doc.id, source.leadImageUrl, source.metadata);
-    const derived = await buildDerivedData(doc.id, source, options);
-    const persistence = await persistDerivedDocumentData(db, {
+    await saveLeadImage(context.database, doc.id, source.leadImageUrl, source.metadata);
+    const derived = await context.buildDerivedData(doc.id, source, options);
+    const persistence = await persistDerivedDocumentData(context.database, {
       documentId: doc.id,
       source,
       derived,
       replaceExisting: false,
     });
-    afterPersistDerivedDocumentData(doc.id, persistence.droppedRelationshipCount);
-    await complete(options, doc.id, "Document processed successfully!", false);
+    afterPersistDerivedDocumentData(context, doc.id, persistence.droppedRelationshipCount);
+    await complete(context, options, doc.id, "Document processed successfully!", false);
     return { success: true, documentId: doc.id, skipped: false };
   } catch (error) {
-    await markFailed(doc.id);
+    await markFailed(context.database, doc.id);
     await emit(options, "error", error instanceof Error ? error.message : String(error), 0, true, doc.id);
     throw error;
   }
 }
 
 export async function ingestTextDocument(
+  input: { title: string; content: string },
+  options: DocumentIngestionOptions = {}
+): Promise<DocumentIngestionResult> {
+  return (await getDefaultService()).ingestTextDocument(input, options);
+}
+
+async function ingestTextDocumentWithContext(
+  context: DocumentIngestionServiceContext,
   input: { title: string; content: string },
   options: DocumentIngestionOptions = {}
 ): Promise<DocumentIngestionResult> {
@@ -137,7 +232,7 @@ export async function ingestTextDocument(
   };
 
   await emit(options, "saving", "Creating document record...", 20);
-  const [doc] = await db
+  const [doc] = await context.database
     .insert(documents)
     .values({
       title: source.title,
@@ -148,18 +243,18 @@ export async function ingestTextDocument(
     .returning({ id: documents.id });
 
   try {
-    const derived = await buildDerivedData(doc.id, source, options);
-    const persistence = await persistDerivedDocumentData(db, {
+    const derived = await context.buildDerivedData(doc.id, source, options);
+    const persistence = await persistDerivedDocumentData(context.database, {
       documentId: doc.id,
       source,
       derived,
       replaceExisting: false,
     });
-    afterPersistDerivedDocumentData(doc.id, persistence.droppedRelationshipCount);
-    await complete(options, doc.id, "Document processed successfully!", false);
+    afterPersistDerivedDocumentData(context, doc.id, persistence.droppedRelationshipCount);
+    await complete(context, options, doc.id, "Document processed successfully!", false);
     return { success: true, documentId: doc.id, skipped: false };
   } catch (error) {
-    await markFailed(doc.id);
+    await markFailed(context.database, doc.id);
     await emit(options, "error", error instanceof Error ? error.message : String(error), 0, true, doc.id);
     throw error;
   }
@@ -169,9 +264,17 @@ export async function refreshDocument(
   documentId: string,
   options: DocumentIngestionOptions = {}
 ): Promise<DocumentIngestionResult> {
+  return (await getDefaultService()).refreshDocument(documentId, options);
+}
+
+async function refreshDocumentWithContext(
+  context: DocumentIngestionServiceContext,
+  documentId: string,
+  options: DocumentIngestionOptions = {}
+): Promise<DocumentIngestionResult> {
   await emit(options, "fetching", "Validating document...", 5, false, documentId);
 
-  const [existing] = await db
+  const [existing] = await context.database
     .select({
       id: documents.id,
       url: documents.url,
@@ -186,18 +289,24 @@ export async function refreshDocument(
   if (!existing.url) throw new Error("Document has no source URL");
 
   await emit(options, "fetching", "Fetching content from source...", 15, false, documentId);
-  const source = await getUrlSource(existing.url);
-  await saveLeadImage(documentId, source.leadImageUrl);
+  let source: SourceContent;
+  try {
+    source = await getUrlSource(existing.url, options);
+  } catch (error) {
+    await emit(options, "error", error instanceof Error ? error.message : String(error), 0, true, documentId);
+    throw error;
+  }
+  await saveLeadImage(context.database, documentId, source.leadImageUrl);
 
-  const embeddingModel = await getCurrentEmbeddingModel();
+  const embeddingModel = await context.getCurrentEmbeddingModel();
   const contentHash = generateContentHash(source.content);
   const unchanged =
-    !hasContentChanged(source.content, existing.contentHash) &&
+    contentHash === existing.contentHash &&
     existing.embeddingModel === embeddingModel;
 
   if (unchanged) {
     await emit(options, "saving", "Source and embedding model unchanged; keeping derived data.", 85, false, documentId);
-    await db
+    await context.database
       .update(documents)
       .set({
         title: source.title,
@@ -206,42 +315,54 @@ export async function refreshDocument(
         contentHash,
         embeddingModel,
         processingStatus: "completed",
+        ...(source.metadata ? { metadata: source.metadata } : {}),
         updatedAt: new Date(),
       })
       .where(eq(documents.id, documentId));
-    revalidateDocument(documentId);
-    await complete(options, documentId, "Document refresh skipped; derived data is unchanged.", true);
+    revalidateDocument(context, documentId);
+    await complete(context, options, documentId, "Document refresh skipped; derived data is unchanged.", true);
     return { success: true, documentId, skipped: true };
   }
 
-  await db
+  await context.database
     .update(documents)
     .set({ processingStatus: "processing", updatedAt: new Date() })
     .where(eq(documents.id, documentId));
 
   try {
-    const derived = await buildDerivedData(documentId, source, options);
-    const persistence = await persistDerivedDocumentData(db, {
+    const derived = await context.buildDerivedData(documentId, source, options);
+    const persistence = await persistDerivedDocumentData(context.database, {
       documentId,
       source,
       derived,
       replaceExisting: true,
     });
-    afterPersistDerivedDocumentData(documentId, persistence.droppedRelationshipCount);
-    await complete(options, documentId, "Document updated successfully!", false);
+    afterPersistDerivedDocumentData(context, documentId, persistence.droppedRelationshipCount);
+    await complete(context, options, documentId, "Document updated successfully!", false);
     return { success: true, documentId, skipped: false };
   } catch (error) {
-    await markFailed(documentId);
+    await markFailed(context.database, documentId);
     await emit(options, "error", error instanceof Error ? error.message : String(error), 0, true, documentId);
     throw error;
   }
 }
 
 async function buildDerivedData(
+  database: IngestionDatabase,
   documentId: string,
   source: SourceContent,
   options: DocumentIngestionOptions
 ): Promise<DerivedDocumentData> {
+  const [
+    { extractEntitiesWithDBConfig, generateSummaryWithDBConfig, generateTagsWithDBConfig },
+    { chunkStructured },
+    { generateGraphEmbeddings, generateRetrievalEmbeddings, getCurrentEmbeddingModel },
+  ] = await Promise.all([
+    import("../ai/index.ts"),
+    import("../embedding/chunker.ts"),
+    import("../embedding/service.ts"),
+  ]);
+
   metricsCollector.startIngestion(documentId);
 
   try {
@@ -296,7 +417,7 @@ async function buildDerivedData(
     await emit(options, "embedding", `Generated ${chunkEmbeddingResult.embeddings.length} chunk embeddings`, 75, false, documentId);
 
     const uniqueEntities = dedupeEntities(extractedData.entities);
-    const newEntities = await getNewEntities(uniqueEntities);
+    const newEntities = await getNewEntities(database, uniqueEntities);
     const generatedEntityEmbeddings =
       newEntities.length > 0
         ? (await generateGraphEmbeddings(
@@ -327,11 +448,14 @@ async function buildDerivedData(
   }
 }
 
-async function getNewEntities(uniqueEntities: ExtractedEntity[]): Promise<ExtractedEntity[]> {
+async function getNewEntities(
+  database: IngestionDatabase,
+  uniqueEntities: ExtractedEntity[]
+): Promise<ExtractedEntity[]> {
   const newEntities: ExtractedEntity[] = [];
 
   for (const entity of uniqueEntities) {
-    const existing = await db
+    const existing = await database
       .select({ id: entities.id })
       .from(entities)
       .where(and(eq(entities.name, entity.name), eq(entities.type, entity.type)))
@@ -345,17 +469,40 @@ async function getNewEntities(uniqueEntities: ExtractedEntity[]): Promise<Extrac
   return newEntities;
 }
 
-function afterPersistDerivedDocumentData(documentId: string, droppedRelationshipCount: number) {
+function afterPersistDerivedDocumentData(
+  context: DocumentIngestionServiceContext,
+  documentId: string,
+  droppedRelationshipCount: number
+) {
   if (droppedRelationshipCount > 0) {
     metricsCollector.log(`[INGEST] Dropped ${droppedRelationshipCount} unresolved relationships for ${documentId}`);
   }
 
-  revalidateDocument(documentId);
+  revalidateDocument(context, documentId);
 }
 
-async function getUrlSource(url: string): Promise<SourceContent> {
+async function findExistingDriveDocumentId(
+  database: IngestionDatabase,
+  url: string
+): Promise<string | null> {
+  const parsed = parseDriveUrl(url);
+  if (parsed?.kind !== "file") return null;
+
+  const [existing] = await database
+    .select({ id: documents.id })
+    .from(documents)
+    .where(eq(documents.url, parsed.canonicalUrl))
+    .limit(1);
+
+  return existing?.id ?? null;
+}
+
+async function getUrlSource(
+  url: string,
+  options: DocumentIngestionOptions
+): Promise<SourceContent> {
   if (parseDriveUrl(url)?.kind === "file") {
-    return resolveDriveFileSource(url);
+    return resolveDriveFileSource(url, { runner: options.driveRunner });
   }
 
   const contentType = detectContentType(url);
@@ -399,6 +546,7 @@ function getSourceMetadata(source: SourceContent): Record<string, unknown> | und
 }
 
 async function saveLeadImage(
+  database: IngestionDatabase,
   documentId: string,
   leadImageUrl?: string,
   existingMetadata?: Record<string, unknown>
@@ -407,7 +555,7 @@ async function saveLeadImage(
   const image = await downloadDocumentImage(leadImageUrl, documentId);
   if (!image) return;
 
-  await db
+  await database
     .update(documents)
     .set({
       metadata: {
@@ -421,21 +569,22 @@ async function saveLeadImage(
     .where(eq(documents.id, documentId));
 }
 
-async function markFailed(documentId: string) {
-  await db
+async function markFailed(database: IngestionDatabase, documentId: string) {
+  await database
     .update(documents)
     .set({ processingStatus: "failed", updatedAt: new Date() })
     .where(eq(documents.id, documentId));
 }
 
 async function complete(
+  context: DocumentIngestionServiceContext,
   options: DocumentIngestionOptions,
   documentId: string,
   message: string,
   skipped: boolean
 ) {
   await emit(options, "complete", message, 100, false, documentId);
-  revalidateDocument(documentId);
+  revalidateDocument(context, documentId);
   if (skipped) {
     metricsCollector.log(`[INGEST] Document ${documentId} unchanged, skipped derived rebuild`);
   }
@@ -452,10 +601,13 @@ async function emit(
   await options.onEvent?.({ step, message, progress, error, documentId });
 }
 
-function revalidateDocument(documentId: string) {
-  revalidatePath("/library");
-  revalidatePath(`/library/${documentId}`);
-  revalidatePath("/graph");
+function revalidateDocument(
+  context: DocumentIngestionServiceContext,
+  documentId: string
+) {
+  context.revalidatePath("/library");
+  context.revalidatePath(`/library/${documentId}`);
+  context.revalidatePath("/graph");
 }
 
 function dedupeEntities<T extends ExtractedEntity>(entityRows: T[]): T[] {
