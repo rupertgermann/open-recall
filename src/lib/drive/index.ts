@@ -9,11 +9,13 @@ import { extractPdfText } from "../content/extractor.ts";
 const execFileAsync = promisify(execFile);
 
 export const GOOGLE_DOC_MIME_TYPE = "application/vnd.google-apps.document";
+export const DRIVE_FOLDER_MIME_TYPE = "application/vnd.google-apps.folder";
 export const PDF_MIME_TYPE = "application/pdf";
 export const GOGCLI_INSTALL_INSTRUCTIONS = "Install gogcli with: brew install openclaw/tap/gogcli";
 export const GOGCLI_AUTH_COMMAND = "gog auth add <email> --services drive";
 
 const DRIVE_FILE_FIELDS = "id,name,mimeType,modifiedTime";
+const DRIVE_LIST_FIELDS = "files(id,name,mimeType,modifiedTime),nextPageToken";
 
 export type GogRunner = (args: string[]) => Promise<unknown>;
 
@@ -48,6 +50,22 @@ type DriveFileMetadata = {
   name: string;
   mimeType: string;
   modifiedTime?: string;
+};
+
+export type DriveFolderImportFile = DriveFileMetadata & {
+  canonicalUrl: string;
+  documentType: "gdoc" | "pdf" | "note";
+};
+
+export type DriveFolderImportSkippedFile = DriveFileMetadata & {
+  reason: string;
+};
+
+export type DriveFolderImportPlan = {
+  folderId: string;
+  canonicalUrl: string;
+  supported: DriveFolderImportFile[];
+  skipped: DriveFolderImportSkippedFile[];
 };
 
 export type DriveFileSupport =
@@ -143,6 +161,40 @@ export async function resolveDriveFileSource(
   };
 }
 
+export async function buildDriveFolderImportPlan(
+  inputUrl: string,
+  options: { runner?: GogRunner } = {}
+): Promise<DriveFolderImportPlan> {
+  const parsed = parseDriveUrl(inputUrl);
+  if (!parsed) throw new Error("URL is not a Google Drive link");
+  if (parsed.kind !== "folder") throw new Error("URL is not a Drive folder link");
+
+  const runner = options.runner ?? createGogRunner();
+  const files = await listDriveFolderFiles(parsed.folderId, runner);
+  const supported: DriveFolderImportFile[] = [];
+  const skipped: DriveFolderImportSkippedFile[] = [];
+
+  for (const file of files) {
+    const support = getDriveFileSupport(file);
+    if (support.supported) {
+      supported.push({
+        ...file,
+        canonicalUrl: canonicalizeDriveFileUrl(file.id),
+        documentType: support.type,
+      });
+    } else {
+      skipped.push({ ...file, reason: support.reason });
+    }
+  }
+
+  return {
+    folderId: parsed.folderId,
+    canonicalUrl: parsed.canonicalUrl,
+    supported,
+    skipped,
+  };
+}
+
 export function getDriveFileSupport(metadata: Pick<DriveFileMetadata, "mimeType" | "name">): DriveFileSupport {
   if (metadata.mimeType === GOOGLE_DOC_MIME_TYPE) {
     return { supported: true, type: "gdoc", format: "md" };
@@ -181,6 +233,48 @@ async function getDriveFileMetadata(fileId: string, runner: GogRunner): Promise<
   } catch (error) {
     throw mapGogSetupError(error);
   }
+}
+
+async function listDriveFolderFiles(
+  folderId: string,
+  runner: GogRunner,
+  seenFolders = new Set<string>()
+): Promise<DriveFileMetadata[]> {
+  if (seenFolders.has(folderId)) return [];
+  seenFolders.add(folderId);
+
+  const files: DriveFileMetadata[] = [];
+  let pageToken: string | undefined;
+
+  do {
+    const response = await runner([
+      "drive",
+      "ls",
+      "--parent",
+      folderId,
+      "--max",
+      "1000",
+      "--fields",
+      DRIVE_LIST_FIELDS,
+      "--json",
+      "--no-input",
+      "--readonly",
+      ...(pageToken ? ["--page", pageToken] : []),
+    ]);
+    const page = parseDriveListResponse(response);
+
+    for (const file of page.files) {
+      if (file.mimeType === DRIVE_FOLDER_MIME_TYPE) {
+        files.push(...await listDriveFolderFiles(file.id, runner, seenFolders));
+      } else {
+        files.push(file);
+      }
+    }
+
+    pageToken = page.nextPageToken;
+  } while (pageToken);
+
+  return files;
 }
 
 async function exportGoogleDocWithFallback(fileId: string, runner: GogRunner): Promise<string> {
@@ -266,6 +360,28 @@ function parseDriveFileMetadata(response: unknown, fallbackId: string): DriveFil
     name,
     mimeType,
     modifiedTime: stringField(record, "modifiedTime"),
+  };
+}
+
+function parseDriveListResponse(response: unknown): {
+  files: DriveFileMetadata[];
+  nextPageToken?: string;
+} {
+  const record = isRecord(response) ? response : {};
+  const filesValue =
+    Array.isArray(response) ? response :
+    Array.isArray(record.files) ? record.files :
+    Array.isArray(record.items) ? record.items :
+    Array.isArray(record.data) ? record.data :
+    Array.isArray(record.result) ? record.result :
+    [];
+
+  return {
+    files: filesValue
+      .filter(isRecord)
+      .map((file) => parseDriveFileMetadata(file, stringField(file, "id") ?? ""))
+      .filter((file) => file.id),
+    nextPageToken: stringField(record, "nextPageToken"),
   };
 }
 

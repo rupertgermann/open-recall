@@ -6,7 +6,13 @@ import {
   entities,
 } from "../../db/schema.ts";
 import { extractFromUrl, extractPdfFromUrl, detectContentType, downloadDocumentImage } from "../content/extractor.ts";
-import { parseDriveUrl, resolveDriveFileSource, type GogRunner } from "../drive/index.ts";
+import {
+  buildDriveFolderImportPlan,
+  parseDriveUrl,
+  resolveDriveFileSource,
+  type DriveFolderImportPlan,
+  type GogRunner,
+} from "../drive/index.ts";
 import { metricsCollector } from "../embedding/metrics.ts";
 import type { StructuredChunk } from "../embedding/chunker.ts";
 import { generateContentHash } from "../text/index.ts";
@@ -44,6 +50,22 @@ export type DocumentIngestionResult = {
   success: true;
   documentId: string;
   skipped: boolean;
+  action: "ingested" | "refreshed" | "skipped";
+};
+
+export type DriveFolderImportSummary = {
+  ingested: number;
+  refreshed: number;
+  skippedUnchanged: number;
+  skippedUnsupported: number;
+  failed: number;
+  failures: { fileId: string; name: string; error: string }[];
+};
+
+export type DriveFolderImportResult = {
+  success: true;
+  plan: DriveFolderImportPlan;
+  summary: DriveFolderImportSummary;
 };
 
 export type SourceContent = {
@@ -125,6 +147,8 @@ export function createDocumentIngestionService(
     ) => ingestTextDocumentWithContext(context, input, options),
     refreshDocument: (documentId: string, options: DocumentIngestionOptions = {}) =>
       refreshDocumentWithContext(context, documentId, options),
+    ingestDriveFolder: (url: string, options: DocumentIngestionOptions = {}) =>
+      ingestDriveFolderWithContext(context, url, options),
   };
 }
 
@@ -152,6 +176,13 @@ export async function ingestUrlDocument(
   options: DocumentIngestionOptions = {}
 ): Promise<DocumentIngestionResult> {
   return (await getDefaultService()).ingestUrlDocument(url, options);
+}
+
+export async function ingestDriveFolder(
+  url: string,
+  options: DocumentIngestionOptions = {}
+): Promise<DriveFolderImportResult> {
+  return (await getDefaultService()).ingestDriveFolder(url, options);
 }
 
 async function ingestUrlDocumentWithContext(
@@ -201,7 +232,7 @@ async function ingestUrlDocumentWithContext(
     });
     afterPersistDerivedDocumentData(context, doc.id, persistence.droppedRelationshipCount);
     await complete(context, options, doc.id, "Document processed successfully!", false);
-    return { success: true, documentId: doc.id, skipped: false };
+    return { success: true, documentId: doc.id, skipped: false, action: "ingested" };
   } catch (error) {
     await markFailed(context.database, doc.id);
     await emit(options, "error", error instanceof Error ? error.message : String(error), 0, true, doc.id);
@@ -252,7 +283,7 @@ async function ingestTextDocumentWithContext(
     });
     afterPersistDerivedDocumentData(context, doc.id, persistence.droppedRelationshipCount);
     await complete(context, options, doc.id, "Document processed successfully!", false);
-    return { success: true, documentId: doc.id, skipped: false };
+    return { success: true, documentId: doc.id, skipped: false, action: "ingested" };
   } catch (error) {
     await markFailed(context.database, doc.id);
     await emit(options, "error", error instanceof Error ? error.message : String(error), 0, true, doc.id);
@@ -321,7 +352,7 @@ async function refreshDocumentWithContext(
       .where(eq(documents.id, documentId));
     revalidateDocument(context, documentId);
     await complete(context, options, documentId, "Document refresh skipped; derived data is unchanged.", true);
-    return { success: true, documentId, skipped: true };
+    return { success: true, documentId, skipped: true, action: "skipped" };
   }
 
   await context.database
@@ -339,12 +370,75 @@ async function refreshDocumentWithContext(
     });
     afterPersistDerivedDocumentData(context, documentId, persistence.droppedRelationshipCount);
     await complete(context, options, documentId, "Document updated successfully!", false);
-    return { success: true, documentId, skipped: false };
+    return { success: true, documentId, skipped: false, action: "refreshed" };
   } catch (error) {
     await markFailed(context.database, documentId);
     await emit(options, "error", error instanceof Error ? error.message : String(error), 0, true, documentId);
     throw error;
   }
+}
+
+async function ingestDriveFolderWithContext(
+  context: DocumentIngestionServiceContext,
+  url: string,
+  options: DocumentIngestionOptions = {}
+): Promise<DriveFolderImportResult> {
+  const plan = await buildDriveFolderImportPlan(url, { runner: options.driveRunner });
+  const summary: DriveFolderImportSummary = {
+    ingested: 0,
+    refreshed: 0,
+    skippedUnchanged: 0,
+    skippedUnsupported: plan.skipped.length,
+    failed: 0,
+    failures: [],
+  };
+  const total = plan.supported.length;
+
+  if (total === 0) {
+    await emit(options, "complete", "Folder Import complete: no supported Drive Files found.", 100);
+    revalidateImportViews(context);
+    return { success: true, plan, summary };
+  }
+
+  for (const [index, file] of plan.supported.entries()) {
+    const fileNumber = index + 1;
+    try {
+      const result = await ingestUrlDocumentWithContext(context, file.canonicalUrl, {
+        ...options,
+        onEvent: async (event) => {
+          await options.onEvent?.({
+            ...event,
+            message: `File ${fileNumber}/${total}: ${event.message}`,
+            progress: Math.round(((index + event.progress / 100) / total) * 100),
+          });
+        },
+      });
+
+      if (result.action === "ingested") summary.ingested += 1;
+      if (result.action === "refreshed") summary.refreshed += 1;
+      if (result.action === "skipped") summary.skippedUnchanged += 1;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      summary.failed += 1;
+      summary.failures.push({ fileId: file.id, name: file.name, error: message });
+      await emit(
+        options,
+        "error",
+        `File ${fileNumber}/${total}: ${file.name} failed: ${message}`,
+        Math.round((fileNumber / total) * 100),
+        true
+      );
+    }
+  }
+
+  await emit(
+    options,
+    "complete",
+    `Folder Import complete: ${summary.ingested} ingested, ${summary.refreshed} refreshed, ${summary.skippedUnchanged} unchanged, ${summary.failed} failed.`,
+    100
+  );
+  revalidateImportViews(context);
+  return { success: true, plan, summary };
 }
 
 async function buildDerivedData(
@@ -607,6 +701,11 @@ function revalidateDocument(
 ) {
   context.revalidatePath("/library");
   context.revalidatePath(`/library/${documentId}`);
+  context.revalidatePath("/graph");
+}
+
+function revalidateImportViews(context: DocumentIngestionServiceContext) {
+  context.revalidatePath("/library");
   context.revalidatePath("/graph");
 }
 

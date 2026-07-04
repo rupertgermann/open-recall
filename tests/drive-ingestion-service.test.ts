@@ -123,6 +123,66 @@ test("Drive Source Refresh failure keeps existing Document and Derived Document 
   assert.deepEqual(chunkRows, [{ content: "Stable Drive content." }]);
 });
 
+test("Drive Folder Import summarizes unsupported, failed, ingested, and unchanged files", async (t) => {
+  const { db, close } = await createTestDatabase();
+  t.after(close);
+
+  const service = createDocumentIngestionService({
+    database: db,
+    buildDerivedData: async (_documentId, source) => derivedFromSource(source),
+    getCurrentEmbeddingModel: async () => "test-embedding-model",
+    revalidatePath: () => {},
+  });
+  const state = {
+    failFileIds: new Set(["bad-doc"]),
+    contentById: new Map([
+      ["good-doc", "Good Drive content."],
+      ["notes", "Drive notes."],
+      ["bad-doc", "Broken Drive content."],
+    ]),
+  };
+  const runner = fakeFolderRunner(state);
+
+  const first = await service.ingestDriveFolder("https://drive.google.com/drive/folders/folder-root", {
+    driveRunner: runner,
+  });
+
+  assert.deepEqual(first.summary, {
+    ingested: 2,
+    refreshed: 0,
+    skippedUnchanged: 0,
+    skippedUnsupported: 1,
+    failed: 1,
+    failures: [
+      {
+        fileId: "bad-doc",
+        name: "Broken Doc",
+        error: "Download failed for bad-doc",
+      },
+    ],
+  });
+
+  state.failFileIds.clear();
+  const second = await service.ingestDriveFolder("https://drive.google.com/drive/folders/folder-root", {
+    driveRunner: runner,
+  });
+
+  assert.equal(second.summary.ingested, 1);
+  assert.equal(second.summary.skippedUnchanged, 2);
+  assert.equal(second.summary.skippedUnsupported, 1);
+  assert.equal(second.summary.failed, 0);
+
+  const documentRows = await db
+    .select({ url: documents.url })
+    .from(documents)
+    .orderBy(documents.url);
+  assert.deepEqual(documentRows, [
+    { url: "https://drive.google.com/file/d/bad-doc/view" },
+    { url: "https://drive.google.com/file/d/good-doc/view" },
+    { url: "https://drive.google.com/file/d/notes/view" },
+  ]);
+});
+
 function derivedFromSource(source: SourceContent): DerivedDocumentData {
   return {
     contentHash: generateContentHash(source.content),
@@ -162,6 +222,78 @@ function fakeGoogleDocRunner(state: { content: string }): GogRunner {
       const outPath = args[outIndex + 1];
       assert.equal(typeof outPath, "string");
       await writeFile(outPath, state.content, "utf8");
+      return { path: outPath };
+    }
+
+    throw new Error(`Unexpected gog args: ${args.join(" ")}`);
+  };
+}
+
+function fakeFolderRunner(state: {
+  failFileIds: Set<string>;
+  contentById: Map<string, string>;
+}): GogRunner {
+  return async (args) => {
+    if (args[0] === "drive" && args[1] === "ls") {
+      return {
+        files: [
+          {
+            id: "good-doc",
+            name: "Good Doc",
+            mimeType: "application/vnd.google-apps.document",
+            modifiedTime: "2026-07-04T12:00:00.000Z",
+          },
+          {
+            id: "notes",
+            name: "Notes.txt",
+            mimeType: "text/plain",
+            modifiedTime: "2026-07-04T12:05:00.000Z",
+          },
+          {
+            id: "bad-doc",
+            name: "Broken Doc",
+            mimeType: "application/vnd.google-apps.document",
+            modifiedTime: "2026-07-04T12:10:00.000Z",
+          },
+          {
+            id: "sheet",
+            name: "Budget",
+            mimeType: "application/vnd.google-apps.spreadsheet",
+          },
+        ],
+      };
+    }
+
+    if (args[0] === "drive" && args[1] === "get") {
+      const fileId = args[2];
+      if (fileId === "notes") {
+        return {
+          id: fileId,
+          name: "Notes.txt",
+          mimeType: "text/plain",
+          modifiedTime: "2026-07-04T12:05:00.000Z",
+        };
+      }
+
+      return {
+        id: fileId,
+        name: fileId === "bad-doc" ? "Broken Doc" : "Good Doc",
+        mimeType: "application/vnd.google-apps.document",
+        modifiedTime: "2026-07-04T12:00:00.000Z",
+      };
+    }
+
+    if (args[0] === "drive" && args[1] === "download") {
+      const fileId = args[2];
+      if (state.failFileIds.has(fileId)) {
+        throw new Error(`Download failed for ${fileId}`);
+      }
+
+      const outIndex = args.indexOf("--out");
+      assert.notEqual(outIndex, -1);
+      const outPath = args[outIndex + 1];
+      assert.equal(typeof outPath, "string");
+      await writeFile(outPath, state.contentById.get(fileId) ?? "", "utf8");
       return { path: outPath };
     }
 

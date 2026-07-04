@@ -20,6 +20,21 @@ type StepStatus = {
   error?: boolean;
 };
 
+type FolderImportPlan = {
+  folderId: string;
+  supportedCount: number;
+  skipped: { id: string; name: string; mimeType: string; reason: string }[];
+};
+
+type FolderImportSummary = {
+  ingested: number;
+  refreshed: number;
+  skippedUnchanged: number;
+  skippedUnsupported: number;
+  failed: number;
+  failures: { fileId: string; name: string; error: string }[];
+};
+
 const STEP_ORDER = ["fetching", "chunking", "summarizing", "extracting", "embedding", "saving", "complete"];
 
 const STEP_LABELS: Record<string, string> = {
@@ -44,6 +59,8 @@ function AddPageContent() {
   const [currentStatus, setCurrentStatus] = useState<StepStatus | null>(null);
   const [completedSteps, setCompletedSteps] = useState<Set<string>>(new Set());
   const [error, setError] = useState<string | null>(null);
+  const [folderImportPlan, setFolderImportPlan] = useState<FolderImportPlan | null>(null);
+  const [folderImportSummary, setFolderImportSummary] = useState<FolderImportSummary | null>(null);
   const [isUpdateMode, setIsUpdateMode] = useState(false);
   const [updateDocumentId, setUpdateDocumentId] = useState<string | null>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
@@ -109,11 +126,24 @@ function AddPageContent() {
           const data = JSON.parse(line.slice(6));
 
           if (data.step === "done") {
+            if (data.summary) {
+              setFolderImportSummary(data.summary);
+              setFolderImportPlan(null);
+              setIsProcessing(false);
+              return;
+            }
             if (endpoint === "/api/update-document" && typeof (body as any)?.documentId === "string") {
               setTimeout(() => setIsProcessing(false), 500);
             } else {
               setTimeout(() => router.push("/library"), 500);
             }
+            return;
+          }
+
+          if (data.step === "folder_confirmation") {
+            setFolderImportPlan(data.folderImportPlan);
+            setFolderImportSummary(null);
+            setIsProcessing(false);
             return;
           }
 
@@ -190,6 +220,8 @@ function AddPageContent() {
     setIsProcessing(true);
     setCompletedSteps(new Set());
     setCurrentStatus(null);
+    setFolderImportPlan(null);
+    setFolderImportSummary(null);
 
     try {
       const endpoint = isUpdateMode ? "/api/update-document" : "/api/ingest";
@@ -204,6 +236,29 @@ function AddPageContent() {
           : { type: "text", title, content: text, maxEntities: entityBudget.maxEntities, maxRelationships: entityBudget.maxRelationships };
 
       await runIngestRequest(endpoint, body);
+    } catch (error) {
+      if (error instanceof Error && error.name !== "AbortError") {
+        setError(getAIErrorMessage(error));
+      }
+      setIsProcessing(false);
+    }
+  };
+
+  const handleConfirmFolderImport = async () => {
+    setError(null);
+    setIsProcessing(true);
+    setCompletedSteps(new Set());
+    setCurrentStatus(null);
+    setFolderImportSummary(null);
+
+    try {
+      await runIngestRequest("/api/ingest", {
+        type: "url",
+        url,
+        confirmFolderImport: true,
+        maxEntities: entityBudget.maxEntities,
+        maxRelationships: entityBudget.maxRelationships,
+      });
     } catch (error) {
       if (error instanceof Error && error.name !== "AbortError") {
         setError(getAIErrorMessage(error));
@@ -359,6 +414,68 @@ function AddPageContent() {
                 )}
               </div>
             </form>
+          )}
+
+          {folderImportPlan && !isProcessing && (
+            <Card>
+              <CardHeader>
+                <CardTitle>Confirm Folder Import</CardTitle>
+                <CardDescription>
+                  {folderImportPlan.supportedCount} supported Drive Files found; {folderImportPlan.skipped.length} will be skipped.
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                {folderImportPlan.skipped.length > 0 && (
+                  <div className="max-h-40 overflow-auto rounded-md border">
+                    {folderImportPlan.skipped.slice(0, 12).map((file) => (
+                      <div key={file.id} className="flex items-start justify-between gap-3 border-b px-3 py-2 last:border-b-0">
+                        <span className="min-w-0 truncate text-sm">{file.name}</span>
+                        <span className="shrink-0 text-xs text-muted-foreground">{file.reason}</span>
+                      </div>
+                    ))}
+                    {folderImportPlan.skipped.length > 12 && (
+                      <div className="px-3 py-2 text-xs text-muted-foreground">
+                        + {folderImportPlan.skipped.length - 12} more skipped
+                      </div>
+                    )}
+                  </div>
+                )}
+                <div className="flex gap-2">
+                  <Button type="button" className="flex-1" onClick={handleConfirmFolderImport}>
+                    Import Files
+                  </Button>
+                  <Button type="button" variant="outline" className="flex-1" onClick={() => setFolderImportPlan(null)}>
+                    Cancel
+                  </Button>
+                </div>
+              </CardContent>
+            </Card>
+          )}
+
+          {folderImportSummary && !isProcessing && (
+            <Card className="border-green-200 bg-green-50 dark:border-green-800 dark:bg-green-950/20">
+              <CardHeader>
+                <CardTitle className="text-lg flex items-center gap-2 text-green-700 dark:text-green-300">
+                  <CheckCircle className="h-5 w-5" />
+                  Folder Import Complete
+                </CardTitle>
+                <CardDescription className="text-green-600 dark:text-green-400">
+                  {folderImportSummary.ingested} ingested, {folderImportSummary.refreshed} refreshed, {folderImportSummary.skippedUnchanged} unchanged, {folderImportSummary.skippedUnsupported} unsupported, {folderImportSummary.failed} failed.
+                </CardDescription>
+              </CardHeader>
+              {folderImportSummary.failures.length > 0 && (
+                <CardContent>
+                  <div className="rounded-md border bg-background">
+                    {folderImportSummary.failures.map((failure) => (
+                      <div key={failure.fileId} className="border-b px-3 py-2 last:border-b-0">
+                        <p className="text-sm font-medium">{failure.name}</p>
+                        <p className="text-xs text-destructive">{failure.error}</p>
+                      </div>
+                    ))}
+                  </div>
+                </CardContent>
+              )}
+            </Card>
           )}
 
           {isUpdateMode && (

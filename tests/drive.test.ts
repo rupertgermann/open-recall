@@ -3,8 +3,10 @@ import { writeFile } from "node:fs/promises";
 import test from "node:test";
 
 import {
+  DRIVE_FOLDER_MIME_TYPE,
   GOGCLI_AUTH_COMMAND,
   GOGCLI_INSTALL_INSTRUCTIONS,
+  buildDriveFolderImportPlan,
   canonicalizeDriveFileUrl,
   getDriveFileSupport,
   parseDriveUrl,
@@ -151,6 +153,74 @@ test("resolveDriveFileSource rejects unsupported Drive types before download", a
   );
 
   assert.equal(calls.some((args) => args[0] === "drive" && args[1] === "download"), false);
+});
+
+test("buildDriveFolderImportPlan lists folders recursively and splits supported from skipped", async () => {
+  const calls: string[][] = [];
+  const runner: GogRunner = async (args) => {
+    calls.push(args);
+
+    if (args[0] === "drive" && args[1] === "ls") {
+      const parent = args[args.indexOf("--parent") + 1];
+      if (parent === "folder-root") {
+        return {
+          files: [
+            {
+              id: "folder-child",
+              name: "Nested",
+              mimeType: DRIVE_FOLDER_MIME_TYPE,
+            },
+            {
+              id: "doc-1",
+              name: "Strategy",
+              mimeType: "application/vnd.google-apps.document",
+              modifiedTime: "2026-07-04T12:00:00.000Z",
+            },
+            {
+              id: "sheet-1",
+              name: "Budget",
+              mimeType: "application/vnd.google-apps.spreadsheet",
+            },
+          ],
+        };
+      }
+
+      if (parent === "folder-child") {
+        return {
+          files: [
+            {
+              id: "txt-1",
+              name: "Notes.txt",
+              mimeType: "text/plain",
+              modifiedTime: "2026-07-04T12:30:00.000Z",
+            },
+          ],
+        };
+      }
+    }
+
+    throw new Error(`Unexpected gog args: ${args.join(" ")}`);
+  };
+
+  const plan = await buildDriveFolderImportPlan(
+    "https://drive.google.com/drive/folders/folder-root",
+    { runner }
+  );
+
+  assert.equal(plan.folderId, "folder-root");
+  assert.deepEqual(plan.supported.map((file) => [file.id, file.documentType]), [
+    ["txt-1", "note"],
+    ["doc-1", "gdoc"],
+  ]);
+  assert.deepEqual(plan.skipped.map((file) => [file.id, file.reason]), [
+    ["sheet-1", "application/vnd.google-apps.spreadsheet"],
+  ]);
+  assert.deepEqual(
+    calls
+      .filter((args) => args[0] === "drive" && args[1] === "ls")
+      .map((args) => args[args.indexOf("--parent") + 1]),
+    ["folder-root", "folder-child"]
+  );
 });
 
 test("resolveDriveFileSource maps gogcli setup failures to actionable messages", async () => {
