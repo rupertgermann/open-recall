@@ -77,109 +77,123 @@ function AddPageContent() {
   }, [entityDetail]);
 
   const runIngestRequest = async (endpoint: string, body: unknown) => {
-    abortControllerRef.current = new AbortController();
+    const controller = new AbortController();
+    abortControllerRef.current = controller;
 
-    const response = await fetch(endpoint, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
-      signal: abortControllerRef.current.signal,
-    });
+    try {
+      const response = await fetch(endpoint, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+        signal: controller.signal,
+      });
 
-    if (!response.ok) {
-      let message = `Failed to start processing (${response.status})`;
-
-      try {
-        const contentType = response.headers.get("content-type") || "";
-        if (contentType.includes("application/json")) {
-          const data = await response.json();
-          message = data.error || data.message || message;
-        } else {
-          const text = await response.text();
-          message = text.trim() || message;
-        }
-      } catch {
-        // Keep the status-based message.
-      }
-
-      throw new Error(message);
-    }
-
-    const reader = response.body?.getReader();
-    if (!reader) throw new Error("No response stream");
-
-    const decoder = new TextDecoder();
-    let buffer = "";
-
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-
-      buffer += decoder.decode(value, { stream: true });
-      const lines = buffer.split("\n");
-      buffer = lines.pop() || "";
-
-      for (const line of lines) {
-        if (!line.startsWith("data: ")) continue;
+      if (!response.ok) {
+        let message = `Failed to start processing (${response.status})`;
 
         try {
-          const data = JSON.parse(line.slice(6));
+          const contentType = response.headers.get("content-type") || "";
+          if (contentType.includes("application/json")) {
+            const data = await response.json();
+            message = data.error || data.message || message;
+          } else {
+            const text = await response.text();
+            message = text.trim() || message;
+          }
+        } catch {
+          // Keep the status-based message.
+        }
 
-          if (data.step === "done") {
-            if (data.summary) {
-              setFolderImportSummary(data.summary);
-              setFolderImportPlan(null);
+        throw new Error(message);
+      }
+
+      const reader = response.body?.getReader();
+      if (!reader) throw new Error("No response stream");
+
+      const decoder = new TextDecoder();
+      let buffer = "";
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split("\n");
+        buffer = lines.pop() || "";
+
+        for (const line of lines) {
+          if (!line.startsWith("data: ")) continue;
+
+          try {
+            const data = JSON.parse(line.slice(6));
+
+            if (data.step === "done") {
+              if (data.summary) {
+                setFolderImportSummary(data.summary);
+                setFolderImportPlan(null);
+                setIsProcessing(false);
+                return;
+              }
+              if (endpoint === "/api/update-document" && typeof (body as any)?.documentId === "string") {
+                setTimeout(() => setIsProcessing(false), 500);
+              } else {
+                setTimeout(() => router.push("/library"), 500);
+              }
+              return;
+            }
+
+            if (data.step === "folder_confirmation") {
+              setFolderImportPlan(data.folderImportPlan);
+              setFolderImportSummary(null);
               setIsProcessing(false);
               return;
             }
-            if (endpoint === "/api/update-document" && typeof (body as any)?.documentId === "string") {
-              setTimeout(() => setIsProcessing(false), 500);
-            } else {
-              setTimeout(() => router.push("/library"), 500);
+
+            if (data.error) {
+              const message = data.message || "Processing failed";
+              setError(message);
+              setCurrentStatus((prev) => ({
+                step: prev?.step ?? "fetching",
+                message,
+                progress: data.progress ?? prev?.progress ?? 0,
+                error: true,
+              }));
+              setIsProcessing(false);
+              return;
             }
-            return;
-          }
 
-          if (data.step === "folder_confirmation") {
-            setFolderImportPlan(data.folderImportPlan);
-            setFolderImportSummary(null);
-            setIsProcessing(false);
-            return;
-          }
-
-          if (data.error) {
-            setError(data.message || "Processing failed");
-            setIsProcessing(false);
-            return;
-          }
-
-          setCurrentStatus({
-            step: data.step,
-            message: data.message,
-            progress: data.progress || 0,
-          });
-
-          const currentIndex = STEP_ORDER.indexOf(data.step);
-          if (currentIndex > 0) {
-            setCompletedSteps((prev) => {
-              const newSet = new Set(prev);
-              for (let i = 0; i < currentIndex; i++) {
-                newSet.add(STEP_ORDER[i]);
-              }
-              return newSet;
+            setCurrentStatus({
+              step: data.step,
+              message: data.message,
+              progress: data.progress || 0,
             });
-          }
 
-          if (data.step === "complete") {
-            setCompletedSteps((prev) => {
-              const newSet = new Set(prev);
-              STEP_ORDER.forEach((s) => newSet.add(s));
-              return newSet;
-            });
+            const currentIndex = STEP_ORDER.indexOf(data.step);
+            if (currentIndex > 0) {
+              setCompletedSteps((prev) => {
+                const newSet = new Set(prev);
+                for (let i = 0; i < currentIndex; i++) {
+                  newSet.add(STEP_ORDER[i]);
+                }
+                return newSet;
+              });
+            }
+
+            if (data.step === "complete") {
+              setCompletedSteps((prev) => {
+                const newSet = new Set(prev);
+                STEP_ORDER.forEach((s) => newSet.add(s));
+                return newSet;
+              });
+            }
+          } catch {
+            // Ignore parse errors
           }
-        } catch {
-          // Ignore parse errors
         }
+      }
+    } finally {
+      if (abortControllerRef.current === controller) {
+        abortControllerRef.current = null;
       }
     }
   };
@@ -269,14 +283,19 @@ function AddPageContent() {
 
   const handleCancel = () => {
     abortControllerRef.current?.abort();
+    abortControllerRef.current = null;
     setIsProcessing(false);
     setCurrentStatus(null);
     setCompletedSteps(new Set());
+    setError(null);
   };
 
   const getStepIcon = (step: string) => {
     if (completedSteps.has(step)) {
       return <CheckCircle className="h-5 w-5 text-green-500" />;
+    }
+    if (currentStatus?.step === step && currentStatus.error) {
+      return <AlertCircle className="h-5 w-5 text-destructive" />;
     }
     if (currentStatus?.step === step) {
       return <Loader2 className="h-5 w-5 animate-spin text-primary" />;
@@ -579,9 +598,22 @@ function AddPageContent() {
           )}
 
           {error && (
-            <div className="flex items-center gap-2 p-3 rounded-lg bg-destructive/10 text-destructive">
-              <AlertCircle className="h-4 w-4 flex-shrink-0" />
-              <span className="text-sm">{error}</span>
+            <div className="flex flex-col gap-3 rounded-lg bg-destructive/10 p-3 text-destructive sm:flex-row sm:items-center sm:justify-between">
+              <div className="flex items-center gap-2">
+                <AlertCircle className="h-4 w-4 flex-shrink-0" />
+                <span className="text-sm">{error}</span>
+              </div>
+              {currentStatus && (
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="shrink-0 border-destructive/30 bg-background text-destructive hover:bg-destructive/10 hover:text-destructive"
+                  onClick={handleCancel}
+                >
+                  Cancel ingestion
+                </Button>
+              )}
             </div>
           )}
         </div>
