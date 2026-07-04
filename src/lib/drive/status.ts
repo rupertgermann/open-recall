@@ -45,8 +45,6 @@ export async function resolveGogStatus(
     const accountEmail = parseGogAccountEmail(await runner([
       "auth",
       "list",
-      "--services",
-      "drive",
       "--json",
       "--results-only",
       "--no-input",
