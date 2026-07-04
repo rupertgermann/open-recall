@@ -7,7 +7,7 @@ Privacy-focused, local-first Personal Knowledge Management. Saved web pages and 
 ### Knowledge base
 
 **Document**:
-A saved web page (article, youtube, pdf) or pasted note. The root unit of the knowledge base; everything else derives from one.
+A saved web page (article, youtube, pdf), a pasted or imported note, or a file ingested from Google Drive. The root unit of the knowledge base; everything else derives from one. A Document's *type* describes its content kind (article, youtube, pdf, note); its *origin* (web, pasted, Drive) is a separate axis.
 _Avoid_: page, item, source (source is the *origin* of a Document, not the Document itself)
 
 **Chunk**:
@@ -43,6 +43,14 @@ _Avoid_: save step, write phase
 **Source Refresh**:
 Re-ingesting a source-backed Document. Skips rebuilding Derived Document Data when both the content hash and the embedding model are unchanged.
 _Avoid_: re-sync, update
+
+**Drive File**:
+A Google Drive file ingested as a Document. Identified by its Drive file ID, which is stable across renames and moves; ingesting the same Drive File twice refreshes the existing Document instead of creating a duplicate.
+_Avoid_: drive document (collides with Google Docs), synced file (there is no sync)
+
+**Folder Import**:
+One-shot ingestion of all supported files in a Drive folder and its subfolders, after user confirmation of the file count. Idempotent: re-importing refreshes existing Documents and skips unchanged ones. Unsupported files are skipped and reported.
+_Avoid_: sync, folder watch (both imply continuous behavior; Folder Import is a single run)
 
 ### Retrieval
 

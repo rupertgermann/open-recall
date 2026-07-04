@@ -5,7 +5,8 @@
       "Bash(npx *:*)",
       "Bash(npm *:*)",
       "Bash(grep *:*)",
-      "Bash(npx drizzle-kit:*)"
+      "Bash(npx drizzle-kit:*)",
+      "WebFetch(domain:github.com)"
     ]
   }
 }
