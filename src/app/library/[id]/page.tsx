@@ -24,6 +24,7 @@ const typeIcons = {
   youtube: Video,
   pdf: FileText,
   note: FileText,
+  gdoc: FileText,
 };
 
 const typeColors = {
@@ -31,7 +32,14 @@ const typeColors = {
   youtube: "bg-red-500/10 text-red-500",
   pdf: "bg-orange-500/10 text-orange-500",
   note: "bg-green-500/10 text-green-500",
+  gdoc: "bg-sky-500/10 text-sky-600",
 };
+
+function formatDocumentType(type: string): string {
+  if (type === "note") return "text";
+  if (type === "gdoc") return "Google Doc";
+  return type;
+}
 
 const entityTypeColors: Record<string, string> = {
   person: "bg-amber-500/10 text-amber-600",
@@ -89,7 +97,7 @@ export default async function DocumentDetailPage({
                   {document.createdAt.toLocaleDateString()}
                 </span>
                 <Badge variant="outline" className="capitalize">
-                  {document.type}
+                  {formatDocumentType(document.type)}
                 </Badge>
                 <Badge
                   variant={document.processingStatus === "completed" ? "default" : "secondary"}
@@ -105,7 +113,7 @@ export default async function DocumentDetailPage({
                   className="inline-flex items-center gap-1 text-sm text-primary hover:underline mt-2"
                 >
                   <ExternalLink className="h-4 w-4" />
-                  {document.url}
+                  {document.type === "gdoc" ? "Open in Drive" : document.url}
                 </a>
               )}
             </div>

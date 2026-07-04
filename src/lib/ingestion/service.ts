@@ -7,6 +7,7 @@ import {
   entities,
 } from "@/db/schema";
 import { extractFromUrl, detectContentType, downloadDocumentImage } from "@/lib/content/extractor";
+import { parseDriveUrl, resolveDriveFileSource } from "@/lib/drive";
 import {
   extractEntitiesWithDBConfig,
   generateSummaryWithDBConfig,
@@ -62,9 +63,10 @@ export type DocumentIngestionResult = {
 type SourceContent = {
   title: string;
   content: string;
-  type: "article" | "youtube" | "note" | "pdf";
+  type: "article" | "youtube" | "note" | "pdf" | "gdoc";
   url: string | null;
   leadImageUrl?: string;
+  metadata?: Record<string, unknown>;
 };
 
 type DerivedDocumentData = {
@@ -97,12 +99,12 @@ export async function ingestUrlDocument(
       type: source.type,
       content: source.content,
       processingStatus: "processing",
-      metadata: source.leadImageUrl ? { leadImageUrl: source.leadImageUrl } : undefined,
+      metadata: getSourceMetadata(source),
     })
     .returning({ id: documents.id });
 
   try {
-    await saveLeadImage(doc.id, source.leadImageUrl);
+    await saveLeadImage(doc.id, source.leadImageUrl, source.metadata);
     const derived = await buildDerivedData(doc.id, source, options);
     const persistence = await persistDerivedDocumentData(db, {
       documentId: doc.id,
@@ -352,6 +354,10 @@ function afterPersistDerivedDocumentData(documentId: string, droppedRelationship
 }
 
 async function getUrlSource(url: string): Promise<SourceContent> {
+  if (parseDriveUrl(url)?.kind === "file") {
+    return resolveDriveFileSource(url);
+  }
+
   const extracted = await extractFromUrl(url);
   if (!extracted) throw new Error("Failed to extract content from URL");
 
@@ -374,7 +380,19 @@ function validateUrl(url: string): string {
   return parsed.toString();
 }
 
-async function saveLeadImage(documentId: string, leadImageUrl?: string) {
+function getSourceMetadata(source: SourceContent): Record<string, unknown> | undefined {
+  if (!source.metadata && !source.leadImageUrl) return undefined;
+  return {
+    ...(source.metadata ?? {}),
+    ...(source.leadImageUrl ? { leadImageUrl: source.leadImageUrl } : {}),
+  };
+}
+
+async function saveLeadImage(
+  documentId: string,
+  leadImageUrl?: string,
+  existingMetadata?: Record<string, unknown>
+) {
   if (!leadImageUrl) return;
   const image = await downloadDocumentImage(leadImageUrl, documentId);
   if (!image) return;
@@ -383,6 +401,7 @@ async function saveLeadImage(documentId: string, leadImageUrl?: string) {
     .update(documents)
     .set({
       metadata: {
+        ...(existingMetadata ?? {}),
         leadImageUrl: image.url,
         imagePath: image.publicPath,
         imageContentType: image.contentType,
