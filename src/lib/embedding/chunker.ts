@@ -122,17 +122,58 @@ function mergeSmallChunks(
 }
 
 /**
- * Split a large chunk into smaller pieces by sentences
+ * Split text that exceeds maxTokens on word boundaries,
+ * falling back to fixed-size character windows for unbroken runs.
+ */
+function splitByTokenBudget(text: string, maxTokens: number): string[] {
+  const maxChars = maxTokens * 4; // inverse of estimateTokens
+  const words = text.split(/\s+/).filter((w) => w.length > 0);
+  const pieces: string[] = [];
+  let current = "";
+
+  for (const word of words) {
+    const parts =
+      word.length > maxChars
+        ? (word.match(new RegExp(`.{1,${maxChars}}`, "g")) ?? [])
+        : [word];
+
+    for (const part of parts) {
+      if (current === "") {
+        current = part;
+      } else if (current.length + 1 + part.length <= maxChars) {
+        current = current + " " + part;
+      } else {
+        pieces.push(current);
+        current = part;
+      }
+    }
+  }
+
+  if (current) {
+    pieces.push(current);
+  }
+
+  return pieces;
+}
+
+/**
+ * Split a large chunk into smaller pieces by sentences.
+ * Sentences that still exceed maxTokens (e.g. logs or CSV rows without
+ * sentence punctuation) are split on word boundaries.
  */
 function splitLargeChunk(text: string, maxTokens: number): string[] {
-  const sentences = splitBySentences(text);
+  const sentences = splitBySentences(text).flatMap((sentence) =>
+    estimateTokens(sentence) > maxTokens
+      ? splitByTokenBudget(sentence, maxTokens)
+      : [sentence]
+  );
   const chunks: string[] = [];
   let current = "";
-  
+
   for (const sentence of sentences) {
     const sentenceTokens = estimateTokens(sentence);
     const currentTokens = estimateTokens(current);
-    
+
     if (current === "") {
       current = sentence;
     } else if (currentTokens + sentenceTokens <= maxTokens) {
@@ -142,11 +183,11 @@ function splitLargeChunk(text: string, maxTokens: number): string[] {
       current = sentence;
     }
   }
-  
+
   if (current) {
     chunks.push(current);
   }
-  
+
   return chunks;
 }
 
