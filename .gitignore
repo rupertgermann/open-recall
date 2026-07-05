@@ -48,3 +48,7 @@ public/document-images/
 # IDE - Windsurf
 .windsurf/
 .claude/settings.local.json
+AGENTS.md
+docs/agents/domain.md
+docs/agents/issue-tracker.md
+docs/agents/triage-labels.md
