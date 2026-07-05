@@ -118,6 +118,15 @@ test("extractPdfText returns text from a PDF buffer", async () => {
   assert.match(text, /Drive PDF text/);
 });
 
+test("extractPdfText returns a placeholder for image-only PDFs", async () => {
+  const text = await extractPdfText(buildEmptyPdf());
+
+  assert.equal(
+    text,
+    "This PDF did not contain extractable text. It may be a scanned or image-only document."
+  );
+});
+
 test("resolveDriveFileSource downloads markdown and text Drive Files as note Documents", async () => {
   const markdown = await resolveDriveFileSource("https://drive.google.com/file/d/md-123/view", {
     runner: fakeDriveRunner({
@@ -329,6 +338,30 @@ function buildSimplePdf(text: string): Buffer {
     "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>",
     `<< /Length ${Buffer.byteLength(stream)} >>\nstream\n${stream}\nendstream`,
     "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+  ];
+  const offsets: number[] = [];
+  let pdf = "%PDF-1.4\n";
+
+  objects.forEach((object, index) => {
+    offsets.push(Buffer.byteLength(pdf));
+    pdf += `${index + 1} 0 obj\n${object}\nendobj\n`;
+  });
+
+  const xrefOffset = Buffer.byteLength(pdf);
+  pdf += `xref\n0 ${objects.length + 1}\n0000000000 65535 f \n`;
+  for (const offset of offsets) {
+    pdf += `${String(offset).padStart(10, "0")} 00000 n \n`;
+  }
+  pdf += `trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xrefOffset}\n%%EOF\n`;
+
+  return Buffer.from(pdf);
+}
+
+function buildEmptyPdf(): Buffer {
+  const objects = [
+    "<< /Type /Catalog /Pages 2 0 R >>",
+    "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+    "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << >> >>",
   ];
   const offsets: number[] = [];
   let pdf = "%PDF-1.4\n";

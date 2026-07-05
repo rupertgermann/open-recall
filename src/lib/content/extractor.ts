@@ -15,6 +15,8 @@ export interface ExtractedContent {
 }
 
 const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
+export const IMAGE_ONLY_PDF_CONTENT =
+  "This PDF did not contain extractable text. It may be a scanned or image-only document.";
 const require = createRequire(import.meta.url);
 const PDF_WORKER_SRC = pathToFileURL(require.resolve("pdfjs-dist/legacy/build/pdf.worker.mjs")).href;
 let pdfWorkerReady: Promise<void> | null = null;
@@ -203,8 +205,7 @@ export async function extractPdfText(data: Buffer | Uint8Array): Promise<string>
   }
 
   const content = pages.join("\n\n").trim();
-  if (!content) throw new Error("PDF did not contain extractable text");
-  return content;
+  return content || IMAGE_ONLY_PDF_CONTENT;
 }
 
 async function ensurePdfWorker(pdfjs: typeof import("pdfjs-dist/legacy/build/pdf.mjs")): Promise<void> {
