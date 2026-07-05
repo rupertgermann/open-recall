@@ -5,6 +5,7 @@ import { settings, documents, entities, relationships } from "@/db/schema";
 import { eq, count } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { getAIErrorMessage } from "@/lib/ai/errors";
+import { DEFAULT_LOCAL_CHAT_MODEL, DEFAULT_LOCAL_EMBEDDING_MODEL } from "@/lib/ai/models";
 
 // Provider-specific settings
 export type ProviderSettings = {
@@ -38,12 +39,12 @@ const DEFAULT_SETTINGS: AISettings = {
   chat: {
     provider: "local",
     baseUrl: "http://localhost:11434/v1",
-    model: "llama3.2:8b",
+    model: DEFAULT_LOCAL_CHAT_MODEL,
   },
   embedding: {
     provider: "local",
     baseUrl: "http://localhost:11434/v1",
-    model: "nomic-embed-text",
+    model: DEFAULT_LOCAL_EMBEDDING_MODEL,
   },
 };
 

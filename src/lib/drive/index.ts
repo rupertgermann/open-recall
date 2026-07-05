@@ -11,7 +11,8 @@ const execFileAsync = promisify(execFile);
 export const GOOGLE_DOC_MIME_TYPE = "application/vnd.google-apps.document";
 export const DRIVE_FOLDER_MIME_TYPE = "application/vnd.google-apps.folder";
 export const PDF_MIME_TYPE = "application/pdf";
-export const GOGCLI_INSTALL_INSTRUCTIONS = "Install gogcli with: brew install openclaw/tap/gogcli";
+export const GOGCLI_INSTALL_INSTRUCTIONS =
+  "Install gogcli from https://github.com/openclaw/gogcli and ensure the `gog` command is on PATH, or set GOG_PATH to the binary.";
 export const GOGCLI_AUTH_COMMAND = "gog auth add <email> --services drive";
 
 const DRIVE_FILE_FIELDS = "id,name,mimeType,modifiedTime";
