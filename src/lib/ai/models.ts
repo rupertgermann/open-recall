@@ -1,6 +1,5 @@
 export const LOCAL_CHAT_MODELS = [
-  "llama3:8b",
-  "llama3.2:8b",
+  "qwen3.5:9b",
   "mistral:7b",
   "qwen2.5:7b",
 ] as const;

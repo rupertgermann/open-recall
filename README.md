@@ -176,7 +176,7 @@ brew install ollama
 ollama serve
 
 # Pull default local models
-ollama pull llama3:8b
+ollama pull qwen3.5:9b
 ollama pull nomic-embed-text
 ```
 
@@ -313,7 +313,7 @@ See [`.env.example`](.env.example) for the full template.
 |---|---|---|
 | `DATABASE_URL` | PostgreSQL connection string for local development | `postgres://postgres:postgres@localhost:6432/openrecall` |
 | `AI_BASE_URL` | Shared local OpenAI-compatible base URL used when specific provider URLs are not set | `http://localhost:11434/v1` |
-| `AI_MODEL` | Shared default chat/extraction model | `llama3:8b` |
+| `AI_MODEL` | Shared default chat/extraction model | `qwen3.5:9b` |
 | `EMBEDDING_MODEL` | Default embedding model | `nomic-embed-text` |
 | `CHAT_PROVIDER` | Chat provider, `local` or `openai` | `local` |
 | `CHAT_BASE_URL` | Chat provider base URL | `AI_BASE_URL` |

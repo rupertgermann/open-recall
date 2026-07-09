@@ -36,7 +36,7 @@ export type AIConfig = z.infer<typeof aiConfigSchema>;
 // DEFAULT CONFIGURATIONS
 // ============================================================================
 
-// Chat provider defaults (e.g., Ollama with llama3)
+// Chat provider defaults (e.g., Ollama with qwen3.5:9b)
 export const defaultChatConfig: ChatConfig = {
   provider: (process.env.CHAT_PROVIDER as "local" | "openai") || "local",
   baseUrl: process.env.CHAT_BASE_URL || process.env.AI_BASE_URL || "http://localhost:11434/v1",
