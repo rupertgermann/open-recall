@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { DEFAULT_LOCAL_CHAT_MODEL, DEFAULT_LOCAL_EMBEDDING_MODEL } from "@/lib/ai/models";
 
 // ============================================================================
 // PROVIDER CONFIGURATION SCHEMAS
@@ -35,11 +36,11 @@ export type AIConfig = z.infer<typeof aiConfigSchema>;
 // DEFAULT CONFIGURATIONS
 // ============================================================================
 
-// Chat provider defaults (e.g., Ollama with llama3.2)
+// Chat provider defaults (e.g., Ollama with qwen3.5:9b)
 export const defaultChatConfig: ChatConfig = {
   provider: (process.env.CHAT_PROVIDER as "local" | "openai") || "local",
   baseUrl: process.env.CHAT_BASE_URL || process.env.AI_BASE_URL || "http://localhost:11434/v1",
-  model: process.env.CHAT_MODEL || process.env.AI_MODEL || "llama3.2:8b",
+  model: process.env.CHAT_MODEL || process.env.AI_MODEL || DEFAULT_LOCAL_CHAT_MODEL,
   apiKey: process.env.CHAT_API_KEY || process.env.OPENAI_API_KEY,
 };
 
@@ -47,7 +48,7 @@ export const defaultChatConfig: ChatConfig = {
 export const defaultEmbeddingConfig: EmbeddingConfig = {
   provider: (process.env.EMBEDDING_PROVIDER as "local" | "openai") || "local",
   baseUrl: process.env.EMBEDDING_BASE_URL || process.env.AI_BASE_URL || "http://localhost:11434/v1",
-  model: process.env.EMBEDDING_MODEL || "nomic-embed-text",
+  model: process.env.EMBEDDING_MODEL || DEFAULT_LOCAL_EMBEDDING_MODEL,
   apiKey: process.env.EMBEDDING_API_KEY || process.env.OPENAI_API_KEY,
 };
 

@@ -1,7 +1,9 @@
 import { JSDOM } from "jsdom";
 import { Readability } from "@mozilla/readability";
 import { mkdir, writeFile } from "node:fs/promises";
+import { createRequire } from "node:module";
 import { extname, join } from "node:path";
+import { pathToFileURL } from "node:url";
 
 export interface ExtractedContent {
   title: string;
@@ -13,6 +15,11 @@ export interface ExtractedContent {
 }
 
 const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
+export const IMAGE_ONLY_PDF_CONTENT =
+  "This PDF did not contain extractable text. It may be a scanned or image-only document.";
+const require = createRequire(import.meta.url);
+const PDF_WORKER_SRC = pathToFileURL(require.resolve("pdfjs-dist/legacy/build/pdf.worker.mjs")).href;
+let pdfWorkerReady: Promise<void> | null = null;
 
 /**
  * Extract clean content from HTML using Mozilla Readability
@@ -175,6 +182,7 @@ export async function extractPdfFromUrl(url: string): Promise<ExtractedContent> 
 
 export async function extractPdfText(data: Buffer | Uint8Array): Promise<string> {
   const pdfjs = await import("pdfjs-dist/legacy/build/pdf.mjs");
+  await ensurePdfWorker(pdfjs);
   const bytes = data instanceof Buffer ? new Uint8Array(data) : data;
   const loadingTask = pdfjs.getDocument({
     data: bytes,
@@ -197,8 +205,25 @@ export async function extractPdfText(data: Buffer | Uint8Array): Promise<string>
   }
 
   const content = pages.join("\n\n").trim();
-  if (!content) throw new Error("PDF did not contain extractable text");
-  return content;
+  return content || IMAGE_ONLY_PDF_CONTENT;
+}
+
+async function ensurePdfWorker(pdfjs: typeof import("pdfjs-dist/legacy/build/pdf.mjs")): Promise<void> {
+  pdfjs.GlobalWorkerOptions.workerSrc = PDF_WORKER_SRC;
+
+  const pdfjsGlobal = globalThis as typeof globalThis & {
+    pdfjsWorker?: { WorkerMessageHandler: unknown };
+  };
+
+  if (pdfjsGlobal.pdfjsWorker?.WorkerMessageHandler) return;
+
+  pdfWorkerReady ??= import("pdfjs-dist/legacy/build/pdf.worker.mjs").then((worker) => {
+    pdfjsGlobal.pdfjsWorker = {
+      WorkerMessageHandler: worker.WorkerMessageHandler,
+    };
+  });
+
+  await pdfWorkerReady;
 }
 
 function titleFromUrl(url: string): string {

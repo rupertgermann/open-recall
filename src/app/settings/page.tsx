@@ -53,7 +53,7 @@ export default function SettingsPage() {
   // Chat provider settings
   const [chatProvider, setChatProvider] = useState<Provider>("local");
   const [chatBaseUrl, setChatBaseUrl] = useState("http://localhost:11434/v1");
-  const [chatModel, setChatModel] = useState("llama3.2:8b");
+  const [chatModel, setChatModel] = useState<string>(DEFAULT_LOCAL_CHAT_MODEL);
   const [chatConnectionStatus, setChatConnectionStatus] = useState<ConnectionStatus>("disconnected");
   const [chatConnectionError, setChatConnectionError] = useState<string | null>(null);
   const [chatAvailableModels, setChatAvailableModels] = useState<string[]>([...LOCAL_CHAT_MODELS]);

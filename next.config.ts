@@ -5,6 +5,9 @@ const nextConfig: NextConfig = {
     serverActions: {
       bodySizeLimit: "10mb",
     },
+    // Next canary's Turbopack filesystem cache can fail to persist on Windows
+    // with os error 5, even though the dev server itself can keep running.
+    turbopackFileSystemCacheForDev: false,
     // Cache fetch responses in Server Components across HMR refreshes
     // This prevents unnecessary refetching during development
     serverComponentsHmrCache: true,

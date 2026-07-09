@@ -162,6 +162,7 @@ cache immediately after saving.
 - [Docker](https://www.docker.com/) and Docker Compose
 - [Node.js](https://nodejs.org/) 24+
 - [Ollama](https://ollama.ai/) or another OpenAI-compatible local provider for local AI inference
+- Optional for Google Drive ingestion: [gogcli](https://github.com/openclaw/gogcli), authenticated for Drive access
 
 ## Quick Start
 
@@ -175,7 +176,7 @@ brew install ollama
 ollama serve
 
 # Pull default local models
-ollama pull llama3.2:8b
+ollama pull qwen3.5:9b
 ollama pull nomic-embed-text
 ```
 
@@ -189,7 +190,20 @@ cp .env.example .env
 npm install
 ```
 
-### 3. Start PostgreSQL
+### 3. Optional: enable Google Drive ingestion
+
+Install `gogcli` from <https://github.com/openclaw/gogcli>, make sure the
+`gog` command is on `PATH`, and authenticate a Drive account:
+
+```bash
+gog auth add <email> --services drive
+```
+
+If `gog` is installed outside `PATH`, set `GOG_PATH` in `.env` to the full
+binary path. The app uses `gogcli` only from the server process and does not
+store Google credentials.
+
+### 4. Start PostgreSQL
 
 ```bash
 docker compose up db -d
@@ -198,13 +212,13 @@ docker compose up db -d
 The database is exposed on host port `6432` and uses the database name
 `openrecall`.
 
-### 4. Apply the schema
+### 5. Apply the schema
 
 ```bash
 npm run db:push
 ```
 
-### 5. Start the development server
+### 6. Start the development server
 
 ```bash
 npm run dev
@@ -299,7 +313,7 @@ See [`.env.example`](.env.example) for the full template.
 |---|---|---|
 | `DATABASE_URL` | PostgreSQL connection string for local development | `postgres://postgres:postgres@localhost:6432/openrecall` |
 | `AI_BASE_URL` | Shared local OpenAI-compatible base URL used when specific provider URLs are not set | `http://localhost:11434/v1` |
-| `AI_MODEL` | Shared default chat/extraction model | `llama3.2:8b` |
+| `AI_MODEL` | Shared default chat/extraction model | `qwen3.5:9b` |
 | `EMBEDDING_MODEL` | Default embedding model | `nomic-embed-text` |
 | `CHAT_PROVIDER` | Chat provider, `local` or `openai` | `local` |
 | `CHAT_BASE_URL` | Chat provider base URL | `AI_BASE_URL` |
