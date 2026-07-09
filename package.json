@@ -8,6 +8,9 @@
     "type": "git",
     "url": "https://github.com/rupertgermann/open-recall.git"
   },
+  "engines": {
+    "node": ">=24.0.0"
+  },
   "scripts": {
     "dev": "next dev",
     "build": "next build",

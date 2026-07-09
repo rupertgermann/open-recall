@@ -160,7 +160,7 @@ cache immediately after saving.
 ## Prerequisites
 
 - [Docker](https://www.docker.com/) and Docker Compose
-- [Node.js](https://nodejs.org/) 20+
+- [Node.js](https://nodejs.org/) 24+
 - [Ollama](https://ollama.ai/) or another OpenAI-compatible local provider for local AI inference
 - Optional for Google Drive ingestion: [gogcli](https://github.com/openclaw/gogcli), authenticated for Drive access
 
