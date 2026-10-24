@@ -2,7 +2,6 @@
 
 import { Suspense, useState, useCallback, useMemo, useEffect, useRef } from "react";
 import dynamic from "next/dynamic";
-import type { NodeObject } from "react-force-graph-2d";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Search, Loader2, RefreshCw, Focus, X, RotateCcw, ZoomIn, ZoomOut, MessageSquare, FolderOpen, Library } from "lucide-react";
@@ -108,7 +107,7 @@ function GraphPageContent() {
   const [dimensions, setDimensions] = useState({ width: 0, height: 0 });
   const graphRef = useRef<any>(null);
   const isInitialized = useRef(false);
-  const pendingFocus = useRef<{ id: string; needsZoom: boolean } | null>(null);
+  const hasAutoZoomed = useRef(false);
 
   useEffect(() => {
     (async () => {
@@ -192,6 +191,14 @@ function GraphPageContent() {
     }
     isInitialized.current = true;
   }, [focusDocumentId, focusEntityId, graphData.nodes, saveGraphState]);
+
+  // Save camera state on zoom/pan end
+  const handleEngineStop = useCallback(() => {
+    if (graphRef.current) {
+      const { x, y, k } = graphRef.current.cameraPosition();
+      saveGraphState({ camera: { x, y, k } });
+    }
+  }, [saveGraphState]);
 
   useEffect(() => {
     if (!containerRef.current) return;
@@ -343,7 +350,6 @@ function GraphPageContent() {
     }
   };
 
-  const filteredEntityId = filterByEntity ? selectedNode?.id : null;
   const filteredData = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
 
@@ -363,8 +369,8 @@ function GraphPageContent() {
       return nodeIds.has(sourceId) && nodeIds.has(targetId);
     });
 
-    if (filteredEntityId) {
-      const selectedId = filteredEntityId;
+    if (filterByEntity && selectedNode) {
+      const selectedId = selectedNode.id;
       const allowedIds = new Set<string>([selectedId]);
 
       for (const l of links) {
@@ -383,7 +389,7 @@ function GraphPageContent() {
     }
 
     return { nodes, links };
-  }, [graphData, selectedTypes, searchQuery, filteredEntityId]);
+  }, [graphData, selectedTypes, searchQuery, filterByEntity, selectedNode]);
 
   // Transform data for force graph
   const forceGraphData = useMemo(() => {
@@ -397,7 +403,7 @@ function GraphPageContent() {
     });
 
     return {
-      nodes: filteredData.nodes.map<NodeObject<Pick<GraphNode, "id" | "name" | "type">>>((n) => ({
+      nodes: filteredData.nodes.map((n) => ({
         id: n.id,
         name: n.name,
         type: n.type,
@@ -434,29 +440,13 @@ function GraphPageContent() {
     return neighbors;
   }, [hoveredNode, filteredData.links]);
 
-  const focusPendingNode = useCallback(() => {
-    const focus = pendingFocus.current;
-    const node = focus && forceGraphData.nodes.find((node) => node.id === focus.id);
-    if (!focus || !node || node.x === undefined || node.y === undefined || !graphRef.current) return;
-
-    graphRef.current.centerAt(node.x, node.y, 0);
-    if (focus.needsZoom) {
-      graphRef.current.zoom(5, 0);
-      focus.needsZoom = false;
-    }
-  }, [forceGraphData]);
-
-  const handleNodeClick = useCallback((node: { id: string }) => {
+  const handleNodeClick = useCallback((node: { id: string; name: string; type: string }) => {
     const graphNode = graphData.nodes.find((n) => n.id === node.id);
     if (graphNode) {
       setSelectedNode(graphNode);
       saveGraphState({ selectedNodeId: graphNode.id });
-      if (selectedNode?.id === graphNode.id) {
-        pendingFocus.current = { id: graphNode.id, needsZoom: true };
-        focusPendingNode();
-      }
     }
-  }, [graphData.nodes, saveGraphState, focusPendingNode, selectedNode?.id]);
+  }, [graphData.nodes, saveGraphState]);
 
   // Restore state when data loads
   useEffect(() => {
@@ -552,18 +542,33 @@ function GraphPageContent() {
     }
   }, [selectedNode, forceGraphData]);
 
+  // Auto-zoom to selected node on page load
   useEffect(() => {
-    pendingFocus.current = !isLoading && selectedNode ? { id: selectedNode.id, needsZoom: true } : null;
-    focusPendingNode();
-  }, [selectedNode, isLoading, focusPendingNode]);
-
-  const stopFollowingNode = () => { pendingFocus.current = null; };
+    if (!selectedNode || !graphRef.current || isLoading || hasAutoZoomed.current) return;
+    
+    // Wait for the graph to stabilize and node positions to be calculated
+    const timer = setTimeout(() => {
+      if (!graphRef.current) return;
+      
+      const graphInstance = graphRef.current;
+      const internalData = (graphInstance as any)._graphData || forceGraphData;
+      const internalNode = internalData.nodes.find((n: any) => n.id === selectedNode.id);
+      
+      if (internalNode && internalNode.x !== undefined && internalNode.y !== undefined) {
+        graphInstance.centerAt(internalNode.x, internalNode.y, 500);
+        graphInstance.zoom(5, 500);
+        hasAutoZoomed.current = true;
+      }
+    }, 800);
+    
+    return () => clearTimeout(timer);
+  }, [selectedNode, isLoading, forceGraphData]);
 
   return (
     <div className="h-screen flex flex-col overflow-hidden">
       <Header />
 
-      <main className="flex-1 flex gap-0 p-0 overflow-hidden" onPointerDownCapture={stopFollowingNode} onWheelCapture={stopFollowingNode}>
+      <main className="flex-1 flex gap-0 p-0 overflow-hidden">
         {/* Graph Canvas */}
         <div className="flex-1 h-full min-w-0">
           <Card className="h-full relative overflow-hidden flex flex-col">
@@ -826,11 +831,6 @@ function GraphPageContent() {
                   onNodeHover={(node) => setHoveredNode(node ? (node as any).id : null)}
                   onNodeClick={(node) => handleNodeClick(node as any)}
                   onZoomEnd={handleZoomEnd}
-                  onEngineTick={focusPendingNode}
-                  onEngineStop={() => {
-                    focusPendingNode();
-                    stopFollowingNode();
-                  }}
                   nodeCanvasObjectMode={() => "replace"}
                   nodeCanvasObject={(node: { x?: number; y?: number; name?: string; type?: string; val?: number; degree?: number }, ctx: CanvasRenderingContext2D, globalScale: number) => {
                     const label = node.name || "";
@@ -1053,7 +1053,27 @@ function GraphPageContent() {
                           <div
                             key={`${entity.id}-${idx}`}
                             className="flex items-center gap-2 p-2 rounded-lg bg-muted cursor-pointer hover:bg-muted/80"
-                            onClick={() => handleNodeClick(entity)}
+                            onClick={() => {
+                              const node = graphData.nodes.find((n) => n.id === entity.id);
+                              if (node && graphRef.current) {
+                                setSelectedNode(node);
+                                saveGraphState({ selectedNodeId: node.id });
+                                // Get the current zoom level
+                                const currentZoom = graphRef.current.zoom();
+                                
+                                // Use the force graph's internal data structure
+                                const graphInstance = graphRef.current;
+                                // Access the graph's current state through the internal _graphData property
+                                const internalData = (graphInstance as any)._graphData || forceGraphData;
+                                const internalNode = internalData.nodes.find((n: any) => n.id === entity.id);
+                                
+                                if (internalNode && internalNode.x !== undefined && internalNode.y !== undefined) {
+                                  // Center the graph on this node while preserving current zoom
+                                  graphInstance.centerAt(internalNode.x, internalNode.y, 400);
+                                  graphInstance.zoom(currentZoom, 400);
+                                }
+                              }
+                            }}
                           >
                             <div
                               className="w-3 h-3 rounded-full flex-shrink-0"
