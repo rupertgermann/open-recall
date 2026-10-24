@@ -9,6 +9,7 @@ import { type GogRunner } from "../src/lib/drive/index.ts";
 import {
   createDocumentIngestionService,
   type DerivedDocumentData,
+  type DocumentIngestionEvent,
   type SourceContent,
 } from "../src/lib/ingestion/service.ts";
 import { generateContentHash } from "../src/lib/text/index.ts";
@@ -142,9 +143,11 @@ test("Drive Folder Import summarizes unsupported, failed, ingested, and unchange
     ]),
   };
   const runner = fakeFolderRunner(state);
+  const events: DocumentIngestionEvent[] = [];
 
   const first = await service.ingestDriveFolder("https://drive.google.com/drive/folders/folder-root", {
     driveRunner: runner,
+    onEvent: (event) => { events.push(event); },
   });
 
   assert.deepEqual(first.summary, {
@@ -161,6 +164,8 @@ test("Drive Folder Import summarizes unsupported, failed, ingested, and unchange
       },
     ],
   });
+  assert.ok(events.some(event => event.error));
+  assert.ok(events.filter(event => event.error).every(event => event.recoverable));
 
   state.failFileIds.clear();
   const second = await service.ingestDriveFolder("https://drive.google.com/drive/folders/folder-root", {

@@ -5,7 +5,7 @@ import { settings, documents, entities, relationships } from "@/db/schema";
 import { eq, count } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { getAIErrorMessage } from "@/lib/ai/errors";
-import { DEFAULT_LOCAL_CHAT_MODEL, DEFAULT_LOCAL_EMBEDDING_MODEL } from "@/lib/ai/models";
+import { defaultChatConfig, defaultEmbeddingConfig } from "@/lib/ai/config";
 
 // Provider-specific settings
 export type ProviderSettings = {
@@ -36,16 +36,8 @@ export type LegacyAISettings = {
 };
 
 const DEFAULT_SETTINGS: AISettings = {
-  chat: {
-    provider: "local",
-    baseUrl: "http://localhost:11434/v1",
-    model: DEFAULT_LOCAL_CHAT_MODEL,
-  },
-  embedding: {
-    provider: "local",
-    baseUrl: "http://localhost:11434/v1",
-    model: DEFAULT_LOCAL_EMBEDDING_MODEL,
-  },
+  chat: defaultChatConfig,
+  embedding: defaultEmbeddingConfig,
 };
 
 // Helper to migrate legacy settings to new format

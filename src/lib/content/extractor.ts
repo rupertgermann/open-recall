@@ -1,9 +1,6 @@
 import { JSDOM } from "jsdom";
+import { saveDocumentImage } from "./images.ts";
 import { Readability } from "@mozilla/readability";
-import { mkdir, writeFile } from "node:fs/promises";
-import { createRequire } from "node:module";
-import { extname, join } from "node:path";
-import { pathToFileURL } from "node:url";
 
 export interface ExtractedContent {
   title: string;
@@ -17,8 +14,6 @@ export interface ExtractedContent {
 const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
 export const IMAGE_ONLY_PDF_CONTENT =
   "This PDF did not contain extractable text. It may be a scanned or image-only document.";
-const require = createRequire(import.meta.url);
-const PDF_WORKER_SRC = pathToFileURL(require.resolve("pdfjs-dist/legacy/build/pdf.worker.mjs")).href;
 let pdfWorkerReady: Promise<void> | null = null;
 
 /**
@@ -93,12 +88,13 @@ export async function downloadDocumentImage(
   url: string,
   documentId: string,
   options?: {
-    publicDir?: string;
+    storageDir?: string;
     maxBytes?: number;
   }
 ): Promise<ImageDownloadResult | null> {
   try {
     const response = await fetch(url, {
+      signal: AbortSignal.timeout(15_000),
       headers: {
         "User-Agent": "Mozilla/5.0 (compatible; open-recall/1.0; +https://github.com/open-recall)",
       },
@@ -114,26 +110,25 @@ export async function downloadDocumentImage(
     }
 
     const maxBytes = options?.maxBytes ?? MAX_IMAGE_BYTES;
-    const buffer = Buffer.from(await response.arrayBuffer());
-    if (buffer.length > maxBytes) {
-      return null;
+    if (Number(response.headers.get("content-length")) > maxBytes) return null;
+    const reader = response.body?.getReader();
+    if (!reader) return null;
+    const parts: Uint8Array[] = [];
+    let size = 0;
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        size += value.byteLength;
+        if (size > maxBytes) return null;
+        parts.push(value);
+      }
+    } finally {
+      await reader.cancel();
+      reader.releaseLock();
     }
-
-    const urlExtension = extname(new URL(url).pathname);
-    const extension = urlExtension || `.${contentType.split("/")[1] || "jpg"}`;
-    const fileName = `${documentId}${extension}`;
-    const publicDir = options?.publicDir ?? join(process.cwd(), "public", "document-images");
-
-    await mkdir(publicDir, { recursive: true });
-
-    const filePath = join(publicDir, fileName);
-    await writeFile(filePath, buffer);
-
-    return {
-      url,
-      publicPath: `/document-images/${fileName}`,
-      contentType,
-    };
+    const publicPath = await saveDocumentImage(Buffer.concat(parts), documentId, options?.storageDir);
+    return { url, publicPath, contentType: "image/png" };
   } catch (error) {
     console.error("Failed to download document image:", error);
     return null;
@@ -182,7 +177,7 @@ export async function extractPdfFromUrl(url: string): Promise<ExtractedContent> 
 
 export async function extractPdfText(data: Buffer | Uint8Array): Promise<string> {
   const pdfjs = await import("pdfjs-dist/legacy/build/pdf.mjs");
-  await ensurePdfWorker(pdfjs);
+  await ensurePdfWorker();
   const bytes = data instanceof Buffer ? new Uint8Array(data) : data;
   const loadingTask = pdfjs.getDocument({
     data: bytes,
@@ -208,9 +203,7 @@ export async function extractPdfText(data: Buffer | Uint8Array): Promise<string>
   return content || IMAGE_ONLY_PDF_CONTENT;
 }
 
-async function ensurePdfWorker(pdfjs: typeof import("pdfjs-dist/legacy/build/pdf.mjs")): Promise<void> {
-  pdfjs.GlobalWorkerOptions.workerSrc = PDF_WORKER_SRC;
-
+async function ensurePdfWorker(): Promise<void> {
   const pdfjsGlobal = globalThis as typeof globalThis & {
     pdfjsWorker?: { WorkerMessageHandler: unknown };
   };

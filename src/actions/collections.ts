@@ -102,15 +102,17 @@ export async function setDocumentCollections(
   documentId: string,
   collectionIds: string[]
 ) {
-  await db
-    .delete(documentCollections)
-    .where(eq(documentCollections.documentId, documentId));
+  await db.transaction(async (tx) => {
+    await tx
+      .delete(documentCollections)
+      .where(eq(documentCollections.documentId, documentId));
 
-  if (collectionIds.length > 0) {
-    await db.insert(documentCollections).values(
-      collectionIds.map((collectionId) => ({ documentId, collectionId }))
-    );
-  }
+    if (collectionIds.length > 0) {
+      await tx.insert(documentCollections).values(
+        collectionIds.map((collectionId) => ({ documentId, collectionId }))
+      );
+    }
+  });
 
   revalidatePath("/library");
   revalidatePath(`/library/${documentId}`);
@@ -256,7 +258,7 @@ export type AutoOrganizeSuggestion = {
 const autoOrganizeSuggestionSchema = z.object({
   assignments: z.array(
     z.object({
-      documentTitle: z.string(),
+      documentId: z.string().uuid(),
       existingCollections: z.array(
         z.object({
           collectionName: z.string(),
@@ -270,15 +272,6 @@ const autoOrganizeSuggestionSchema = z.object({
           reason: z.string().describe("Why this new collection is needed"),
         })
       ),
-    })
-  ),
-});
-
-const batchAssignmentSchema = z.object({
-  assignments: z.array(
-    z.object({
-      documentTitle: z.string(),
-      collectionNames: z.array(z.string()),
     })
   ),
 });
@@ -312,7 +305,7 @@ export async function suggestAutoOrganize(): Promise<AutoOrganizeSuggestion[]> {
     : "(no existing collections)";
 
   const docList = unassignedDocs
-    .map((d) => `- "${d.title}": ${(d.summary || "").slice(0, 200)}`)
+    .map((d) => `- ID ${d.id}, "${d.title}": ${(d.summary || "").slice(0, 200)}`)
     .join("\n");
 
   const config = await getChatConfigFromDB();
@@ -335,13 +328,13 @@ ${collectionList}
 Documents to organize:
 ${docList}
 
-For each document, suggest which existing collection(s) it belongs to, or propose new collection(s) to create.`,
+For each document, return its exact documentId and suggest which existing collection(s) it belongs to, or propose new collection(s) to create.`,
     });
 
     return object.assignments
       .map((assignment) => {
         const doc = unassignedDocs.find(
-          (d) => d.title.toLowerCase() === assignment.documentTitle.toLowerCase()
+          (d) => d.id === assignment.documentId
         );
         if (!doc) return null;
 
@@ -455,99 +448,6 @@ export async function applyAutoOrganizeSuggestions(
 
   revalidatePath("/library");
   return results;
-}
-
-export async function autoOrganizeDocuments(): Promise<AutoOrganizeResult[]> {
-  const allCollections = await db
-    .select({ id: collections.id, name: collections.name, description: collections.description })
-    .from(collections);
-
-  if (allCollections.length === 0) return [];
-
-  const unassignedDocs = await db
-    .select({
-      id: documents.id,
-      title: documents.title,
-      summary: documents.summary,
-    })
-    .from(documents)
-    .where(
-      sql`${documents.id} NOT IN (
-        SELECT document_id FROM document_collections
-      )`
-    )
-    .orderBy(desc(documents.createdAt))
-    .limit(50);
-
-  if (unassignedDocs.length === 0) return [];
-
-  const collectionList = allCollections
-    .map((c) => `- "${c.name}"${c.description ? `: ${c.description}` : ""}`)
-    .join("\n");
-
-  const docList = unassignedDocs
-    .map((d) => `- "${d.title}": ${(d.summary || "").slice(0, 200)}`)
-    .join("\n");
-
-  const config = await getChatConfigFromDB();
-  const model = getModel(config);
-
-  try {
-    const { object } = await generateObject({
-      model,
-      schema: batchAssignmentSchema,
-      system: `You organize documents into collections in a personal knowledge base.
-For each document, assign it to one or more collections that fit thematically.
-Only assign a document to a collection if the match is clear. Skip documents that don't fit any collection.
-Use exact collection names from the provided list.`,
-      prompt: `Collections:
-${collectionList}
-
-Documents to organize:
-${docList}
-
-Assign each document to the appropriate collection(s). Only include documents that clearly fit.`,
-    });
-
-    const results: AutoOrganizeResult[] = [];
-
-    for (const assignment of object.assignments) {
-      const doc = unassignedDocs.find(
-        (d) => d.title.toLowerCase() === assignment.documentTitle.toLowerCase()
-      );
-      if (!doc) continue;
-
-      const matchedCollectionIds = assignment.collectionNames
-        .map((name) =>
-          allCollections.find((c) => c.name.toLowerCase() === name.toLowerCase())
-        )
-        .filter((c): c is (typeof allCollections)[number] => c !== null)
-        .map((c) => c.id);
-
-      if (matchedCollectionIds.length === 0) continue;
-
-      for (const collectionId of matchedCollectionIds) {
-        await db
-          .insert(documentCollections)
-          .values({ documentId: doc.id, collectionId })
-          .onConflictDoNothing();
-      }
-
-      results.push({
-        documentId: doc.id,
-        documentTitle: doc.title,
-        assignedCollections: assignment.collectionNames.filter((name) =>
-          allCollections.some((c) => c.name.toLowerCase() === name.toLowerCase())
-        ),
-      });
-    }
-
-    revalidatePath("/library");
-    return results;
-  } catch (error) {
-    console.error("Auto-organize failed:", error);
-    return [];
-  }
 }
 
 export async function bulkAddToCollection(

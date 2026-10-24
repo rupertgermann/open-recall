@@ -32,7 +32,7 @@ export async function POST(req: Request) {
     async start(controller) {
       let emittedError = false;
       const onEvent = (event: DocumentIngestionEvent) => {
-        if (event.error) emittedError = true;
+        if (event.error && !event.recoverable) emittedError = true;
         controller.enqueue(encoder.encode(createSSEMessage(event)));
       };
 

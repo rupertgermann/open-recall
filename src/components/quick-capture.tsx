@@ -1,5 +1,7 @@
 "use client";
 
+import { readIngestionStream } from "@/lib/ingestion/events";
+
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Plus, X, Send, Link2, StickyNote, Loader2 } from "lucide-react";
@@ -54,7 +56,7 @@ export function QuickCapture() {
           }),
         });
 
-        if (!res.ok) throw new Error("Failed to save note");
+        await readIngestionStream(res);
 
         toast({ title: "Note saved", description: `"${noteTitle}" added to your knowledge base.` });
         setIsOpen(false);

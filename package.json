@@ -63,6 +63,7 @@
     "react-force-graph-2d": "^1.25.5",
     "react-markdown": "^10.1.0",
     "remark-gfm": "^4.0.1",
+    "sharp": "^0.34.5",
     "shiki": "^3.20.0",
     "streamdown": "^1.6.10",
     "tailwind-merge": "^2.6.0",

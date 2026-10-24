@@ -30,7 +30,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import { useToast } from "@/hooks/use-toast";
 import { getDocuments, deleteDocument, updateDocumentFromSource, type DocumentWithStats } from "@/actions/documents";
-import { getCollections, createCollection, updateCollection, deleteCollection, bulkAddToCollection, autoOrganizeDocuments, suggestAutoOrganize, applyAutoOrganizeSuggestions, getUnassignedDocumentCount, removeDocumentFromCollection, type CollectionWithCount, type AutoOrganizeResult, type AutoOrganizeSuggestion } from "@/actions/collections";
+import { getCollections, createCollection, updateCollection, deleteCollection, bulkAddToCollection, suggestAutoOrganize, applyAutoOrganizeSuggestions, getUnassignedDocumentCount, removeDocumentFromCollection, type CollectionWithCount, type AutoOrganizeResult, type AutoOrganizeSuggestion } from "@/actions/collections";
 import { cn } from "@/lib/utils";
 
 const typeIcons = {

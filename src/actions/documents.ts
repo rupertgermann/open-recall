@@ -207,27 +207,29 @@ export async function updateDocumentTags(documentId: string, nextTags: string[])
     )
   );
 
-  if (normalized.length > 0) {
-    await db
-      .insert(tags)
-      .values(normalized.map((name) => ({ name })))
-      .onConflictDoNothing();
-  }
+  await db.transaction(async (tx) => {
+    if (normalized.length > 0) {
+      await tx
+        .insert(tags)
+        .values(normalized.map((name) => ({ name })))
+        .onConflictDoNothing();
+    }
 
-  const tagRows = normalized.length > 0
-    ? await db
-        .select({ id: tags.id, name: tags.name })
-        .from(tags)
-        .where(inArray(tags.name, normalized))
-    : [];
+    const tagRows = normalized.length > 0
+      ? await tx
+          .select({ id: tags.id, name: tags.name })
+          .from(tags)
+          .where(inArray(tags.name, normalized))
+      : [];
 
-  await db.delete(documentTags).where(eq(documentTags.documentId, documentId));
+    await tx.delete(documentTags).where(eq(documentTags.documentId, documentId));
 
-  if (tagRows.length > 0) {
-    await db.insert(documentTags).values(
-      tagRows.map((t) => ({ documentId, tagId: t.id }))
-    );
-  }
+    if (tagRows.length > 0) {
+      await tx.insert(documentTags).values(
+        tagRows.map((t) => ({ documentId, tagId: t.id }))
+      );
+    }
+  });
 
   revalidatePath(`/library/${documentId}`);
   revalidatePath("/graph");

@@ -47,7 +47,7 @@ export async function aiWebSearchForEntity(input: {
   const entityType = (input.entityType || "").trim();
   const additional = (input.additionalPrompt || "").trim();
 
-  console.log("[WebSearch] Attempting generateText with web_search_options...");
+  console.log("[WebSearch] Attempting generateText with the web search tool...");
   
   try {
     const { text } = await generateText({
@@ -71,13 +71,9 @@ Requirements:
       experimental_telemetry: {
         isEnabled: true,
       },
-      // Use OpenAI's native web search parameter
-      ...({
-        web_search_options: {
-          enabled: true,
-        },
-      } as any),
-      maxTokens: 800,
+      tools: { web_search: provider.tools.webSearch() },
+      toolChoice: { type: "tool", toolName: "web_search" },
+      maxOutputTokens: 800,
     });
     
     console.log("[WebSearch] generateText completed, response length:", text.length);

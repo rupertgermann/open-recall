@@ -1,6 +1,10 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
+  output: "standalone",
+  async rewrites() {
+    return { beforeFiles: [{ source: "/document-images/:filename", destination: "/api/document-images/:filename" }] };
+  },
   experimental: {
     serverActions: {
       bodySizeLimit: "10mb",
