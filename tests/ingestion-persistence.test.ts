@@ -162,6 +162,7 @@ test("persistDerivedDocumentData replacement removes prior Document-derived rows
     .from(relationships)
     .where(eq(relationships.sourceDocumentId, document.id));
   assert.deepEqual(relationshipRows, []);
+  assert.deepEqual((await db.select().from(entities)).map(entity => entity.name), ["Next.js"]);
 });
 
 test("persistDerivedDocumentData reuses existing Entity name-type matches", async (t) => {
@@ -176,6 +177,7 @@ test("persistDerivedDocumentData reuses existing Entity name-type matches", asyn
       type: "technology",
       description: "Existing graph Entity.",
       embedding: [0.4, 0.4],
+      embeddingModel: "test-embedding-model",
     })
     .returning({ id: entities.id });
 
@@ -307,8 +309,8 @@ test("persistDerivedDocumentData attaches Entity embeddings by Entity Key for mi
 
   const document = await createDocument({ db });
   await db.insert(entities).values([
-    { name: "Alpha", type: "technology", description: "Existing Alpha.", embedding: [0.1, 0.1] },
-    { name: "Gamma", type: "database", description: "Existing Gamma.", embedding: [0.3, 0.3] },
+    { name: "Alpha", type: "technology", description: "Existing Alpha.", embedding: [0.1, 0.1], embeddingModel: "test-embedding-model" },
+    { name: "Gamma", type: "database", description: "Existing Gamma.", embedding: [0.3, 0.3], embeddingModel: "test-embedding-model" },
   ]);
 
   await persistDerivedDocumentData(db, {
@@ -365,6 +367,7 @@ test("persistDerivedDocumentData keeps keyed embeddings aligned after concurrent
     type: "technology",
     description: "Inserted by a concurrent persist.",
     embedding: [0.7, 0.7],
+    embeddingModel: "test-embedding-model",
   });
 
   await persistDerivedDocumentData(database, {
@@ -409,6 +412,25 @@ test("persistDerivedDocumentData keeps keyed embeddings aligned after concurrent
     { name: "Later", description: "Derived Later.", embedding: [0.8, 0.8] },
     { name: "Race", description: "Inserted by a concurrent persist.", embedding: [0.7, 0.7] },
   ]);
+});
+
+test("persistDerivedDocumentData repairs an incompatible concurrent Entity with the prepared description", async (t) => {
+  const { db, close } = await createTestDatabase();
+  t.after(close);
+  const document = await createDocument({ db });
+  const database = withConcurrentEntityInsert(db, {
+    name: "React", type: "technology", description: "A UI library.", embedding: [1, 0], embeddingModel: "old-model",
+  });
+  await persistDerivedDocumentData(database, {
+    documentId: document.id,
+    source: noteSource({ title: "React", content: "React uses Postgres." }),
+    derived: derivedData(),
+    replaceExisting: false,
+  });
+  const [react] = await db.select().from(entities).where(eq(entities.name, "React"));
+  assert.deepEqual(react.embedding, [0.6, 0.7]);
+  assert.equal(react.embeddingModel, "test-embedding-model");
+  assert.equal(react.description, "A UI library.");
 });
 
 async function createDocument({ db }: Pick<TestDatabase, "db">) {
@@ -482,7 +504,7 @@ function entityEmbeddingsByKey(
 
 function withConcurrentEntityInsert(
   db: TestDatabase["db"],
-  entity: { name: string; type: string; description: string; embedding: number[] }
+  entity: { name: string; type: string; description: string; embedding: number[]; embeddingModel?: string }
 ): Pick<TestDatabase["db"], "transaction"> {
   let inserted = false;
 

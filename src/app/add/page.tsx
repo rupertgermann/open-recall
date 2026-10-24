@@ -47,8 +47,8 @@ function AddPageContent() {
   const [error, setError] = useState<string | null>(null);
   const [folderImportPlan, setFolderImportPlan] = useState<FolderImportPlan | null>(null);
   const [folderImportSummary, setFolderImportSummary] = useState<FolderImportSummary | null>(null);
-  const [isUpdateMode, setIsUpdateMode] = useState(false);
-  const [updateDocumentId, setUpdateDocumentId] = useState<string | null>(null);
+  const updateDocumentId = searchParams.get("update");
+  const isUpdateMode = Boolean(updateDocumentId);
   const abortControllerRef = useRef<AbortController | null>(null);
 
   const hasAutoStartedRef = useRef(false);
@@ -120,8 +120,6 @@ function AddPageContent() {
     
     // Handle update mode
     if (qpUpdate) {
-      setIsUpdateMode(true);
-      setUpdateDocumentId(qpUpdate);
       setContentType("url");
 
       // Do not auto-start processing. Let the user adjust settings (e.g. entity detail) first.

@@ -6,7 +6,7 @@ import { completion } from "./helpers/provider.ts";
 import { documents, documentTags } from "../src/db/schema.ts";
 
 const { generateDocumentTags, updateDocumentTags } = await import("../src/actions/documents.ts");
-const { saveAISettings } = await import("../src/actions/settings.ts");
+const { saveAISettings, getAISettings } = await import("../src/actions/settings.ts");
 
 for (const generated of [["generated"], []]) {
   test(`AI tags preserve intervening edits when generation returns ${generated.length} tags`, async (t) => {
@@ -14,7 +14,7 @@ for (const generated of [["generated"], []]) {
     t.after(close);
     useDatabase(db);
     const config = { provider: "local" as const, baseUrl: "http://provider.invalid/v1", model: "test" };
-    await saveAISettings({ chat: config, embedding: config });
+    await saveAISettings({ chat: config, embedding: config }, await getAISettings());
     const [doc] = await db.insert(documents).values({ title: "Tags", content: "Content", type: "note" }).returning();
     await updateDocumentTags(doc.id, ["old"]);
     const started = Promise.withResolvers<void>();
@@ -36,7 +36,7 @@ test("rejected generated-tag insertion preserves existing tag links", async (t) 
   t.after(close);
   useDatabase(db);
   const config = { provider: "local" as const, baseUrl: "http://provider.invalid/v1", model: "test" };
-  await saveAISettings({ chat: config, embedding: config });
+  await saveAISettings({ chat: config, embedding: config }, await getAISettings());
   const [doc] = await db.insert(documents).values({ title: "Tags", content: "Content", type: "note" }).returning();
   await updateDocumentTags(doc.id, ["manual"]);
   const before = await db.select().from(documentTags);

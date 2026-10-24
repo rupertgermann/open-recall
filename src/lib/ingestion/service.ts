@@ -5,6 +5,7 @@ import { revalidatePath as nextRevalidatePath } from "next/cache.js";
 import {
   documents,
   entities,
+  entityMentions,
 } from "../../db/schema.ts";
 import { extractFromUrl, downloadDocumentImage } from "../content/extractor.ts";
 import { discardDocumentImage } from "../content/images.ts";
@@ -20,7 +21,7 @@ import { CHUNKING_VERSION, type StructuredChunk } from "../embedding/chunker.ts"
 import { generateContentHash } from "../text/index.ts";
 import { dedupeDocumentChunks } from "./chunks.ts";
 import { entityKeysEqual, makeEntityKey, type EntityKey } from "./entity-key.ts";
-import { persistDerivedDocumentData } from "./persistence.ts";
+import { EntityEmbeddingChangedError, persistDerivedDocumentData } from "./persistence.ts";
 
 export type DocumentIngestionStep =
   | "fetching"
@@ -224,7 +225,7 @@ async function ingestUrlDocumentWithContext(
   try {
     imagePath = await fetchLeadImage(source, runId);
     const derived = await context.buildDerivedData(doc.id, source, options);
-    const persistence = await persistDerivedDocumentData(context.database, {
+    const persistence = await persistWithEntityEmbeddingRetry(context, options, {
       documentId: doc.id,
       runId,
       source,
@@ -280,7 +281,7 @@ async function ingestTextDocumentWithContext(
 
   try {
     const derived = await context.buildDerivedData(doc.id, source, options);
-    const persistence = await persistDerivedDocumentData(context.database, {
+    const persistence = await persistWithEntityEmbeddingRetry(context, options, {
       documentId: doc.id,
       runId,
       source,
@@ -340,7 +341,15 @@ async function refreshDocumentWithContext(
       existing.embeddingModel === embeddingModel &&
       existing.embeddingVersion === CHUNKING_VERSION;
 
-    if (unchanged) {
+    const [incompatibleEntity] = unchanged
+      ? await context.database.select({ id: entities.id }).from(entityMentions)
+          .innerJoin(entities, eq(entityMentions.entityId, entities.id))
+          .where(and(eq(entityMentions.documentId, documentId),
+            sql`(${entities.embedding} is null or ${entities.embeddingModel} is distinct from ${embeddingModel})`))
+          .limit(1)
+      : [];
+
+    if (unchanged && !incompatibleEntity) {
       await emit(options, "saving", "Source and embedding model unchanged; keeping derived data.", 85, false, documentId);
       const updated = await context.database
         .update(documents)
@@ -371,7 +380,7 @@ async function refreshDocumentWithContext(
     if (updated.length === 0) throw new Error("Document ingestion was superseded by another run");
     processingStarted = true;
     const derived = await context.buildDerivedData(documentId, source, options);
-    const persistence = await persistDerivedDocumentData(context.database, {
+    const persistence = await persistWithEntityEmbeddingRetry(context, options, {
       documentId,
       runId,
       source,
@@ -527,16 +536,16 @@ async function buildDerivedData(
     await emit(options, "embedding", `Generated ${chunkEmbeddingResult.embeddings.length} chunk embeddings`, 75, false, documentId);
 
     const uniqueEntities = dedupeEntities(extractedData.entities);
-    const newEntities = await getNewEntities(database, uniqueEntities);
+    const entitiesToEmbed = await getEntitiesToEmbed(database, uniqueEntities, embeddingModel);
     const generatedEntityEmbeddings =
-      newEntities.length > 0
+      entitiesToEmbed.length > 0
         ? (await generateGraphEmbeddings(
-            newEntities.map((entity) => entity.name + (entity.description ? `: ${entity.description}` : "")),
+            entitiesToEmbed.map((entity) => entity.name + (entity.description ? `: ${entity.description}` : "")),
             embeddingConfig
           )).embeddings
         : [];
     const entityEmbeddingsByKey = new Map<EntityKey, number[]>();
-    newEntities.forEach((entity, index) => {
+    entitiesToEmbed.forEach((entity, index) => {
       const embedding = generatedEntityEmbeddings[index];
       if (embedding) {
         entityEmbeddingsByKey.set(makeEntityKey(entity), embedding);
@@ -559,25 +568,41 @@ async function buildDerivedData(
   }
 }
 
-async function getNewEntities(
+async function getEntitiesToEmbed(
   database: IngestionDatabase,
-  uniqueEntities: ExtractedEntity[]
+  uniqueEntities: ExtractedEntity[],
+  embeddingModel: string
 ): Promise<ExtractedEntity[]> {
-  const newEntities: ExtractedEntity[] = [];
+  const entitiesToEmbed: ExtractedEntity[] = [];
 
   for (const entity of uniqueEntities) {
-    const existing = await database
-      .select({ id: entities.id })
+    const [existing] = await database
+      .select({ description: entities.description, embedding: entities.embedding, embeddingModel: entities.embeddingModel })
       .from(entities)
       .where(and(eq(entities.name, entity.name), eq(entities.type, entity.type)))
       .limit(1);
 
-    if (existing.length === 0) {
-      newEntities.push(entity);
+    if (existing) entity.description = existing.description;
+    if (!existing?.embedding?.length || existing.embeddingModel !== embeddingModel) {
+      entitiesToEmbed.push(entity);
     }
   }
 
-  return newEntities;
+  return entitiesToEmbed;
+}
+
+async function persistWithEntityEmbeddingRetry(
+  context: DocumentIngestionServiceContext,
+  options: DocumentIngestionOptions,
+  input: Parameters<typeof persistDerivedDocumentData>[1]
+) {
+  try {
+    return await persistDerivedDocumentData(context.database, input);
+  } catch (error) {
+    if (!(error instanceof EntityEmbeddingChangedError)) throw error;
+    const derived = await context.buildDerivedData(input.documentId, input.source, options);
+    return persistDerivedDocumentData(context.database, { ...input, derived });
+  }
 }
 
 function afterPersistDerivedDocumentData(

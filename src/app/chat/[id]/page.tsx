@@ -166,11 +166,22 @@ function ThreadChat({ threadId }: { threadId: string }) {
   };
 
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [isDeleting, setIsDeleting] = useState(false);
 
   const handleDelete = async () => {
-    await fetch(`/api/chats/${threadId}`, { method: "DELETE" });
-    setShowDeleteConfirm(false);
-    router.push("/chat");
+    setDeleteError(null);
+    setIsDeleting(true);
+    try {
+      const response = await fetch(`/api/chats/${threadId}`, { method: "DELETE" });
+      if (!response.ok) throw new Error(`Failed to delete chat (${response.status})`);
+      setShowDeleteConfirm(false);
+      router.push("/chat");
+    } catch (error) {
+      setDeleteError(error instanceof Error ? error.message : "Failed to delete chat");
+    } finally {
+      setIsDeleting(false);
+    }
   };
 
   const handleStarterPrompt = async (prompt: string) => {
@@ -332,9 +343,11 @@ function ThreadChat({ threadId }: { threadId: string }) {
                 This will permanently delete this chat thread and all its messages.
               </AlertDialogDescription>
             </AlertDialogHeader>
+            {deleteError && <p role="alert" className="text-sm text-destructive">{deleteError}</p>}
             <AlertDialogFooter>
-              <AlertDialogCancel>Cancel</AlertDialogCancel>
+              <AlertDialogCancel disabled={isDeleting}>Cancel</AlertDialogCancel>
               <AlertDialogAction
+                disabled={isDeleting}
                 onClick={(e) => {
                   e.preventDefault();
                   handleDelete();

@@ -1,0 +1,1 @@
+ALTER TABLE "entities" ADD COLUMN "embedding_model" text;

@@ -41,11 +41,11 @@ test("auto-organize matches identical titles by Document ID", async (t) => {
     { title: "Meeting notes", type: "note" }, { title: "Meeting notes", type: "note" },
   ]).returning();
   const [{ id: collectionId }] = await db.insert(collections).values({ name: "Engineering" }).returning();
-  const { saveAISettings } = await import("../src/actions/settings.ts");
+  const { saveAISettings, getAISettings } = await import("../src/actions/settings.ts");
   await saveAISettings({
     chat: { provider: "local", baseUrl: "http://provider.invalid/v1", model: "test" },
     embedding: { provider: "local", baseUrl: "http://provider.invalid/v1", model: "test" },
-  });
+  }, await getAISettings());
   t.mock.method(globalThis, "fetch", async () => Response.json({
     id: "test", model: "test", created: 0, choices: [{ index: 0, finish_reason: "stop", message: {
       role: "assistant", content: JSON.stringify({ assignments: [{

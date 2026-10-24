@@ -33,15 +33,15 @@ _Avoid_: edge, link, connection (Discover's "hidden connection" is a graph analy
 ### Ingestion
 
 **Derived Document Data**:
-Everything computed from a Document's content in one ingestion run: content hash, Chunks with embeddings, summary, tags, Entities, Relationships, and embeddings for Entities new to the graph. Built first, persisted afterwards.
+Everything computed from a Document's content in one ingestion run: content hash, Chunks with embeddings, summary, tags, Entities, Relationships, and embeddings for new Entities or Entities without an embedding from the current model. Entity embeddings use the description retained in the graph. Built first, persisted afterwards.
 _Avoid_: derived data (say the full term), ingestion result
 
 **Document Persistence**:
-Saving one Document's Derived Document Data as a single transaction — replacing prior derived rows on re-ingest. Owns the replacement order and the Entity upsert.
+Saving one Document's Derived Document Data as a single transaction — replacing prior derived rows on re-ingest. Owns the replacement order, the Entity upsert, and removal of previously mentioned Entities left without any mentions. An incompatible concurrent Entity description triggers one rebuild outside the transaction.
 _Avoid_: save step, write phase
 
 **Source Refresh**:
-Re-ingesting a source-backed Document. Skips rebuilding Derived Document Data when the exact source text, content hash, embedding model, and chunking version are unchanged.
+Re-ingesting a source-backed Document. Skips rebuilding Derived Document Data when the exact source text, content hash, embedding model, and chunking version are unchanged and all mentioned Entities have embeddings from that model.
 _Avoid_: re-sync, update
 
 **Drive File**:

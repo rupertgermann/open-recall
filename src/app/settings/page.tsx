@@ -277,7 +277,7 @@ export default function SettingsPage() {
 
   const [isSaving, setIsSaving] = useState(false);
   const [saved, setSaved] = useState(false);
-  const [saveError, setSaveError] = useState(false);
+  const [saveError, setSaveError] = useState<"failed" | "conflict" | null>(null);
   const [dbStats, setDbStats] = useState({ documents: 0, entities: 0, relationships: 0 });
   const [gogStatus, setGogStatus] = useState<GogStatusResponse | null>(null);
   const [gogStatusError, setGogStatusError] = useState<string | null>(null);
@@ -375,34 +375,41 @@ export default function SettingsPage() {
       setHasChanges(false);
       setIsSaving(true);
       const sharedKey = openaiApiKey || undefined;
+      const config: AISettings = {
+        ...loadedSettings,
+        openaiApiKey: keyChanged ? sharedKey : loadedSettings.openaiApiKey,
+        chat: {
+          ...loadedSettings.chat,
+          provider: chatProvider,
+          baseUrl: chatProvider === "openai" ? "https://api.openai.com/v1" : chatBaseUrl,
+          model: chatModel,
+          apiKey: chatProvider === "openai"
+            ? (keyChanged || loadedSettings.chat.provider !== "openai" ? sharedKey : loadedSettings.chat.apiKey)
+            : (loadedSettings.chat.provider === "local" ? loadedSettings.chat.apiKey : undefined),
+          ...(chatProvider === "openai" && { reasoningEffort, verbosity, webSearchEnabled }),
+        },
+        embedding: {
+          ...loadedSettings.embedding,
+          provider: embeddingProvider,
+          baseUrl: embeddingProvider === "openai" ? "https://api.openai.com/v1" : embeddingBaseUrl,
+          model: embeddingModel,
+          apiKey: embeddingProvider === "openai"
+            ? (keyChanged || loadedSettings.embedding.provider !== "openai" ? sharedKey : loadedSettings.embedding.apiKey)
+            : (loadedSettings.embedding.provider === "local" ? loadedSettings.embedding.apiKey : undefined),
+        },
+      };
       try {
-        await saveAISettings({
-          ...loadedSettings,
-          openaiApiKey: keyChanged ? sharedKey : loadedSettings.openaiApiKey,
-          chat: {
-            ...loadedSettings.chat,
-            provider: chatProvider,
-            baseUrl: chatProvider === "openai" ? "https://api.openai.com/v1" : chatBaseUrl,
-            model: chatModel,
-            apiKey: chatProvider === "openai"
-              ? (keyChanged || loadedSettings.chat.provider !== "openai" ? sharedKey : loadedSettings.chat.apiKey)
-              : (loadedSettings.chat.provider === "local" ? loadedSettings.chat.apiKey : undefined),
-            ...(chatProvider === "openai" && { reasoningEffort, verbosity, webSearchEnabled }),
-          },
-          embedding: {
-            ...loadedSettings.embedding,
-            provider: embeddingProvider,
-            baseUrl: embeddingProvider === "openai" ? "https://api.openai.com/v1" : embeddingBaseUrl,
-            model: embeddingModel,
-            apiKey: embeddingProvider === "openai"
-              ? (keyChanged || loadedSettings.embedding.provider !== "openai" ? sharedKey : loadedSettings.embedding.apiKey)
-              : (loadedSettings.embedding.provider === "local" ? loadedSettings.embedding.apiKey : undefined),
-          },
-        });
+        const result = await saveAISettings(config, loadedSettings);
+        if (result === "conflict") {
+          setHasChanges(true);
+          setSaveError("conflict");
+          return;
+        }
+        setLoadedSettings(config);
         setSaved(true);
       } catch (error) {
         setHasChanges(true);
-        setSaveError(true);
+        setSaveError("failed");
         console.error("Failed to auto-save settings:", error);
       } finally {
         setIsSaving(false);
@@ -674,8 +681,18 @@ export default function SettingsPage() {
               </>
             ) : saveError ? (
               <div role="alert" className="flex items-center gap-3">
-                <span className="text-sm text-destructive">Failed to save settings. Your changes are unsaved.</span>
-                <Button variant="outline" size="sm" onClick={() => setSaveError(false)}>Retry</Button>
+                <span className="text-sm text-destructive">
+                  {saveError === "conflict"
+                    ? "Settings changed in another tab. Your edits are still here and have not been saved."
+                    : "Failed to save settings. Your changes are unsaved."}
+                </span>
+                {saveError === "conflict" ? (
+                  <Button variant="outline" size="sm" onClick={() => window.location.reload()}>
+                    Reload saved settings and discard my changes
+                  </Button>
+                ) : (
+                  <Button variant="outline" size="sm" onClick={() => setSaveError(null)}>Retry</Button>
+                )}
               </div>
             ) : saved && !hasChanges ? (
               <>

@@ -64,6 +64,12 @@ type PersistDerivedDocumentDataResult = {
   droppedRelationshipCount: number;
 };
 
+export class EntityEmbeddingChangedError extends Error {
+  constructor() {
+    super("Entity changed during ingestion; rebuild its embedding before saving");
+  }
+}
+
 type EntityIdRecord = {
   id: string;
   name: string;
@@ -99,6 +105,11 @@ export async function persistDerivedDocumentData(
         : eq(documents.id, documentId))
       .returning({ id: documents.id });
     if (updated.length === 0) throw new Error("Document ingestion was superseded by another run");
+
+    const priorMentions: { entityId: string }[] = input.replaceExisting
+      ? await tx.select({ entityId: entityMentions.entityId }).from(entityMentions)
+          .where(eq(entityMentions.documentId, documentId))
+      : [];
 
     if (input.replaceExisting) {
       await tx.delete(relationships).where(eq(relationships.sourceDocumentId, documentId));
@@ -151,6 +162,13 @@ export async function persistDerivedDocumentData(
       await tx.insert(entityMentions).values(mentionRows);
     }
 
+    if (priorMentions.length > 0) {
+      await tx.delete(entities).where(and(
+        inArray(entities.id, priorMentions.map(mention => mention.entityId)),
+        sql`not exists (select 1 from ${entityMentions} where ${entityMentions.entityId} = ${entities.id})`
+      ));
+    }
+
     const relationshipPlan = planRelationshipInserts({
       sourceDocumentId: documentId,
       entityIdMap: new Map(entityRecords.map((entity) => [makeEntityKey(entity), entity.id])),
@@ -172,12 +190,13 @@ async function saveEntities(tx: any, derived: DerivedDocumentData): Promise<Enti
   for (const entity of derived.entities) {
     const entityKey = makeEntityKey(entity);
     const [existing] = await tx
-      .select({ id: entities.id, name: entities.name, type: entities.type })
+      .select()
       .from(entities)
       .where(and(eq(entities.name, entity.name), eq(entities.type, entity.type)))
       .limit(1);
 
     if (existing) {
+      await updateEntityEmbedding(tx, existing, entity, derived);
       records.push(existing);
       continue;
     }
@@ -189,6 +208,7 @@ async function saveEntities(tx: any, derived: DerivedDocumentData): Promise<Enti
         type: entity.type,
         description: entity.description,
         embedding: derived.entityEmbeddingsByKey.get(entityKey) ?? null,
+        embeddingModel: derived.entityEmbeddingsByKey.has(entityKey) ? derived.embeddingModel : null,
       })
       .onConflictDoNothing({ target: [entities.name, entities.type] })
       .returning({ id: entities.id, name: entities.name, type: entities.type });
@@ -199,17 +219,33 @@ async function saveEntities(tx: any, derived: DerivedDocumentData): Promise<Enti
     }
 
     const [createdConcurrently] = await tx
-      .select({ id: entities.id, name: entities.name, type: entities.type })
+      .select()
       .from(entities)
       .where(and(eq(entities.name, entity.name), eq(entities.type, entity.type)))
       .limit(1);
 
     if (createdConcurrently) {
+      await updateEntityEmbedding(tx, createdConcurrently, entity, derived);
       records.push(createdConcurrently);
     }
   }
 
   return records;
+}
+
+async function updateEntityEmbedding(
+  tx: any,
+  existing: typeof entities.$inferSelect,
+  prepared: DerivedDocumentData["entities"][number],
+  derived: DerivedDocumentData
+) {
+  if (existing.embedding?.length && existing.embeddingModel === derived.embeddingModel) return;
+  const embedding = derived.entityEmbeddingsByKey.get(makeEntityKey(prepared));
+  if (!embedding || existing.description !== prepared.description) {
+    throw new EntityEmbeddingChangedError();
+  }
+  await tx.update(entities).set({ embedding, embeddingModel: derived.embeddingModel, updatedAt: new Date() })
+    .where(eq(entities.id, existing.id));
 }
 
 async function saveDocumentTags(tx: any, documentId: string, nextTags: string[]) {

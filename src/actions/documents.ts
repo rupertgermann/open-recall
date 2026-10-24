@@ -237,6 +237,42 @@ export async function updateDocumentTags(documentId: string, nextTags: string[])
   return { success: true, tags: normalized };
 }
 
+type TagTransaction = Parameters<Parameters<typeof db.transaction>[0]>[0];
+
+async function insertTagLinks(tx: TagTransaction, documentId: string, names: string[]) {
+  await tx.insert(tags).values(names.map((name) => ({ name }))).onConflictDoNothing();
+  const tagRows = await tx.select({ id: tags.id }).from(tags).where(inArray(tags.name, names));
+  await tx.insert(documentTags).values(tagRows.map((tag) => ({ documentId, tagId: tag.id }))).onConflictDoNothing();
+}
+
+async function readDocumentTags(documentId: string) {
+  const currentTags = await db
+    .select({ name: tags.name })
+    .from(tags)
+    .innerJoin(documentTags, eq(documentTags.tagId, tags.id))
+    .where(eq(documentTags.documentId, documentId));
+  return currentTags.map((tag) => tag.name);
+}
+
+export async function changeDocumentTag(change: { documentId: string; name: string; operation: "add" | "remove" }) {
+  const name = change.name.trim().toLowerCase();
+  if (!name) throw new Error("Enter a tag name");
+  switch (change.operation) {
+    case "add":
+      await db.transaction((tx) => insertTagLinks(tx, change.documentId, [name]));
+      break;
+    case "remove":
+      await db.delete(documentTags).where(sql`${documentTags.documentId} = ${change.documentId}
+        AND ${documentTags.tagId} IN (SELECT ${tags.id} FROM ${tags} WHERE ${tags.name} = ${name})`);
+      break;
+    default:
+      throw new Error("Invalid tag operation");
+  }
+  revalidatePath(`/library/${change.documentId}`);
+  revalidatePath("/graph");
+  return { tags: await readDocumentTags(change.documentId) };
+}
+
 export async function generateDocumentTags(documentId: string) {
   const [doc] = await db
     .select({
@@ -257,21 +293,12 @@ export async function generateDocumentTags(documentId: string) {
   });
 
   if (aiTags.length > 0) {
-    await db.transaction(async (tx) => {
-      await tx.insert(tags).values(aiTags.map((name) => ({ name }))).onConflictDoNothing();
-      const tagRows = await tx.select({ id: tags.id }).from(tags).where(inArray(tags.name, aiTags));
-      await tx.insert(documentTags).values(tagRows.map((tag) => ({ documentId, tagId: tag.id }))).onConflictDoNothing();
-    });
+    await db.transaction((tx) => insertTagLinks(tx, documentId, aiTags));
     revalidatePath(`/library/${documentId}`);
     revalidatePath("/graph");
   }
 
-  const currentTags = await db
-    .select({ name: tags.name })
-    .from(tags)
-    .innerJoin(documentTags, eq(documentTags.tagId, tags.id))
-    .where(eq(documentTags.documentId, documentId));
-  return { success: aiTags.length > 0, tags: currentTags.map((tag) => tag.name) };
+  return { success: aiTags.length > 0, tags: await readDocumentTags(documentId) };
 }
 
 export async function updateDocumentFromSource(documentId: string) {

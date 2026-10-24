@@ -303,7 +303,7 @@ export default function LibraryPage() {
       if (collectionToEdit) {
         await updateCollection(collectionToEdit.id, {
           name,
-          description: collectionDescription.trim() || undefined,
+          description: collectionDescription.trim(),
         });
         toast({ title: "Collection updated" });
       } else {

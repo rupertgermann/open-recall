@@ -16,7 +16,7 @@ loadUi({
   "@/actions/settings": `
     import {settingsActions} from ${JSON.stringify(import.meta.url)};
     export const getAISettings = () => settingsActions.get();
-    export const saveAISettings = (value) => settingsActions.save(value);
+    export const saveAISettings = (...args) => settingsActions.save(...args);
     export const getDatabaseStats = async () => ({documents: 0, entities: 0, relationships: 0});
     export const testAIConnection = (...args) => settingsActions.test(...args);
     export const validateOpenAIApiKey = async () => ({success: true});
@@ -33,14 +33,14 @@ test("Settings loading stays read-only and rapid edits save only the latest conf
   const db = await createTestDatabase();
   useDatabase(db.db);
   t.after(() => db.close());
-  await actions.saveAISettings(config);
+  await actions.saveAISettings(config, await actions.getAISettings());
   t.mock.method(globalThis, "fetch", async () => Response.json({ state: "not_installed", installInstructions: "Install gogcli" }));
   t.mock.timers.enable({ apis: ["setTimeout"] });
   const tick = async (ms: number) => act(async () => t.mock.timers.tick(ms));
   const loaded = Promise.withResolvers<AISettings>();
   settingsActions.get = () => loaded.promise;
   const saves: AISettings[] = [];
-  settingsActions.save = async (value) => { saves.push(value); await actions.saveAISettings(value); };
+  settingsActions.save = async (value, expected) => { saves.push(value); return actions.saveAISettings(value, expected); };
   const ui = await renderUi(createElement(SettingsPage));
   t.after(() => ui.close());
   await tick(1200);
@@ -72,7 +72,7 @@ test("Settings preserves independent local credentials and unrelated provider fi
     embedding: config.embedding,
     chat: { provider: "local", baseUrl: "http://chat.invalid/v1", model: "chat", apiKey: "chat-key", reasoningEffort: "high" },
   };
-  await actions.saveAISettings(local);
+  await actions.saveAISettings(local, await actions.getAISettings());
   settingsActions.get = actions.getAISettings;
   settingsActions.save = actions.saveAISettings;
   t.mock.method(globalThis, "fetch", async () => Response.json({ state: "not_installed", installInstructions: "Install gogcli" }));
@@ -92,10 +92,10 @@ test("Settings preserves independent local credentials and unrelated provider fi
 
   const pendingSave = Promise.withResolvers<void>();
   const saves: AISettings[] = [];
-  settingsActions.save = async (value) => {
+  settingsActions.save = async (value, expected) => {
     saves.push(value);
     await pendingSave.promise;
-    await actions.saveAISettings(value);
+    return actions.saveAISettings(value, expected);
   };
   await ui.change('input[placeholder="http://localhost:11434/v1"]', "http://saving.invalid/v1");
   await act(async () => t.mock.timers.tick(1000));
@@ -117,7 +117,7 @@ test("Settings load failure never saves defaults", async (t) => {
   const { default: SettingsPage } = await import("../src/app/settings/page.tsx");
   const writes: AISettings[] = [];
   settingsActions.get = async () => { throw new Error("Load unavailable"); };
-  settingsActions.save = async (value) => { writes.push(value); };
+  settingsActions.save = async (value) => { writes.push(value); return "saved"; };
   t.mock.method(console, "error", () => {});
   t.mock.method(globalThis, "fetch", async () => Response.json({ state: "not_installed", installInstructions: "Install gogcli" }));
   t.mock.timers.enable({ apis: ["setTimeout"] });
@@ -154,15 +154,15 @@ test("Settings retains failed edits and retries the latest draft without overlap
   const db = await createTestDatabase();
   useDatabase(db.db);
   t.after(() => db.close());
-  await actions.saveAISettings(config);
+  await actions.saveAISettings(config, await actions.getAISettings());
   settingsActions.get = actions.getAISettings;
   const pending = Promise.withResolvers<void>();
   const saves: AISettings[] = [];
-  settingsActions.save = async (value) => {
+  settingsActions.save = async (value, expected) => {
     saves.push(value);
     if (saves.length === 1) await pending.promise;
     if (saves.length === 2) throw new Error("Still unavailable");
-    await actions.saveAISettings(value);
+    return actions.saveAISettings(value, expected);
   };
   t.mock.method(console, "error", () => {});
   t.mock.method(globalThis, "fetch", async () => Response.json({ state: "not_installed", installInstructions: "Install gogcli" }));
@@ -196,4 +196,55 @@ test("Settings retains failed edits and retries the latest draft without overlap
   assert.equal((await actions.getAISettings()).embedding.apiKey, config.embedding.apiKey);
   assert.equal(ui.document.querySelector('[role="alert"]'), null);
   assert.match(ui.document.body.textContent ?? "", /All changes saved/);
+});
+
+test("Settings keeps a stale tab's draft visible and blocks further writes until explicit reload", async (t) => {
+  const { default: SettingsPage } = await import("../src/app/settings/page.tsx");
+  const db = await createTestDatabase();
+  useDatabase(db.db);
+  t.after(() => db.close());
+  const local: AISettings = {
+    chat: { provider: "local", baseUrl: "http://chat.invalid/v1", model: "chat", apiKey: "chat-key" },
+    embedding: config.embedding,
+  };
+  await actions.saveAISettings(local, await actions.getAISettings());
+  settingsActions.get = actions.getAISettings;
+  const saves: AISettings[] = [];
+  settingsActions.save = async (value, expected) => {
+    saves.push(value);
+    return actions.saveAISettings(value, expected);
+  };
+  t.mock.method(globalThis, "fetch", async () => Response.json({ state: "not_installed", installInstructions: "Install gogcli" }));
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const tick = async () => act(async () => t.mock.timers.tick(1000));
+  const ui = await renderUi(createElement("div", null,
+    createElement("div", { id: "tab-a" }, createElement(SettingsPage)),
+    createElement("div", { id: "tab-b" }, createElement(SettingsPage)),
+  ));
+  t.after(() => ui.close());
+  const selectorA = '#tab-a input[value="http://embedding.invalid/v1"]';
+  const selectorB = '#tab-b input[placeholder="http://localhost:11434/v1"]';
+  await ui.change(selectorA, "http://accepted.invalid/v1");
+  await tick();
+  await ui.change(selectorB, "http://draft.invalid/v1");
+  await tick();
+  const alert = ui.document.querySelector('#tab-b [role="alert"]');
+  assert.match(alert?.textContent ?? "", /Settings changed in another tab/);
+  assert.match(alert?.textContent ?? "", /Reload saved settings and discard my changes/);
+  assert.equal(ui.document.querySelector<HTMLInputElement>(selectorB)?.value, "http://draft.invalid/v1");
+  assert.equal((await actions.getAISettings()).chat.baseUrl, local.chat.baseUrl);
+  assert.equal((await actions.getAISettings()).embedding.baseUrl, "http://accepted.invalid/v1");
+  await ui.change(selectorB, "http://still-unsaved.invalid/v1");
+  await tick();
+  assert.equal(saves.length, 2, "conflicts never silently retry against a newer baseline");
+  assert.equal(ui.document.querySelector<HTMLInputElement>(selectorB)?.value, "http://still-unsaved.invalid/v1");
+  await ui.close();
+  const reloaded = await renderUi(createElement(SettingsPage));
+  t.after(() => reloaded.close());
+  assert.equal(reloaded.document.querySelector('[role="alert"]'), null);
+  assert.ok(reloaded.document.querySelector('input[value="http://accepted.invalid/v1"]'));
+  await reloaded.change('input[value="http://chat.invalid/v1"]', "http://after-reload.invalid/v1");
+  await tick();
+  assert.equal((await actions.getAISettings()).chat.baseUrl, "http://after-reload.invalid/v1");
+  assert.equal((await actions.getAISettings()).embedding.baseUrl, "http://accepted.invalid/v1");
 });

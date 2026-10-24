@@ -26,6 +26,9 @@ export function RelatedChats({ entityId, documentId }: RelatedChatsProps) {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
+    let cancelled = false;
+    setChats([]);
+    setLoading(Boolean(entityId || documentId));
     const fetchChats = async () => {
       try {
         const id = entityId || documentId;
@@ -34,18 +37,19 @@ export function RelatedChats({ entityId, documentId }: RelatedChatsProps) {
         const response = await fetch(`/api/related-chats/${id}?type=${type}`);
         if (response.ok) {
           const data = await response.json();
-          setChats(data.chats || []);
+          if (!cancelled) setChats(data.chats || []);
         }
       } catch (error) {
-        console.error("Failed to fetch related chats:", error);
+        if (!cancelled) console.error("Failed to fetch related chats:", error);
       } finally {
-        setLoading(false);
+        if (!cancelled) setLoading(false);
       }
     };
 
     if (entityId || documentId) {
       fetchChats();
     }
+    return () => { cancelled = true; };
   }, [entityId, documentId]);
 
   if (loading) {
