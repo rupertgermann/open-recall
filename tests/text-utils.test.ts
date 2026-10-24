@@ -4,6 +4,7 @@ import test from "node:test";
 import {
   estimateTokens,
   generateContentHash,
+  generateExactContentHash,
   normalizeText,
   normalizeTextForHash,
 } from "../src/lib/text/index.ts";
@@ -30,15 +31,14 @@ test("estimateTokens uses normalized text length and preserves basic invariants"
   assert.ok(estimateTokens("Alpha Beta Gamma") >= estimateTokens("Alpha Beta"));
 });
 
-test("chunkStructured produces stable hashes for normalized-equivalent input", () => {
-  const first = chunkStructured("  Alpha\tBeta\n\nGamma  ");
-  const second = chunkStructured("Alpha Beta Gamma");
+test("Chunks use exact text identities while Document hashes keep their normalized contract", () => {
+  const inputs = ["  Alpha\tBeta\n\nGamma  ", "Alpha Beta Gamma", "alpha beta gamma"];
+  const chunks = inputs.map(input => chunkStructured(input)[0]);
 
-  assert.deepEqual(
-    first.map((chunk) => ({ content: chunk.content, contentHash: chunk.contentHash })),
-    second.map((chunk) => ({ content: chunk.content, contentHash: chunk.contentHash }))
-  );
-  assert.equal(first[0].contentHash, generateContentHash("Alpha Beta Gamma"));
+  assert.deepEqual(chunks.map(chunk => chunk.content), inputs);
+  assert.equal(new Set(chunks.map(chunk => chunk.contentHash)).size, inputs.length);
+  assert.deepEqual(chunks.map(chunk => chunk.contentHash), inputs.map(generateExactContentHash));
+  assert.equal(new Set(inputs.map(generateContentHash)).size, 1);
 });
 
 test("chunkStructured bounds chunk size even without sentence punctuation", () => {
@@ -62,7 +62,22 @@ test("chunkStructured bounds chunk size even without sentence punctuation", () =
     );
   }
   // No content lost
-  assert.equal(chunks.map((c) => c.content).join(" "), text);
+  assert.equal(chunks.map((c) => c.content).join(""), text);
+});
+
+test("all split paths retain code whitespace and obey the maximum even after a short slice", () => {
+  for (const text of [
+    "# Heading\n\n" + "    if ready:\n        run()\n    cleanup()\n".repeat(60),
+    "# Heading\n\n" + "    print('done. ')\n        cleanup()\t# next!\n".repeat(60),
+    "## Empty section\n\n## Next\n\n    Indented body.\n",
+    "## " + "H".repeat(600) + "\n\nShort body.",
+    "Tiny.\n\n" + "A".repeat(400),
+  ]) {
+    const chunks = chunkStructured(text, { maxChunkTokens: 100, minChunkTokens: 50 });
+    assert.equal(chunks.map(chunk => chunk.content).join(""), text);
+    assert.ok(chunks.every(chunk => chunk.tokenCount <= 100));
+  }
+  assert.deepEqual(chunkStructured("\n \t"), []);
 });
 
 test("chunkStructured bounds chunk size for one unbroken character run", () => {

@@ -15,6 +15,9 @@ const providerConfigSchema = z.object({
 // Chat-specific configuration
 export const chatConfigSchema = providerConfigSchema.extend({
   model: z.string(),
+  reasoningEffort: z.enum(["low", "medium", "high"]).optional(),
+  verbosity: z.enum(["low", "medium", "high"]).optional(),
+  webSearchEnabled: z.boolean().optional(),
 });
 
 // Embedding-specific configuration
@@ -87,6 +90,9 @@ export async function loadAISettingsFromDB(): Promise<{ chat: ChatConfig; embedd
       provider: settings.chat.provider,
       baseUrl: settings.chat.baseUrl,
       model: settings.chat.model,
+      reasoningEffort: settings.chat.reasoningEffort,
+      verbosity: settings.chat.verbosity,
+      webSearchEnabled: settings.chat.webSearchEnabled,
       apiKey: settings.chat.provider === "openai" 
         ? (settings.openaiApiKey || settings.chat.apiKey) 
         : settings.chat.apiKey,

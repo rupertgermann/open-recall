@@ -129,7 +129,11 @@ export default function ChatThreadPage() {
 
   const { messages, status, sendMessage, setMessages, error: chatError } = useChat<ChatUIMessage>({
     transport: chatTransport,
+    onFinish: ({ isError, isAbort, isDisconnect }) => {
+      if (!isError && !isAbort && !isDisconnect) setText("");
+    },
   });
+  const isSending = status === "submitted" || status === "streaming";
 
   useEffect(() => {
     if (initialMessages.length > 0) {
@@ -143,7 +147,7 @@ export default function ChatThreadPage() {
 
   const handleSubmit = async () => {
     const trimmed = text.trim();
-    if (!trimmed || status !== "ready") return;
+    if (!trimmed || isSending) return;
     setChatRequestError(null);
 
     try {
@@ -155,7 +159,6 @@ export default function ChatThreadPage() {
           },
         }
       );
-      setText("");
     } catch (error) {
       setChatRequestError(getAIErrorMessage(error));
     }
@@ -170,6 +173,7 @@ export default function ChatThreadPage() {
   };
 
   const handleStarterPrompt = async (prompt: string) => {
+    if (isSending) return;
     setText(prompt);
     setChatRequestError(null);
     // Auto-submit the starter prompt
@@ -182,7 +186,6 @@ export default function ChatThreadPage() {
           },
         }
       );
-      setText("");
     } catch (error) {
       setChatRequestError(getAIErrorMessage(error));
     }
@@ -280,7 +283,7 @@ export default function ChatThreadPage() {
                               key={prompt.id}
                               onClick={() => handleStarterPrompt(prompt.text)}
                               className="text-left p-2 rounded-md bg-background hover:bg-accent border transition-colors text-xs"
-                              disabled={status !== "ready"}
+                              disabled={isSending}
                             >
                               <div className="font-medium leading-tight">{prompt.text}</div>
                               {prompt.description && (
@@ -311,10 +314,10 @@ export default function ChatThreadPage() {
               className="w-full"
             >
               <PromptInputBody>
-                <PromptInputTextarea value={text} onChange={(e) => setText(e.target.value)} />
+                <PromptInputTextarea value={text} onChange={(e) => setText(e.target.value)} disabled={isSending} />
               </PromptInputBody>
               <PromptInputFooter>
-                <PromptInputSubmit disabled={!text.trim() || status !== "ready"} />
+                <PromptInputSubmit disabled={!text.trim() || isSending} />
               </PromptInputFooter>
             </PromptInput>
           </div>

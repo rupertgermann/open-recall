@@ -12,6 +12,7 @@ import {
   type DocumentIngestionEvent,
   type SourceContent,
 } from "../src/lib/ingestion/service.ts";
+import { CHUNKING_VERSION } from "../src/lib/embedding/chunker.ts";
 import { generateContentHash } from "../src/lib/text/index.ts";
 import { createTestDatabase } from "./helpers/db.ts";
 
@@ -259,16 +260,19 @@ test("overlapping Drive imports retain one Document and reject a competing proce
   const firstService = createDocumentIngestionService(dependencies);
   const secondService = createDocumentIngestionService(dependencies);
   const options = { driveRunner: fakeGoogleDocRunner({ content: "Concurrent content" }) };
-  const first = firstService.ingestUrlDocument("https://docs.google.com/document/d/doc-123/edit", options);
-  const competing = secondService.ingestUrlDocument("https://drive.google.com/open?id=doc-123", options);
-  const competingCheck = assert.rejects(competing, /already being processed/);
+  const requests = [
+    firstService.ingestUrlDocument("https://docs.google.com/document/d/doc-123/edit", options),
+    secondService.ingestUrlDocument("https://drive.google.com/open?id=doc-123", options),
+  ];
+  const settled = Promise.allSettled(requests);
+  const firstSettled = Promise.race(requests.map(request => request.catch(error => error)));
   await started;
-  try {
-    await competingCheck;
-  } finally {
-    releaseBuild();
-    await first;
-  }
+  const busy = await firstSettled;
+  releaseBuild();
+  const outcomes = await settled;
+  assert.ok(busy instanceof Error);
+  assert.match(busy.message, /already being processed/);
+  assert.equal(outcomes.filter(outcome => outcome.status === "fulfilled").length, 1);
   assert.equal(builds, 1);
   assert.equal((await db.select().from(documents)).length, 1);
   assert.equal((await db.select().from(chunks)).length, 1);
@@ -282,7 +286,7 @@ test("Drive imports preserve legacy duplicates and refresh the oldest matching D
   const content = "Stored content";
   const [older, newer] = await db.insert(documents).values([
     { title: "Oldest", type: "note", url: "https://drive.google.com/file/d/doc-123/view",
-      content, contentHash: generateContentHash(content), embeddingModel: "test-embedding-model",
+      content, contentHash: generateContentHash(content), embeddingModel: "test-embedding-model", embeddingVersion: CHUNKING_VERSION,
       processingStatus: "completed", createdAt: new Date("2025-01-01") },
     { title: "Legacy duplicate", type: "note", url: "https://drive.google.com/file/d/doc-123/view",
       content: "Preserve this", processingStatus: "completed", createdAt: new Date("2025-01-02") },

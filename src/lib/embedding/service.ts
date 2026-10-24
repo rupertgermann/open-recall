@@ -7,6 +7,7 @@ import { getEmbeddingConfigFromDB, type EmbeddingConfig } from "@/lib/ai/config"
 import { generateEmbeddings } from "@/lib/ai/client";
 import { metricsCollector, withTiming } from "./metrics";
 import { batchGetOrCreateEmbeddings, generateContentHash } from "./cache";
+import { generateContentHash as generateDocumentContentHash } from "../text/index.ts";
 
 export interface EmbeddingRequest {
   text: string;
@@ -142,7 +143,7 @@ export function hasContentChanged(
   existingHash: string | null
 ): boolean {
   if (!existingHash) return true;
-  const newHash = generateContentHash(newContent);
+  const newHash = generateDocumentContentHash(newContent);
   return newHash !== existingHash;
 }
 

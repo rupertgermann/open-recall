@@ -41,7 +41,7 @@ Saving one Document's Derived Document Data as a single transaction — replacin
 _Avoid_: save step, write phase
 
 **Source Refresh**:
-Re-ingesting a source-backed Document. Skips rebuilding Derived Document Data when both the content hash and the embedding model are unchanged.
+Re-ingesting a source-backed Document. Skips rebuilding Derived Document Data when the exact source text, content hash, embedding model, and chunking version are unchanged.
 _Avoid_: re-sync, update
 
 **Drive File**:

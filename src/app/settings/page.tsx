@@ -42,6 +42,207 @@ type GogStatusResponse =
       accountEmail: string;
     };
 
+const ProviderConfig = ({
+  title,
+  description,
+  icon: Icon,
+  provider,
+  setProvider,
+  baseUrl,
+  setBaseUrl,
+  model,
+  setModel,
+  connectionStatus,
+  connectionError,
+  availableModels,
+  testConnection,
+  setHasChanges,
+  // OpenAI-specific props (only used for chat provider)
+  reasoningEffort,
+  setReasoningEffort,
+  verbosity,
+  setVerbosity,
+  webSearchEnabled,
+  setWebSearchEnabled,
+  isChatProvider = false,
+}: {
+  title: string;
+  description: string;
+  icon: React.ElementType;
+  provider: Provider;
+  setProvider: (p: Provider) => void;
+  baseUrl: string;
+  setBaseUrl: (url: string) => void;
+  model: string;
+  setModel: (m: string) => void;
+  connectionStatus: ConnectionStatus;
+  connectionError: string | null;
+  availableModels: string[];
+  testConnection: () => void;
+  setHasChanges: (changed: boolean) => void;
+  reasoningEffort?: string;
+  setReasoningEffort?: (value: "low" | "medium" | "high") => void;
+  verbosity?: string;
+  setVerbosity?: (value: "low" | "medium" | "high") => void;
+  webSearchEnabled?: boolean;
+  setWebSearchEnabled?: (value: boolean) => void;
+  isChatProvider?: boolean;
+}) => (
+  <Card>
+    <CardHeader>
+      <CardTitle className="flex items-center gap-2">
+        <Icon className="h-5 w-5" />
+        {title}
+      </CardTitle>
+      <CardDescription>{description}</CardDescription>
+    </CardHeader>
+    <CardContent className="space-y-4">
+      <div className="flex gap-2">
+        <Button
+          variant={provider === "local" ? "default" : "outline"}
+          onClick={() => { setHasChanges(true); setProvider("local"); }}
+          className="flex-1"
+        >
+          <Cpu className="mr-2 h-4 w-4" />
+          Local
+        </Button>
+        <Button
+          variant={provider === "openai" ? "default" : "outline"}
+          onClick={() => { setHasChanges(true); setProvider("openai"); }}
+          className="flex-1"
+        >
+          <Server className="mr-2 h-4 w-4" />
+          OpenAI
+        </Button>
+      </div>
+
+      <div className="space-y-4 pt-4 border-t">
+        {provider === "local" && (
+          <div className="space-y-2">
+            <label className="text-sm font-medium">Base URL</label>
+            <div className="flex gap-2">
+              <Input
+                value={baseUrl}
+                onChange={(e) => { setHasChanges(true); setBaseUrl(e.target.value); }}
+                placeholder="http://localhost:11434/v1"
+              />
+              <Button
+                variant="outline"
+                onClick={testConnection}
+                disabled={connectionStatus === "testing"}
+              >
+                {connectionStatus === "testing" ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : connectionStatus === "connected" ? (
+                  <CheckCircle className="h-4 w-4 text-green-500" />
+                ) : (
+                  <RefreshCw className="h-4 w-4" />
+                )}
+              </Button>
+            </div>
+            <div className="flex items-center gap-2">
+              {connectionStatus === "connected" && (
+                <Badge variant="outline" className="text-green-500 border-green-500">
+                  Connected
+                </Badge>
+              )}
+              {connectionStatus === "disconnected" && (
+                <Badge variant="outline" className="text-muted-foreground">
+                  Not tested
+                </Badge>
+              )}
+              {connectionError && (
+                <span className="text-xs text-destructive">{connectionError}</span>
+              )}
+            </div>
+          </div>
+        )}
+
+        <div className="space-y-2">
+          <label className="text-sm font-medium">Model</label>
+          <select
+            value={model}
+            onChange={(e) => { setHasChanges(true); setModel(e.target.value); }}
+            disabled={availableModels.length === 0}
+            className="h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm disabled:opacity-50"
+          >
+            {availableModels.map((m) => (
+              <option key={m} value={m}>
+                {m}
+              </option>
+            ))}
+          </select>
+        </div>
+
+        {/* OpenAI-specific options */}
+        {provider === "openai" && isChatProvider && (
+          <div className="space-y-4 pt-4 border-t">
+            <div className="space-y-2">
+              <label className="text-sm font-medium">Reasoning Effort</label>
+              <Select
+                value={reasoningEffort}
+                onValueChange={(value: "low" | "medium" | "high") => { setHasChanges(true); setReasoningEffort?.(value); }}
+              >
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="low">Low</SelectItem>
+                  <SelectItem value="medium">Medium</SelectItem>
+                  <SelectItem value="high">High</SelectItem>
+                </SelectContent>
+              </Select>
+              <p className="text-xs text-muted-foreground">
+                Controls the reasoning effort level for response generation
+              </p>
+            </div>
+
+            <div className="space-y-2">
+              <label className="text-sm font-medium">Verbosity</label>
+              <Select
+                value={verbosity}
+                onValueChange={(value: "low" | "medium" | "high") => { setHasChanges(true); setVerbosity?.(value); }}
+              >
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="low">Low</SelectItem>
+                  <SelectItem value="medium">Medium</SelectItem>
+                  <SelectItem value="high">High</SelectItem>
+                </SelectContent>
+              </Select>
+              <p className="text-xs text-muted-foreground">
+                Constrains response verbosity (low, medium, high)
+              </p>
+            </div>
+
+            <div className="space-y-2">
+              <label className="text-sm font-medium">Web Search</label>
+              <div className="flex items-center space-x-2">
+                <input
+                  type="checkbox"
+                  id="web-search"
+                  checked={webSearchEnabled}
+                  onChange={(e) => { setHasChanges(true); setWebSearchEnabled?.(e.target.checked); }}
+                  className="rounded"
+                />
+                <label htmlFor="web-search" className="text-sm">
+                  Enable web search for responses
+                </label>
+              </div>
+              <p className="text-xs text-muted-foreground">
+                Allow the model to search the web for current information
+              </p>
+            </div>
+          </div>
+        )}
+      </div>
+    </CardContent>
+  </Card>
+);
+
+
 export default function SettingsPage() {
   const [isLoading, setIsLoading] = useState(true);
   const [loadedSettings, setLoadedSettings] = useState<AISettings | null>(null);
@@ -76,6 +277,7 @@ export default function SettingsPage() {
 
   const [isSaving, setIsSaving] = useState(false);
   const [saved, setSaved] = useState(false);
+  const [saveError, setSaveError] = useState(false);
   const [dbStats, setDbStats] = useState({ documents: 0, entities: 0, relationships: 0 });
   const [gogStatus, setGogStatus] = useState<GogStatusResponse | null>(null);
   const [gogStatusError, setGogStatusError] = useState<string | null>(null);
@@ -166,7 +368,7 @@ export default function SettingsPage() {
   }, []);
 
   useEffect(() => {
-    if (!loadedSettings || !hasChanges || isSaving) return;
+    if (!loadedSettings || !hasChanges || isSaving || saveError) return;
 
     setSaved(false);
     const timeout = setTimeout(async () => {
@@ -199,13 +401,15 @@ export default function SettingsPage() {
         });
         setSaved(true);
       } catch (error) {
+        setHasChanges(true);
+        setSaveError(true);
         console.error("Failed to auto-save settings:", error);
       } finally {
         setIsSaving(false);
       }
     }, 1000);
     return () => clearTimeout(timeout);
-  }, [loadedSettings, hasChanges, isSaving, keyChanged, chatProvider, chatBaseUrl, chatModel, reasoningEffort, verbosity, webSearchEnabled, embeddingProvider, embeddingBaseUrl, embeddingModel, openaiApiKey]);
+  }, [loadedSettings, hasChanges, isSaving, saveError, keyChanged, chatProvider, chatBaseUrl, chatModel, reasoningEffort, verbosity, webSearchEnabled, embeddingProvider, embeddingBaseUrl, embeddingModel, openaiApiKey]);
 
   useEffect(() => {
     if (!saved) return;
@@ -387,204 +591,6 @@ export default function SettingsPage() {
     );
   }
 
-  // Helper component for provider config
-  const ProviderConfig = ({
-    title,
-    description,
-    icon: Icon,
-    provider,
-    setProvider,
-    baseUrl,
-    setBaseUrl,
-    model,
-    setModel,
-    connectionStatus,
-    connectionError,
-    availableModels,
-    testConnection,
-    // OpenAI-specific props (only used for chat provider)
-    reasoningEffort,
-    setReasoningEffort,
-    verbosity,
-    setVerbosity,
-    webSearchEnabled,
-    setWebSearchEnabled,
-    isChatProvider = false,
-  }: {
-    title: string;
-    description: string;
-    icon: React.ElementType;
-    provider: Provider;
-    setProvider: (p: Provider) => void;
-    baseUrl: string;
-    setBaseUrl: (url: string) => void;
-    model: string;
-    setModel: (m: string) => void;
-    connectionStatus: ConnectionStatus;
-    connectionError: string | null;
-    availableModels: string[];
-    testConnection: () => void;
-    reasoningEffort?: string;
-    setReasoningEffort?: (value: "low" | "medium" | "high") => void;
-    verbosity?: string;
-    setVerbosity?: (value: "low" | "medium" | "high") => void;
-    webSearchEnabled?: boolean;
-    setWebSearchEnabled?: (value: boolean) => void;
-    isChatProvider?: boolean;
-  }) => (
-    <Card>
-      <CardHeader>
-        <CardTitle className="flex items-center gap-2">
-          <Icon className="h-5 w-5" />
-          {title}
-        </CardTitle>
-        <CardDescription>{description}</CardDescription>
-      </CardHeader>
-      <CardContent className="space-y-4">
-        <div className="flex gap-2">
-          <Button
-            variant={provider === "local" ? "default" : "outline"}
-            onClick={() => { setHasChanges(true); setProvider("local"); }}
-            className="flex-1"
-          >
-            <Cpu className="mr-2 h-4 w-4" />
-            Local
-          </Button>
-          <Button
-            variant={provider === "openai" ? "default" : "outline"}
-            onClick={() => { setHasChanges(true); setProvider("openai"); }}
-            className="flex-1"
-          >
-            <Server className="mr-2 h-4 w-4" />
-            OpenAI
-          </Button>
-        </div>
-
-        <div className="space-y-4 pt-4 border-t">
-          {provider === "local" && (
-            <div className="space-y-2">
-              <label className="text-sm font-medium">Base URL</label>
-              <div className="flex gap-2">
-                <Input
-                  value={baseUrl}
-                  onChange={(e) => { setHasChanges(true); setBaseUrl(e.target.value); }}
-                  placeholder="http://localhost:11434/v1"
-                />
-                <Button
-                  variant="outline"
-                  onClick={testConnection}
-                  disabled={connectionStatus === "testing"}
-                >
-                  {connectionStatus === "testing" ? (
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                  ) : connectionStatus === "connected" ? (
-                    <CheckCircle className="h-4 w-4 text-green-500" />
-                  ) : (
-                    <RefreshCw className="h-4 w-4" />
-                  )}
-                </Button>
-              </div>
-              <div className="flex items-center gap-2">
-                {connectionStatus === "connected" && (
-                  <Badge variant="outline" className="text-green-500 border-green-500">
-                    Connected
-                  </Badge>
-                )}
-                {connectionStatus === "disconnected" && (
-                  <Badge variant="outline" className="text-muted-foreground">
-                    Not tested
-                  </Badge>
-                )}
-                {connectionError && (
-                  <span className="text-xs text-destructive">{connectionError}</span>
-                )}
-              </div>
-            </div>
-          )}
-
-          <div className="space-y-2">
-            <label className="text-sm font-medium">Model</label>
-            <select
-              value={model}
-              onChange={(e) => { setHasChanges(true); setModel(e.target.value); }}
-              disabled={availableModels.length === 0}
-              className="h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm disabled:opacity-50"
-            >
-              {availableModels.map((m) => (
-                <option key={m} value={m}>
-                  {m}
-                </option>
-              ))}
-            </select>
-          </div>
-
-          {/* OpenAI-specific options */}
-          {provider === "openai" && isChatProvider && (
-            <div className="space-y-4 pt-4 border-t">
-              <div className="space-y-2">
-                <label className="text-sm font-medium">Reasoning Effort</label>
-                <Select 
-                  value={reasoningEffort} 
-                  onValueChange={(value: "low" | "medium" | "high") => { setHasChanges(true); setReasoningEffort?.(value); }}
-                >
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="low">Low</SelectItem>
-                    <SelectItem value="medium">Medium</SelectItem>
-                    <SelectItem value="high">High</SelectItem>
-                  </SelectContent>
-                </Select>
-                <p className="text-xs text-muted-foreground">
-                  Controls the reasoning effort level for response generation
-                </p>
-              </div>
-
-              <div className="space-y-2">
-                <label className="text-sm font-medium">Verbosity</label>
-                <Select 
-                  value={verbosity} 
-                  onValueChange={(value: "low" | "medium" | "high") => { setHasChanges(true); setVerbosity?.(value); }}
-                >
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="low">Low</SelectItem>
-                    <SelectItem value="medium">Medium</SelectItem>
-                    <SelectItem value="high">High</SelectItem>
-                  </SelectContent>
-                </Select>
-                <p className="text-xs text-muted-foreground">
-                  Constrains response verbosity (low, medium, high)
-                </p>
-              </div>
-
-              <div className="space-y-2">
-                <label className="text-sm font-medium">Web Search</label>
-                <div className="flex items-center space-x-2">
-                  <input
-                    type="checkbox"
-                    id="web-search"
-                    checked={webSearchEnabled}
-                    onChange={(e) => { setHasChanges(true); setWebSearchEnabled?.(e.target.checked); }}
-                    className="rounded"
-                  />
-                  <label htmlFor="web-search" className="text-sm">
-                    Enable web search for responses
-                  </label>
-                </div>
-                <p className="text-xs text-muted-foreground">
-                  Allow the model to search the web for current information
-                </p>
-              </div>
-            </div>
-          )}
-        </div>
-      </CardContent>
-    </Card>
-  );
 
   const GogStatusCard = () => {
     const label = gogStatusError
@@ -666,7 +672,12 @@ export default function SettingsPage() {
                 <Loader2 className="mr-2 h-4 w-4 animate-spin text-muted-foreground" />
                 <span className="text-sm text-muted-foreground">Auto-saving...</span>
               </>
-            ) : saved ? (
+            ) : saveError ? (
+              <div role="alert" className="flex items-center gap-3">
+                <span className="text-sm text-destructive">Failed to save settings. Your changes are unsaved.</span>
+                <Button variant="outline" size="sm" onClick={() => setSaveError(false)}>Retry</Button>
+              </div>
+            ) : saved && !hasChanges ? (
               <>
                 <CheckCircle className="mr-2 h-4 w-4 text-green-500" />
                 <span className="text-sm text-green-500">All changes saved</span>
@@ -765,6 +776,7 @@ export default function SettingsPage() {
             connectionError={chatConnectionError}
             availableModels={chatAvailableModels}
             testConnection={testChatConnection}
+            setHasChanges={setHasChanges}
             // OpenAI-specific options for chat
             reasoningEffort={reasoningEffort}
             setReasoningEffort={setReasoningEffort}
@@ -790,6 +802,7 @@ export default function SettingsPage() {
             connectionError={embeddingConnectionError}
             availableModels={embeddingAvailableModels}
             testConnection={testEmbeddingConnection}
+            setHasChanges={setHasChanges}
             // Embedding provider doesn't use OpenAI-specific options
             isChatProvider={false}
           />
