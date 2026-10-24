@@ -71,8 +71,11 @@ function toUIMessages(rows: LoadedChat["messages"]): ChatUIMessage[] {
 
 export default function ChatThreadPage() {
   const params = useParams<{ id: string }>();
+  return <ThreadChat key={params.id} threadId={params.id} />;
+}
+
+function ThreadChat({ threadId }: { threadId: string }) {
   const router = useRouter();
-  const threadId = params.id;
 
   const [loaded, setLoaded] = useState<LoadedChat | null>(null);
   const [loading, setLoading] = useState(true);
@@ -136,9 +139,7 @@ export default function ChatThreadPage() {
   const isSending = status === "submitted" || status === "streaming";
 
   useEffect(() => {
-    if (initialMessages.length > 0) {
-      setMessages(initialMessages);
-    }
+    setMessages(initialMessages);
   }, [initialMessages, setMessages]);
 
   const [text, setText] = useState("");

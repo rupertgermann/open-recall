@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useTransition } from "react";
+import { useState, useEffect, useTransition, useRef } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { FileText, Video, Globe, Search, MoreVertical, Trash2, ExternalLink, Loader2, RefreshCw, X, Grid, List, FolderOpen, FolderMinus, FolderPlus, Plus, Pencil, Library, Sparkles, CheckSquare, Square, Check } from "lucide-react";
@@ -216,6 +216,13 @@ export default function LibraryPage() {
   const [pageSize] = useState(30);
   const [offset, setOffset] = useState(0);
   const [hasMore, setHasMore] = useState(true);
+  const [reloadVersion, setReloadVersion] = useState(0);
+  const queryGeneration = useRef(0);
+
+  const reloadDocuments = () => {
+    queryGeneration.current += 1;
+    setReloadVersion((version) => version + 1);
+  };
 
   // Collection state
   const [collectionsList, setCollectionsList] = useState<CollectionWithCount[]>([]);
@@ -516,6 +523,7 @@ export default function LibraryPage() {
 
   // Fetch documents
   useEffect(() => {
+    const generation = ++queryGeneration.current;
     async function fetchDocuments() {
       setIsLoading(true);
       try {
@@ -526,20 +534,23 @@ export default function LibraryPage() {
           limit: pageSize,
           offset: 0,
         });
+        if (generation !== queryGeneration.current) return;
         setDocuments(docs);
         setOffset(docs.length);
         setHasMore(docs.length === pageSize);
       } catch (error) {
         console.error("Failed to fetch documents:", error);
       } finally {
-        setIsLoading(false);
+        if (generation === queryGeneration.current) setIsLoading(false);
       }
     }
     fetchDocuments();
-  }, [debouncedSearch, filterType, selectedCollectionId, pageSize]);
+    return () => { queryGeneration.current += 1; };
+  }, [debouncedSearch, filterType, selectedCollectionId, pageSize, reloadVersion]);
 
   const loadMore = async () => {
     if (isLoading || !hasMore) return;
+    const generation = queryGeneration.current;
     setIsLoading(true);
     try {
       const more = await getDocuments({
@@ -549,13 +560,14 @@ export default function LibraryPage() {
         limit: pageSize,
         offset,
       });
+      if (generation !== queryGeneration.current) return;
       setDocuments((prev) => [...prev, ...more]);
       setOffset((prev) => prev + more.length);
       setHasMore(more.length === pageSize);
     } catch (error) {
       console.error("Failed to fetch more documents:", error);
     } finally {
-      setIsLoading(false);
+      if (generation === queryGeneration.current) setIsLoading(false);
     }
   };
 
@@ -570,7 +582,7 @@ export default function LibraryPage() {
         title: "Updated from source",
         description: "The document was refreshed.",
       });
-      setDebouncedSearch(searchQuery);
+      reloadDocuments();
     } catch (error) {
       toast({
         title: "Update failed",
@@ -591,6 +603,7 @@ export default function LibraryPage() {
     try {
       await removeDocumentFromCollection(documentId, selectedCollectionId);
       setDocuments((prev) => prev.filter((d) => d.id !== documentId));
+      reloadDocuments();
       await refreshCollections();
       toast({
         title: "Removed from collection",
@@ -612,6 +625,7 @@ export default function LibraryPage() {
       try {
         await deleteDocument(documentToDelete);
         setDocuments((prev) => prev.filter((d) => d.id !== documentToDelete));
+        reloadDocuments();
         setDocumentToDelete(null);
         toast({
           title: "Document deleted",
@@ -630,6 +644,7 @@ export default function LibraryPage() {
 
   const handleRefresh = () => {
     setDebouncedSearch(searchQuery);
+    reloadDocuments();
   };
 
   return (

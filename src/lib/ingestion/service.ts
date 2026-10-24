@@ -1,6 +1,4 @@
 import { randomUUID } from "node:crypto";
-import { unlink } from "node:fs/promises";
-import { join } from "node:path";
 import { and, asc, eq, isNotNull, sql } from "drizzle-orm";
 import { revalidatePath as nextRevalidatePath } from "next/cache.js";
 
@@ -8,7 +6,8 @@ import {
   documents,
   entities,
 } from "../../db/schema.ts";
-import { extractFromUrl, extractPdfFromUrl, detectContentType, downloadDocumentImage } from "../content/extractor.ts";
+import { extractFromUrl, downloadDocumentImage } from "../content/extractor.ts";
+import { discardDocumentImage } from "../content/images.ts";
 import {
   buildDriveFolderImportPlan,
   parseDriveUrl,
@@ -237,7 +236,7 @@ async function ingestUrlDocumentWithContext(
     await complete(context, options, doc.id, "Document processed successfully!", false);
     return { success: true, documentId: doc.id, skipped: false, action: "ingested" };
   } catch (error) {
-    await discardImage(imagePath);
+    await discardDocumentImage(imagePath);
     await markFailed(context.database, doc.id, runId);
     await emit(options, "error", error instanceof Error ? error.message : String(error), 0, true, doc.id);
     throw error;
@@ -358,7 +357,7 @@ async function refreshDocumentWithContext(
         .where(ownedRun(documentId, runId))
         .returning({ id: documents.id });
       if (updated.length === 0) throw new Error("Document ingestion was superseded by another run");
-      if (imagePath && imagePath !== previousImagePath) await discardImage(previousImagePath);
+      if (imagePath && imagePath !== previousImagePath) await discardDocumentImage(previousImagePath);
       imagePath = undefined;
       await complete(context, options, documentId, "Document refresh skipped; derived data is unchanged.", true);
       return { success: true, documentId, skipped: true, action: "skipped" };
@@ -379,13 +378,13 @@ async function refreshDocumentWithContext(
       derived,
       replaceExisting: true,
     });
-    if (imagePath && imagePath !== previousImagePath) await discardImage(previousImagePath);
+    if (imagePath && imagePath !== previousImagePath) await discardDocumentImage(previousImagePath);
     imagePath = undefined;
     afterPersistDerivedDocumentData(context, documentId, persistence.droppedRelationshipCount);
     await complete(context, options, documentId, "Document updated successfully!", false);
     return { success: true, documentId, skipped: false, action: "refreshed" };
   } catch (error) {
-    await discardImage(imagePath);
+    await discardDocumentImage(imagePath);
     await markFailed(context.database, documentId, runId,
       processingStarted || existing.processingStatus === "processing" ? "failed" : existing.processingStatus);
     await emit(options, "error", error instanceof Error ? error.message : String(error), 0, true, documentId);
@@ -464,9 +463,9 @@ async function buildDerivedData(
   options: DocumentIngestionOptions
 ): Promise<DerivedDocumentData> {
   const [
-    { extractEntitiesWithDBConfig, generateSummaryWithDBConfig, generateTagsWithDBConfig },
+    { extractEntitiesWithDBConfig, generateSummaryWithDBConfig, generateTagsWithDBConfig, getEmbeddingConfigFromDB },
     { chunkStructured },
-    { generateGraphEmbeddings, generateRetrievalEmbeddings, getCurrentEmbeddingModel },
+    { generateGraphEmbeddings, generateRetrievalEmbeddings },
   ] = await Promise.all([
     import("../ai/index.ts"),
     import("../embedding/chunker.ts"),
@@ -476,7 +475,8 @@ async function buildDerivedData(
   metricsCollector.startIngestion(documentId);
 
   try {
-    const embeddingModel = await getCurrentEmbeddingModel();
+    const embeddingConfig = await getEmbeddingConfigFromDB();
+    const embeddingModel = embeddingConfig.model;
     const contentHash = generateContentHash(source.content);
 
     await emit(options, "chunking", "Splitting content into chunks...", 25, false, documentId);
@@ -523,7 +523,7 @@ async function buildDerivedData(
     );
 
     await emit(options, "embedding", `Generating embeddings for ${uniqueChunks.length} chunks...`, 65, false, documentId);
-    const chunkEmbeddingResult = await generateRetrievalEmbeddings(uniqueChunks.map((chunk) => chunk.content));
+    const chunkEmbeddingResult = await generateRetrievalEmbeddings(uniqueChunks.map((chunk) => chunk.content), embeddingConfig);
     await emit(options, "embedding", `Generated ${chunkEmbeddingResult.embeddings.length} chunk embeddings`, 75, false, documentId);
 
     const uniqueEntities = dedupeEntities(extractedData.entities);
@@ -531,7 +531,8 @@ async function buildDerivedData(
     const generatedEntityEmbeddings =
       newEntities.length > 0
         ? (await generateGraphEmbeddings(
-            newEntities.map((entity) => entity.name + (entity.description ? `: ${entity.description}` : ""))
+            newEntities.map((entity) => entity.name + (entity.description ? `: ${entity.description}` : "")),
+            embeddingConfig
           )).embeddings
         : [];
     const entityEmbeddingsByKey = new Map<EntityKey, number[]>();
@@ -646,24 +647,13 @@ async function getUrlSource(
     return resolveDriveFileSource(url, { runner: options.driveRunner });
   }
 
-  const contentType = detectContentType(url);
-  if (contentType === "pdf") {
-    const extracted = await extractPdfFromUrl(url);
-    return {
-      title: extracted.title,
-      content: extracted.content,
-      type: "pdf",
-      url,
-    };
-  }
-
   const extracted = await extractFromUrl(url);
   if (!extracted) throw new Error("Failed to extract content from URL");
 
   return {
     title: extracted.title,
     content: extracted.content,
-    type: contentType === "youtube" ? "youtube" : "article",
+    type: extracted.type,
     url,
     leadImageUrl: extracted.leadImageUrl,
   };
@@ -698,18 +688,6 @@ async function fetchLeadImage(source: SourceContent, runId: string): Promise<str
     imageContentType: image.contentType,
   };
   return image.publicPath;
-}
-
-async function discardImage(publicPath?: string) {
-  const filename = publicPath?.match(/^\/document-images\/([0-9a-f-]{36}\.png)$/i)?.[1];
-  if (!filename) return;
-  try {
-    await unlink(join(process.cwd(), "data", "document-images", filename));
-  } catch (error) {
-    if (!(error instanceof Error) || !("code" in error) || error.code !== "ENOENT") {
-      metricsCollector.log("[INGEST] Could not remove an unused document image");
-    }
-  }
 }
 
 function ownedRun(documentId: string, runId: string) {

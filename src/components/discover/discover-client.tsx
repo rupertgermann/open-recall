@@ -5,7 +5,7 @@ import Link from "next/link";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import {
-  ArrowRight,
+  Minus,
   ChevronDown,
   ChevronUp,
   FileText,
@@ -296,7 +296,7 @@ function HiddenConnectionCard({
 
           <div className="flex shrink-0 flex-col items-center px-1">
             <RelationLabel label={connection.relationABridge} />
-            <ArrowRight className="h-3 w-3 text-muted-foreground" />
+            <Minus className="h-3 w-3 text-muted-foreground" role="img" aria-label="Undirected relationship" />
           </div>
 
           <Tooltip>
@@ -329,7 +329,7 @@ function HiddenConnectionCard({
 
           <div className="flex shrink-0 flex-col items-center px-1">
             <RelationLabel label={connection.relationBridgeB} />
-            <ArrowRight className="h-3 w-3 text-muted-foreground" />
+            <Minus className="h-3 w-3 text-muted-foreground" role="img" aria-label="Undirected relationship" />
           </div>
 
           <EntityLink

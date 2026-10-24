@@ -33,14 +33,14 @@ function getLastUserText(messages: UIMessage[]): string | null {
   return null;
 }
 
-async function ensureThread(threadId?: string | null, category?: string, entityId?: string, documentId?: string): Promise<string> {
+async function ensureThread(threadId?: string | null, category?: string, entityId?: string, documentId?: string): Promise<string | null> {
   if (threadId) {
     const existing = await db
       .select({ id: chatThreads.id })
       .from(chatThreads)
       .where(eq(chatThreads.id, threadId))
       .limit(1);
-    if (existing.length > 0) return existing[0].id;
+    return existing[0]?.id ?? null;
   }
 
   const [created] = await db
@@ -101,6 +101,9 @@ async function handleChatPost(req: Request) {
   }
 
   const effectiveThreadId = await ensureThread(threadId, category, entityId, documentId);
+  if (!effectiveThreadId) {
+    return new Response("This chat was deleted or could not be found. Start a new chat to continue.", { status: 404 });
+  }
 
   // Load chat configuration from database
   const chatConfig = await getChatConfigFromDB();

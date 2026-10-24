@@ -124,43 +124,52 @@ export async function generateDocumentFlashcards(
     };
   }
 
-  const existingRows = await db
-    .select({ question: srsItems.question })
-    .from(srsItems)
-    .where(eq(srsItems.documentId, documentId));
-  const existingQuestions = new Set(
-    existingRows.map((row) => row.question.trim().toLocaleLowerCase())
-  );
-  const newCards = shaped.filter(
-    (card) => !existingQuestions.has(card.question.trim().toLocaleLowerCase())
-  );
+  const created = await db.transaction(async (tx) => {
+    const [currentDocument] = await tx.select({ id: documents.id }).from(documents)
+      .where(eq(documents.id, documentId)).limit(1).for("update");
+    if (!currentDocument) return null;
 
-  if (newCards.length > 0) {
-    const now = new Date();
-    await db.insert(srsItems).values(
-      newCards.map((card) => ({
-        documentId,
-        question: card.question,
-        answer: card.answer,
-        stability: 0,
-        difficulty: 0,
-        elapsedDays: 0,
-        scheduledDays: 0,
-        reps: 0,
-        lapses: 0,
-        state: SRS_STATES.new,
-        dueDate: now,
-      }))
+    const existingRows = await tx.select({ question: srsItems.question }).from(srsItems)
+      .where(eq(srsItems.documentId, documentId));
+    const existingQuestions = new Set(
+      existingRows.map((row) => row.question.trim().toLocaleLowerCase())
     );
+    const newCards = shaped.filter(
+      (card) => !existingQuestions.has(card.question.trim().toLocaleLowerCase())
+    );
+
+    if (newCards.length > 0) {
+      const now = new Date();
+      await tx.insert(srsItems).values(
+        newCards.map((card) => ({
+          documentId,
+          question: card.question,
+          answer: card.answer,
+          stability: 0,
+          difficulty: 0,
+          elapsedDays: 0,
+          scheduledDays: 0,
+          reps: 0,
+          lapses: 0,
+          state: SRS_STATES.new,
+          dueDate: now,
+        }))
+      );
+    }
+    return newCards.length;
+  });
+
+  if (created === null) {
+    return { success: false, created: 0, cards: [], error: "Document not found" };
   }
 
   revalidateSrsPaths(documentId);
 
   return {
     success: true,
-    created: newCards.length,
+    created,
     cards: await getDocumentFlashcards(documentId),
-    error: newCards.length === 0 ? "Generated cards already exist for this document" : undefined,
+    error: created === 0 ? "Generated cards already exist for this document" : undefined,
   };
 }
 
