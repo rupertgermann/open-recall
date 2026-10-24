@@ -23,9 +23,9 @@ for (const useTool of [true, false]) {
     const { db, close } = await createTestDatabase();
     t.after(close);
     useDatabase(db);
-    const { saveAISettings } = await import("../src/actions/settings.ts");
+    const { saveAISettings, getAISettings } = await import("../src/actions/settings.ts");
     const config = { provider: "local", baseUrl: "http://provider.invalid/v1", model: "test" } as const;
-    await saveAISettings({ chat: config, embedding: config });
+    await saveAISettings({ chat: config, embedding: config }, await getAISettings());
     const [document] = await db.insert(documents).values({ title: "Postgres notes", type: "note" }).returning();
     await db.insert(chunks).values({ documentId: document.id, content: "Postgres stores knowledge.", chunkIndex: 0, embedding: [1, 0, 0] });
     const [entity] = await db.insert(entities).values({ name: "Postgres", type: "technology", embedding: [1, 0, 0] }).returning();
@@ -83,9 +83,9 @@ for (const scenario of [
     const { db, close } = await createTestDatabase();
     t.after(close);
     useDatabase(db);
-    const { saveAISettings } = await import("../src/actions/settings.ts");
+    const { saveAISettings, getAISettings } = await import("../src/actions/settings.ts");
     const config = { provider: "local", baseUrl: "http://provider.invalid/v1", model: "test" } as const;
-    await saveAISettings({ chat: config, embedding: config });
+    await saveAISettings({ chat: config, embedding: config }, await getAISettings());
     const [target, ...others] = await db.insert(documents).values([
       { title: "Target report", type: "note" },
       ...Array.from({ length: scenario.betterMatches }, (_, index) => ({ title: `Other ${index}`, type: "note" })),

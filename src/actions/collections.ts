@@ -374,78 +374,78 @@ export async function applyAutoOrganizeSuggestions(
     newCollections: { name: string; description: string }[];
   }[]
 ): Promise<AutoOrganizeResult[]> {
-  const results: AutoOrganizeResult[] = [];
+  const results = await db.transaction(async (tx) => {
+    const results: AutoOrganizeResult[] = [];
 
-  for (const suggestion of suggestions) {
-    const [doc] = await db
-      .select({ id: documents.id, title: documents.title })
-      .from(documents)
-      .where(eq(documents.id, suggestion.documentId))
-      .limit(1);
-
-    if (!doc) continue;
-
-    const assignedNames: string[] = [];
-
-    // Add to existing collections
-    for (const collectionId of suggestion.existingCollectionIds) {
-      await db
-        .insert(documentCollections)
-        .values({ documentId: doc.id, collectionId })
-        .onConflictDoNothing();
-
-      const [col] = await db
-        .select({ name: collections.name })
-        .from(collections)
-        .where(eq(collections.id, collectionId))
+    for (const suggestion of suggestions) {
+      const [doc] = await tx
+        .select({ id: documents.id, title: documents.title })
+        .from(documents)
+        .where(eq(documents.id, suggestion.documentId))
         .limit(1);
-      if (col) assignedNames.push(col.name);
-    }
 
-    // Create new collections and add document
-    for (const newCol of suggestion.newCollections) {
-      const [created] = await db
-        .insert(collections)
-        .values({
-          name: newCol.name,
-          description: newCol.description || null,
-          color: "#6366f1",
-        })
-        .onConflictDoNothing()
-        .returning();
+      if (!doc) continue;
 
-      if (created) {
-        await db
+      const assignedNames: string[] = [];
+
+      for (const collectionId of suggestion.existingCollectionIds) {
+        await tx
           .insert(documentCollections)
-          .values({ documentId: doc.id, collectionId: created.id })
+          .values({ documentId: doc.id, collectionId })
           .onConflictDoNothing();
-        assignedNames.push(created.name);
-      } else {
-        // Collection already exists, find it and add
-        const [existing] = await db
-          .select({ id: collections.id, name: collections.name })
+
+        const [col] = await tx
+          .select({ name: collections.name })
           .from(collections)
-          .where(eq(collections.name, newCol.name))
+          .where(eq(collections.id, collectionId))
           .limit(1);
-        if (existing) {
-          await db
+        if (col) assignedNames.push(col.name);
+      }
+
+      for (const newCol of suggestion.newCollections) {
+        const [created] = await tx
+          .insert(collections)
+          .values({
+            name: newCol.name,
+            description: newCol.description || null,
+            color: "#6366f1",
+          })
+          .onConflictDoNothing()
+          .returning();
+
+        if (created) {
+          await tx
             .insert(documentCollections)
-            .values({ documentId: doc.id, collectionId: existing.id })
+            .values({ documentId: doc.id, collectionId: created.id })
             .onConflictDoNothing();
-          assignedNames.push(existing.name);
+          assignedNames.push(created.name);
+        } else {
+          const [existing] = await tx
+            .select({ id: collections.id, name: collections.name })
+            .from(collections)
+            .where(eq(collections.name, newCol.name))
+            .limit(1);
+          if (existing) {
+            await tx
+              .insert(documentCollections)
+              .values({ documentId: doc.id, collectionId: existing.id })
+              .onConflictDoNothing();
+            assignedNames.push(existing.name);
+          }
         }
+      }
+
+      if (assignedNames.length > 0) {
+        results.push({
+          documentId: doc.id,
+          documentTitle: doc.title,
+          assignedCollections: assignedNames,
+        });
       }
     }
 
-    if (assignedNames.length > 0) {
-      results.push({
-        documentId: doc.id,
-        documentTitle: doc.title,
-        assignedCollections: assignedNames,
-      });
-    }
-  }
-
+    return results;
+  });
   revalidatePath("/library");
   return results;
 }

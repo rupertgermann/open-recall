@@ -11,9 +11,9 @@ test("ingestion routes tolerate cancelled responses and preserve connected error
   const { db, close } = await createTestDatabase();
   t.after(close);
   useDatabase(db);
-  const { saveAISettings } = await import("../src/actions/settings.ts");
+  const { saveAISettings, getAISettings } = await import("../src/actions/settings.ts");
   const config = { provider: "local" as const, baseUrl: "http://provider.invalid/v1", model: "test" };
-  await saveAISettings({ chat: config, embedding: config });
+  await saveAISettings({ chat: config, embedding: config }, await getAISettings());
   const ingest = await import("../src/app/api/ingest/route.ts");
   const update = await import("../src/app/api/update-document/route.ts");
 

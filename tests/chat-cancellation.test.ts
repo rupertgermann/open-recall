@@ -11,9 +11,9 @@ for (const cancellation of ["before text", "after partial text", "generation fai
     const { db, close } = await createTestDatabase();
     t.after(close);
     useDatabase(db);
-    const { saveAISettings } = await import("../src/actions/settings.ts");
+    const { saveAISettings, getAISettings } = await import("../src/actions/settings.ts");
     const config = { provider: "local", baseUrl: "http://provider.invalid/v1", model: "test" } as const;
-    await saveAISettings({ chat: config, embedding: config });
+    await saveAISettings({ chat: config, embedding: config }, await getAISettings());
     const [document] = await db.insert(documents).values({ title: "Knowledge", type: "note" }).returning();
     await db.insert(chunks).values({ documentId: document.id, content: "Knowledge context", chunkIndex: 0, embedding: [1, 0, 0] });
     const [entity] = await db.insert(entities).values({ name: "Knowledge", type: "concept", embedding: [1, 0, 0] }).returning();
@@ -81,9 +81,9 @@ test("a later tool-step generation failure cannot persist a partial answer as co
   const { db, close } = await createTestDatabase();
   t.after(close);
   useDatabase(db);
-  const { saveAISettings } = await import("../src/actions/settings.ts");
+  const { saveAISettings, getAISettings } = await import("../src/actions/settings.ts");
   const config = { provider: "local", baseUrl: "http://provider.invalid/v1", model: "test" } as const;
-  await saveAISettings({ chat: config, embedding: config });
+  await saveAISettings({ chat: config, embedding: config }, await getAISettings());
   const [thread] = await db.insert(chatThreads).values({ title: "Tool failure" }).returning();
   let requests = 0;
   t.mock.method(globalThis, "fetch", async (url: Parameters<typeof fetch>[0], init: RequestInit) => {

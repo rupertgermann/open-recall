@@ -41,8 +41,8 @@ export function ReviewClient({ initialCards }: { initialCards: DueSrsCard[] }) {
     startTransition(async () => {
       try {
         const result = await reviewSrsItem(current.id, rating);
-        if (!result.success) {
-          setError(result.error ?? "Failed to review flashcard");
+        if (!result.success && result.reason !== "not_found") {
+          setError(result.error);
           return;
         }
 

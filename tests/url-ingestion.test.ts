@@ -10,9 +10,9 @@ test("URL ingestion detects PDF responses and URL suffixes while preserving HTML
   const { db, close } = await createTestDatabase();
   t.after(close);
   useDatabase(db);
-  const { saveAISettings } = await import("../src/actions/settings.ts");
+  const { saveAISettings, getAISettings } = await import("../src/actions/settings.ts");
   const config = { provider: "local" as const, baseUrl: "http://provider.invalid/v1", model: "test" };
-  await saveAISettings({ chat: config, embedding: config });
+  await saveAISettings({ chat: config, embedding: config }, await getAISettings());
   const pdf = buildSimplePdf("The actual PDF paragraph.");
   const cases = [
     { url: "https://source.invalid/download?id=123", mime: "application/pdf", type: "pdf" },

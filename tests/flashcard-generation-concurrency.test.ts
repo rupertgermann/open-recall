@@ -7,7 +7,7 @@ import { useDatabase } from "./helpers/server.ts";
 import { completion } from "./helpers/provider.ts";
 
 const { generateDocumentFlashcards } = await import("../src/actions/srs.ts");
-const { saveAISettings } = await import("../src/actions/settings.ts");
+const { saveAISettings, getAISettings } = await import("../src/actions/settings.ts");
 
 test("overlapping flashcard generation inserts each normalized question once", async (t) => {
   const database = await createTestDatabase();
@@ -16,7 +16,7 @@ test("overlapping flashcard generation inserts each normalized question once", a
   const db = drizzle(database.pglite, { schema, logger: { logQuery: (query) => queries.push(query) } });
   useDatabase(db);
   const config = { provider: "local" as const, baseUrl: "http://provider.invalid/v1", model: "test" };
-  await saveAISettings({ chat: config, embedding: config });
+  await saveAISettings({ chat: config, embedding: config }, await getAISettings());
   const [doc] = await db.insert(schema.documents).values({ title: "Flashcards", content: "An answer is 42.", type: "note" }).returning();
   const [reviewed] = await db.insert(schema.srsItems).values({ documentId: doc.id, question: "Reviewed?", answer: "Keep", reps: 12, stability: 30 }).returning();
   const bothStarted = Promise.withResolvers<void>();
@@ -45,7 +45,7 @@ test("a Document deleted during generation reports not found without inserting c
   t.after(close);
   useDatabase(db);
   const config = { provider: "local" as const, baseUrl: "http://provider.invalid/v1", model: "test" };
-  await saveAISettings({ chat: config, embedding: config });
+  await saveAISettings({ chat: config, embedding: config }, await getAISettings());
   const [doc] = await db.insert(schema.documents).values({ title: "Gone", content: "Content", type: "note" }).returning();
   const started = Promise.withResolvers<void>();
   const release = Promise.withResolvers<void>();

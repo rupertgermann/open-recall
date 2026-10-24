@@ -1,50 +1,56 @@
 "use client";
 
-import { useMemo, useState, useTransition } from "react";
+import { useState, useTransition } from "react";
 import { X } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { generateDocumentTags, updateDocumentTags } from "@/actions/documents";
+import { changeDocumentTag, generateDocumentTags } from "@/actions/documents";
 
 export function TagsEditor({ documentId, initialTags }: { documentId: string; initialTags: string[] }) {
   const [tags, setTags] = useState<string[]>(initialTags);
   const [input, setInput] = useState("");
   const [isPending, startTransition] = useTransition();
+  const [error, setError] = useState<string | null>(null);
 
-  const normalized = useMemo(() => tags.map((t) => t.trim().toLowerCase()).filter(Boolean), [tags]);
-
-  const persist = (next: string[]) => {
+  const persist = (operation: "add" | "remove", name: string) => {
+    setError(null);
     startTransition(async () => {
-      const res = await updateDocumentTags(documentId, next);
-      setTags(res.tags);
+      try {
+        const res = await changeDocumentTag({ documentId, name, operation });
+        setTags(res.tags);
+        if (operation === "add") setInput("");
+      } catch {
+        setError("Failed to save tag. Try again.");
+      }
     });
   };
 
   const add = () => {
     const v = input.trim().toLowerCase();
     if (!v) return;
-    if (normalized.includes(v)) {
-      setInput("");
-      return;
-    }
-    setInput("");
-    persist([...tags, v]);
+    persist("add", v);
   };
 
   const remove = (name: string) => {
-    persist(tags.filter((t) => t !== name));
+    persist("remove", name);
   };
 
   const generate = () => {
+    setError(null);
     startTransition(async () => {
-      const res = await generateDocumentTags(documentId);
-      if (res.tags) setTags(res.tags);
+      try {
+        const res = await generateDocumentTags(documentId);
+        setTags(res.tags);
+      } catch {
+        setError("Failed to generate tags. Try again.");
+      }
     });
   };
 
   return (
     <div className="space-y-2">
+      {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
       <div className="flex gap-2">
         <Input
           value={input}

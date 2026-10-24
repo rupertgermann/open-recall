@@ -76,9 +76,9 @@ test("failed review writes preserve state and allow a normal retry", async (t) =
     assert.deepEqual(await getDocumentFlashcards(document.id), [result.item]);
   }
   assert.deepEqual(await reviewSrsItem("00000000-0000-0000-0000-000000000000", "good"), {
-    success: false, error: "Flashcard not found",
+    success: false, reason: "not_found", error: "Flashcard not found",
   });
   assert.deepEqual(await Reflect.apply(reviewSrsItem, undefined, [item.id, "invalid"]), {
-    success: false, error: "Invalid review rating",
+    success: false, reason: "invalid_rating", error: "Invalid review rating",
   });
 });

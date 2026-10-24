@@ -208,9 +208,12 @@ export async function listDueSrsItems(limit = 20): Promise<DueSrsCard[]> {
 export async function reviewSrsItem(
   itemId: string,
   rating: SrsRating
-): Promise<{ success: boolean; item?: SrsCardListItem; error?: string }> {
+): Promise<
+  | { success: true; item: SrsCardListItem }
+  | { success: false; reason: "not_found" | "invalid_rating"; error: string }
+> {
   if (!isSrsRating(rating)) {
-    return { success: false, error: "Invalid review rating" };
+    return { success: false, reason: "invalid_rating", error: "Invalid review rating" };
   }
 
   const item = await db.transaction(async (tx) => {
@@ -233,7 +236,7 @@ export async function reviewSrsItem(
   });
 
   if (!item) {
-    return { success: false, error: "Flashcard not found" };
+    return { success: false, reason: "not_found", error: "Flashcard not found" };
   }
 
   revalidateSrsPaths(item.documentId);

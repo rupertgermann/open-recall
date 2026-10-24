@@ -13,9 +13,9 @@ for (const stage of ["tags", "entities"]) {
     const { db, close } = await createTestDatabase();
     t.after(close);
     useDatabase(db);
-    const { saveAISettings } = await import("../src/actions/settings.ts");
+    const { saveAISettings, getAISettings } = await import("../src/actions/settings.ts");
     const config = { provider: "local" as const, baseUrl: "http://provider.invalid/v1", model: "test" };
-    await saveAISettings({ chat: config, embedding: config });
+    await saveAISettings({ chat: config, embedding: config }, await getAISettings());
     const [doc] = await db.insert(documents).values({ title: "Postgres", type: "note" }).returning();
     await persistDerivedDocumentData(db, {
       documentId: doc.id, replaceExisting: false,

@@ -48,11 +48,11 @@ test("entity web research requires the provider search tool and limits output", 
   const { db, close } = await createTestDatabase();
   t.after(close);
   useDatabase(db);
-  const { saveAISettings } = await import("../src/actions/settings.ts");
+  const { saveAISettings, getAISettings } = await import("../src/actions/settings.ts");
   await saveAISettings({
     chat: { ...localConfig, provider: "openai", apiKey: "audit-key" },
     embedding: localConfig,
-  });
+  }, await getAISettings());
   let request: Record<string, unknown> | undefined;
   t.mock.method(globalThis, "fetch", async (_url: Parameters<typeof fetch>[0], init: RequestInit) => {
     request = JSON.parse(String(init.body));
@@ -77,11 +77,11 @@ for (const scenario of [
     const { db, close } = await createTestDatabase();
     t.after(close);
     useDatabase(db);
-    const { saveAISettings } = await import("../src/actions/settings.ts");
+    const { saveAISettings, getAISettings } = await import("../src/actions/settings.ts");
     await saveAISettings({
       chat: { ...localConfig, ...scenario, reasoningEffort: "high", verbosity: "low", apiKey: "saved-key" },
       embedding: localConfig,
-    });
+    }, await getAISettings());
     const { chatThreads } = await import("../src/db/schema.ts");
     const [thread] = await db.insert(chatThreads).values({ title: "Options discussion" }).returning();
     const { embeddings } = await import("./helpers/provider.ts");

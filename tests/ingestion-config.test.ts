@@ -10,10 +10,10 @@ test("ingestion keeps its embedding config through Settings changes, cache reuse
   const { db, close } = await createTestDatabase();
   t.after(close);
   useDatabase(db);
-  const { saveAISettings } = await import("../src/actions/settings.ts");
+  const { saveAISettings, getAISettings } = await import("../src/actions/settings.ts");
   const oldConfig = { provider: "local" as const, baseUrl: "http://old.invalid/v1", model: "old", apiKey: "old-key" };
   const newConfig = { provider: "local" as const, baseUrl: "http://new.invalid/v1", model: "new", apiKey: "new-key" };
-  await saveAISettings({ chat: oldConfig, embedding: oldConfig });
+  await saveAISettings({ chat: oldConfig, embedding: oldConfig }, await getAISettings());
   const requests: { url: string; model: string; authorization: string | null }[] = [];
   t.mock.method(globalThis, "fetch", async (url: Parameters<typeof fetch>[0], init?: RequestInit) => {
     if (String(url) === "https://source.invalid/article") {
@@ -35,7 +35,7 @@ test("ingestion keeps its embedding config through Settings changes, cache reuse
   await service.ingestUrlDocument("https://source.invalid/article", {
     onEvent: async (event) => {
       if (event.step === "summarizing" && event.progress === 35) {
-        await saveAISettings({ chat: oldConfig, embedding: newConfig });
+        await saveAISettings({ chat: oldConfig, embedding: newConfig }, await getAISettings());
       }
     },
   });
@@ -46,7 +46,7 @@ test("ingestion keeps its embedding config through Settings changes, cache reuse
   assert.deepEqual((await db.select().from(entities))[0].embedding, [1, 0, 0]);
   assert.deepEqual((await db.select().from(embeddingCache)).map(row => row.model), ["old", "old"]);
 
-  await saveAISettings({ chat: oldConfig, embedding: oldConfig });
+  await saveAISettings({ chat: oldConfig, embedding: oldConfig }, await getAISettings());
   assert.equal((await service.refreshDocument(document.id)).skipped, true);
   const { retrieveContext } = await import("../src/actions/chat.ts");
   await retrieveContext("Postgres");
@@ -54,8 +54,13 @@ test("ingestion keeps its embedding config through Settings changes, cache reuse
   await service.ingestUrlDocument("https://source.invalid/article");
   assert.equal(requests.length, requestCount, "the captured model reuses its cached Chunk embedding");
 
-  await saveAISettings({ chat: oldConfig, embedding: newConfig });
+  await saveAISettings({ chat: oldConfig, embedding: newConfig }, await getAISettings());
   assert.equal((await service.refreshDocument(document.id)).skipped, false);
   assert.equal((await db.select().from(documents)).find(row => row.id === document.id)?.embeddingModel, "new");
   assert.deepEqual((await db.select().from(chunks)).find(row => row.documentId === document.id)?.embedding, [0, 1]);
+  assert.deepEqual((await db.select().from(entities))[0].embedding, [0, 1]);
+  for (const other of await db.select().from(documents)) {
+    await service.refreshDocument(other.id);
+  }
+  assert.ok((await retrieveContext("Postgres")).entities.length > 0);
 });

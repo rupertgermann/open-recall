@@ -247,9 +247,10 @@ function GraphPageContent() {
     }
   }, [focusDocumentId, isLoading, graphData.nodes.length]);
   useEffect(() => {
+    let cancelled = false;
+    setSelectedDetails(null);
     async function fetchDetails() {
       if (!selectedNode) {
-        setSelectedDetails(null);
         setWebSearchResults([]);
         setWebSearchAdditionalPrompt("");
         setFilterByEntity(false);
@@ -257,12 +258,13 @@ function GraphPageContent() {
       }
       try {
         const details = await getEntityDetails(selectedNode.id);
-        setSelectedDetails(details);
+        if (!cancelled) setSelectedDetails(details);
       } catch (error) {
-        console.error("Failed to fetch entity details:", error);
+        if (!cancelled) console.error("Failed to fetch entity details:", error);
       }
     }
     fetchDetails();
+    return () => { cancelled = true; };
   }, [selectedNode]);
 
   useEffect(() => {
@@ -1016,7 +1018,7 @@ function GraphPageContent() {
               )}
             </CardHeader>
             <CardContent className="flex-1 overflow-y-auto">
-              {selectedNode && selectedDetails ? (
+              {selectedNode && selectedDetails?.id === selectedNode.id ? (
                 <div className="space-y-4">
                   {/* Related Chats - moved to top */}
                   <RelatedChats entityId={selectedNode.id} />

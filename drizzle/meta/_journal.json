@@ -8,6 +8,13 @@
       "when": 1783151442351,
       "tag": "0000_nappy_major_mapleleaf",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1792847992050,
+      "tag": "0003_entity_embedding_model",
+      "breakpoints": true
     }
   ]
 }

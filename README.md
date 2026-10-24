@@ -258,7 +258,7 @@ can read existing images from `public/document-images` without moving them.
 | **Documents** | Source metadata, original content, content hash, summary, processing status, embedding model/version, and flexible metadata such as lead-image paths |
 | **Chunks** | Structure-aware retrieval chunks with content hashes, token counts, embeddings, cache references, embedding status, and purpose |
 | **Embedding Cache** | Deduplicated embeddings keyed by content hash, model, and purpose (`retrieval` or `graph`) |
-| **Entities** | Knowledge graph nodes with type, description, and optional graph embeddings |
+| **Entities** | Knowledge graph nodes with type, description, optional graph embeddings, and the model that generated each embedding |
 | **Entity Mentions** | Traceability from entities to documents and chunks, including fallback mention confidence |
 | **Relationships** | Typed graph edges with optional descriptions, weights, and source-document provenance |
 | **Tags** | Reusable document tags with many-to-many document linking |
@@ -358,10 +358,15 @@ dimensions, and `text-embedding-3-large` at 3072 dimensions. PostgreSQL can
 store these vectors in generic `vector` columns, but pgvector distance
 operations still require matching dimensions when comparing vectors.
 
-The app tracks document-level `embedding_model` and `embedding_version`, and the
-embedding cache is keyed by content hash, model, and purpose. When a
+The app tracks document-level `embedding_model` and `embedding_version` and
+Entity `embedding_model`. The embedding cache is keyed by content hash, model,
+and purpose. When a
 source-backed document is refreshed and the configured embedding model or chunking
 version differs, the ingestion pipeline rebuilds derived data for that document.
+Refresh also repairs mentioned Entities with missing embeddings or unknown or
+different models, using their stored descriptions and the embedding cache.
+Entities removed from the refreshed Document are deleted only when no other
+Document mentions them. Existing chat messages are retained.
 Chunks and their cached embeddings distinguish case and meaningful whitespace.
 Existing data with mixed dimensions can still make retrieval fail until affected documents are
 re-ingested with one embedding model.

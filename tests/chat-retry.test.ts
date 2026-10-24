@@ -33,9 +33,9 @@ test("thread URL changes isolate an active stream and hydrate an empty thread", 
   useDatabase(db);
   const [a, b] = await db.insert(chatThreads).values([{ id: currentThreadId, title: "Thread A" }, { title: "Empty thread B" }]).returning();
   await db.insert(chatMessages).values({ threadId: a.id, role: "assistant", content: "HISTORY_A" });
-  const { saveAISettings } = await import("../src/actions/settings.ts");
+  const { saveAISettings, getAISettings } = await import("../src/actions/settings.ts");
   const config = { provider: "local", baseUrl: "http://provider.invalid/v1", model: "test" } as const;
-  await saveAISettings({ chat: config, embedding: config });
+  await saveAISettings({ chat: config, embedding: config }, await getAISettings());
   const { GET } = await import("../src/app/api/chats/[id]/route.ts");
   const { POST } = await import("../src/app/api/chat/route.ts");
   const answer = Promise.withResolvers<void>();
@@ -135,9 +135,9 @@ for (const newChat of [false, true]) {
       { threadId: a.id, role: "assistant", content: "HISTORY_A" },
       { threadId: b.id, role: "assistant", content: "HISTORY_B" },
     ]);
-    const { saveAISettings } = await import("../src/actions/settings.ts");
+    const { saveAISettings, getAISettings } = await import("../src/actions/settings.ts");
     const config = { provider: "local", baseUrl: "http://provider.invalid/v1", model: "test" } as const;
-    await saveAISettings({ chat: config, embedding: config });
+    await saveAISettings({ chat: config, embedding: config }, await getAISettings());
     const { GET } = await import("../src/app/api/chats/[id]/route.ts");
     const { POST } = await import("../src/app/api/chat/route.ts");
     const creation = Promise.withResolvers<void>();
@@ -223,9 +223,9 @@ test("pending and obsolete histories cannot replace an active turn", async (t) =
     { threadId: a.id, role: "assistant", content: "HISTORY_A" },
     { threadId: b.id, role: "assistant", content: "HISTORY_B" },
   ]);
-  const { saveAISettings } = await import("../src/actions/settings.ts");
+  const { saveAISettings, getAISettings } = await import("../src/actions/settings.ts");
   const config = { provider: "local", baseUrl: "http://provider.invalid/v1", model: "test" } as const;
-  await saveAISettings({ chat: config, embedding: config });
+  await saveAISettings({ chat: config, embedding: config }, await getAISettings());
   const { GET } = await import("../src/app/api/chats/[id]/route.ts");
   const { POST } = await import("../src/app/api/chat/route.ts");
   const historyA = Promise.withResolvers<void>();
@@ -279,9 +279,9 @@ for (const page of [ThreadPage, ChatPage]) {
       useDatabase(db);
       const [thread] = await db.insert(chatThreads).values({ id: currentThreadId, title: "Retry discussion", category: failure === "starter" ? "document" : "general" }).returning();
       if (failure === "starter") await db.insert(chatMessages).values({ threadId: thread.id, role: "assistant", content: "Welcome" });
-      const { saveAISettings } = await import("../src/actions/settings.ts");
+      const { saveAISettings, getAISettings } = await import("../src/actions/settings.ts");
       const config = { provider: "local", baseUrl: "http://provider.invalid/v1", model: "test" } as const;
-      await saveAISettings({ chat: config, embedding: config });
+      await saveAISettings({ chat: config, embedding: config }, await getAISettings());
       const { GET } = await import("../src/app/api/chats/[id]/route.ts");
       const { POST } = await import("../src/app/api/chat/route.ts");
       let chatRequests = 0;

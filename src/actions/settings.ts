@@ -1,5 +1,6 @@
 "use server";
 
+import { isDeepStrictEqual } from "node:util";
 import { db } from "@/db";
 import { settings, documents, entities, relationships } from "@/db/schema";
 import { eq, count } from "drizzle-orm";
@@ -92,30 +93,32 @@ export async function getAISettings(): Promise<AISettings> {
 /**
  * Save AI settings
  */
-export async function saveAISettings(config: AISettings): Promise<void> {
-  const existing = await db
-    .select()
-    .from(settings)
-    .where(eq(settings.key, "ai_config"))
-    .limit(1);
+export async function saveAISettings(config: AISettings, expected: AISettings): Promise<"saved" | "conflict"> {
+  if (!expected) throw new Error("The loaded settings are required to save changes");
 
-  if (existing.length > 0) {
-    await db
-      .update(settings)
+  const result = await db.transaction(async (tx) => {
+    // Establish the row before locking so simultaneous first saves use the same baseline.
+    await tx.insert(settings).values({ key: "ai_config", value: DEFAULT_SETTINGS })
+      .onConflictDoNothing({ target: settings.key });
+    const [current] = await tx.select().from(settings)
+      .where(eq(settings.key, "ai_config")).for("update");
+    if (!isDeepStrictEqual(
+      JSON.parse(JSON.stringify(migrateSettings(current.value))),
+      JSON.parse(JSON.stringify(migrateSettings(expected)))
+    )) return "conflict" as const;
+
+    await tx.update(settings)
       .set({ value: config, updatedAt: new Date() })
       .where(eq(settings.key, "ai_config"));
-  } else {
-    await db.insert(settings).values({
-      key: "ai_config",
-      value: config,
-    });
+    return "saved" as const;
+  });
+
+  if (result === "saved") {
+    const { clearSettingsCache } = await import("@/lib/ai/config");
+    clearSettingsCache();
+    revalidatePath("/settings");
   }
-
-  // Clear the settings cache so new settings take effect immediately
-  const { clearSettingsCache } = await import("@/lib/ai/config");
-  clearSettingsCache();
-
-  revalidatePath("/settings");
+  return result;
 }
 
 /**

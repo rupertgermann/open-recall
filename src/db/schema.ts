@@ -162,6 +162,7 @@ export const entities = pgTable(
     type: text("type").notNull(), // 'person', 'concept', 'technology', 'organization', 'location', etc.
     description: text("description"),
     embedding: vector("embedding"),
+    embeddingModel: text("embedding_model"),
     createdAt: timestamp("created_at").defaultNow().notNull(),
     updatedAt: timestamp("updated_at").defaultNow().notNull(),
   },

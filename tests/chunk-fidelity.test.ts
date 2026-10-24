@@ -12,9 +12,9 @@ test("default ingestion retains code, case-distinct Chunks and oversized heading
   const { db, close } = await createTestDatabase();
   t.after(close);
   useDatabase(db);
-  const { saveAISettings } = await import("../src/actions/settings.ts");
+  const { saveAISettings, getAISettings } = await import("../src/actions/settings.ts");
   const config = { provider: "local", baseUrl: "http://provider.invalid/v1", model: "test" } satisfies Parameters<typeof saveAISettings>[0]["embedding"];
-  await saveAISettings({ chat: config, embedding: config });
+  await saveAISettings({ chat: config, embedding: config }, await getAISettings());
   t.mock.method(globalThis, "fetch", async (url: Parameters<typeof fetch>[0], init: RequestInit) => {
     const body = JSON.parse(String(init.body));
     return String(url).endsWith("/embeddings") ? embeddings(body) : ingestionCompletion(body);
