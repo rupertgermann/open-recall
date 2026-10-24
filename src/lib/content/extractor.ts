@@ -140,7 +140,7 @@ export async function downloadDocumentImage(
  */
 export async function extractFromUrl(
   url: string
-): Promise<ExtractedContent | null> {
+): Promise<(ExtractedContent & { type: "article" | "youtube" | "pdf" }) | null> {
   const response = await fetch(url, {
     headers: {
       "User-Agent":
@@ -152,27 +152,21 @@ export async function extractFromUrl(
     throw new Error(`Failed to fetch URL: ${response.status}`);
   }
 
-  const html = await response.text();
-  return extractFromHtml(html, url);
-}
-
-export async function extractPdfFromUrl(url: string): Promise<ExtractedContent> {
-  const response = await fetch(url, {
-    headers: {
-      "User-Agent":
-        "Mozilla/5.0 (compatible; open-recall/1.0; +https://github.com/open-recall)",
-    },
-  });
-
-  if (!response.ok) {
-    throw new Error(`Failed to fetch PDF: ${response.status}`);
+  const responseUrl = response.url || url;
+  const contentType = detectContentType(url);
+  const mimeType = response.headers.get("content-type")?.split(";")[0].trim().toLowerCase();
+  if (contentType !== "youtube" && (
+    mimeType === "application/pdf" || contentType === "pdf" || detectContentType(responseUrl) === "pdf"
+  )) {
+    return {
+      title: titleFromUrl(responseUrl),
+      content: await extractPdfText(Buffer.from(await response.arrayBuffer())),
+      type: "pdf",
+    };
   }
 
-  const content = await extractPdfText(Buffer.from(await response.arrayBuffer()));
-  return {
-    title: titleFromUrl(url),
-    content,
-  };
+  const extracted = await extractFromHtml(await response.text(), responseUrl);
+  return extracted ? { ...extracted, type: contentType === "youtube" ? "youtube" : "article" } : null;
 }
 
 export async function extractPdfText(data: Buffer | Uint8Array): Promise<string> {
@@ -242,7 +236,7 @@ export function detectContentType(
   }
 
   // PDF
-  if (urlObj.pathname.endsWith(".pdf")) {
+  if (urlObj.pathname.toLowerCase().endsWith(".pdf")) {
     return "pdf";
   }
 

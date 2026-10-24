@@ -82,21 +82,30 @@ export default function ChatPage() {
   const [newProjectName, setNewProjectName] = useState("");
   const [projectToDelete, setProjectToDelete] = useState<string | null>(null);
 
-  const [loadedMessages, setLoadedMessages] = useState<
-    Array<{ id: string; role: "user" | "assistant"; content: string }>
-  >([]);
   const [loadingThread, setLoadingThread] = useState(false);
+  const readyThreadId = useRef<string | null>();
+  const newThreadId = useRef<string | null>(null);
+  const requestPending = useRef(false);
+  const [pendingRequest, setPendingRequest] = useState(false);
 
   const [input, setInput] = useState("");
   const [chatRequestError, setChatRequestError] = useState<string | null>(null);
 
-  const { messages, status, sendMessage, setMessages, error: chatError } = useChat<ChatUIMessage>({
+  const { messages, status, sendMessage, setMessages, clearError, error: chatError } = useChat<ChatUIMessage>({
     transport: chatTransport,
     onFinish: ({ isError, isAbort, isDisconnect }) => {
       if (!isError && !isAbort && !isDisconnect) setInput("");
     },
   });
-  const isSending = status === "submitted" || status === "streaming";
+  const isSending = pendingRequest || status === "submitted" || status === "streaming";
+
+  const selectThread = (threadId: string | null) => {
+    if (requestPending.current || threadId === selectedThreadId) return;
+    readyThreadId.current = undefined;
+    setSelectedThreadId(threadId);
+    setChatRequestError(null);
+    clearError();
+  };
 
   const chatErrorMessage = chatRequestError ?? (chatError ? getAIErrorMessage(chatError) : null);
 
@@ -143,7 +152,8 @@ export default function ChatPage() {
   };
 
   const selectSuggestion = (thread: typeof threads[0]) => {
-    setSelectedThreadId(thread.id);
+    if (requestPending.current) return;
+    selectThread(thread.id);
     setSearchQuery("");
     setShowSuggestions(false);
     setSearchSuggestions([]);
@@ -168,7 +178,9 @@ export default function ChatPage() {
         const data = (await res.json()) as { threads: typeof threads };
         if (!cancelled) {
           setThreads(data.threads);
-          setSelectedThreadId((prev) => prev ?? data.threads[0]?.id ?? null);
+          if (!requestPending.current) {
+            setSelectedThreadId((prev) => prev ?? data.threads[0]?.id ?? null);
+          }
         }
       } finally {
         if (!cancelled) setThreadsLoading(false);
@@ -249,12 +261,6 @@ export default function ChatPage() {
         };
         if (cancelled) return;
 
-        const mapped = data.messages.map((m) => ({
-          id: m.id,
-          role: (m.role === "assistant" ? "assistant" : "user") as "assistant" | "user",
-          content: m.content,
-        }));
-        setLoadedMessages(mapped);
         setMessages(
           data.messages.map((m) => ({
             id: m.id,
@@ -263,16 +269,24 @@ export default function ChatPage() {
             metadata: (m.metadata as ChatMessageMetadata) ?? undefined,
           }))
         );
+        readyThreadId.current = threadId;
+      } catch (error) {
+        if (!cancelled) setChatRequestError(getAIErrorMessage(error));
       } finally {
         if (!cancelled) setLoadingThread(false);
       }
     }
 
-    if (selectedThreadId) {
+    if (selectedThreadId && newThreadId.current === selectedThreadId) {
+      newThreadId.current = null;
+      readyThreadId.current = selectedThreadId;
+      setLoadingThread(false);
+    } else if (selectedThreadId) {
       void loadThread(selectedThreadId);
     } else {
-      setLoadedMessages([]);
       setMessages([]);
+      readyThreadId.current = null;
+      setLoadingThread(false);
     }
 
     return () => {
@@ -282,33 +296,31 @@ export default function ChatPage() {
 
   const handleSubmit = async () => {
     const text = input.trim();
-    if (!text || isSending) return;
+    if (!text || requestPending.current || isSending || threadsLoading || readyThreadId.current !== selectedThreadId) return;
+    requestPending.current = true;
+    setPendingRequest(true);
     setChatRequestError(null);
     const currentThreadId = selectedThreadId;
 
     // If we are starting a brand new chat, create an empty thread first so we can
     // immediately select it in the sidebar.
     let effectiveThreadId = currentThreadId;
-    if (!effectiveThreadId) {
-      try {
+    try {
+      if (!effectiveThreadId) {
         const createRes = await fetch("/api/chat", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ messages: [] }),
         });
 
+        if (!createRes.ok) throw new Error(await createRes.text());
         const createdId = createRes.headers.get("X-Chat-Thread-Id");
-        if (createdId) {
-          effectiveThreadId = createdId;
-          setSelectedThreadId(createdId);
-          await refreshThreads();
-        }
-      } catch {
-        // ignore; fallback to server-side creation during sendMessage
+        if (!createdId) throw new Error("Failed to create chat. Try again.");
+        effectiveThreadId = createdId;
+        newThreadId.current = createdId;
+        setSelectedThreadId(createdId);
+        await refreshThreads();
       }
-    }
-
-    try {
       await sendMessage(
         { text },
         {
@@ -317,6 +329,9 @@ export default function ChatPage() {
       );
     } catch (error) {
       setChatRequestError(getAIErrorMessage(error));
+    } finally {
+      requestPending.current = false;
+      setPendingRequest(false);
     }
   };
 
@@ -326,6 +341,7 @@ export default function ChatPage() {
   );
 
   const startNewChat = async (category?: string, entityId?: string, documentId?: string) => {
+    if (requestPending.current || threadsLoading) return;
     if (category && (entityId || documentId)) {
       // Create a context-specific chat
       try {
@@ -337,7 +353,7 @@ export default function ChatPage() {
         
         if (res.ok) {
           const { thread } = await res.json();
-          setSelectedThreadId(thread.id);
+          selectThread(thread.id);
           await refreshThreads();
           return;
         }
@@ -347,22 +363,32 @@ export default function ChatPage() {
     }
     
     // Fallback to general chat
-    setSelectedThreadId(null);
-    setLoadedMessages([]);
+    selectThread(null);
     setMessages([]);
   };
 
   const [threadToDelete, setThreadToDelete] = useState<string | null>(null);
 
   const confirmDeleteThread = async () => {
-    if (!threadToDelete) return;
-    await fetch(`/api/chats/${threadToDelete}`, { method: "DELETE" });
-    const nextThreads = threads.filter((t) => t.id !== threadToDelete);
-    setThreads(nextThreads);
-    if (selectedThreadId === threadToDelete) {
-      setSelectedThreadId(nextThreads[0]?.id ?? null);
+    if (!threadToDelete || requestPending.current) return;
+    requestPending.current = true;
+    setPendingRequest(true);
+    try {
+      const response = await fetch(`/api/chats/${threadToDelete}`, { method: "DELETE" });
+      if (!response.ok) throw new Error("Failed to delete chat");
+      const nextThreads = threads.filter((t) => t.id !== threadToDelete);
+      setThreads(nextThreads);
+      if (selectedThreadId === threadToDelete) {
+        readyThreadId.current = undefined;
+        setSelectedThreadId(nextThreads[0]?.id ?? null);
+      }
+      setThreadToDelete(null);
+    } catch (error) {
+      setChatRequestError(getAIErrorMessage(error));
+    } finally {
+      requestPending.current = false;
+      setPendingRequest(false);
     }
-    setThreadToDelete(null);
   };
 
   return (
@@ -374,7 +400,7 @@ export default function ChatPage() {
           <aside className="rounded-lg border bg-card">
             <div className="p-3 border-b flex items-center justify-between">
               <div className="text-sm font-semibold">Chats</div>
-              <Button size="sm" variant="secondary" onClick={() => startNewChat()}>
+              <Button size="sm" variant="secondary" disabled={isSending || threadsLoading} onClick={() => startNewChat()}>
                 <Plus className="h-4 w-4 mr-2" />
                 New
               </Button>
@@ -495,7 +521,7 @@ export default function ChatPage() {
             <div className="p-3 border-b">
               <div className="flex items-center gap-2">
                 <Filter className="h-4 w-4 text-muted-foreground" />
-                <Select value={categoryFilter} onValueChange={setCategoryFilter}>
+                <Select value={categoryFilter} onValueChange={setCategoryFilter} disabled={isSending}>
                   <SelectTrigger className="flex-1">
                     <SelectValue placeholder="Filter by category" />
                   </SelectTrigger>
@@ -514,6 +540,7 @@ export default function ChatPage() {
                 <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-muted-foreground" />
                 <Input
                   placeholder="Search chats..."
+                  disabled={isSending}
                   value={searchQuery}
                   onChange={(e) => handleSearchChange(e.target.value)}
                   onFocus={() => searchQuery.length >= 2 && setShowSuggestions(true)}
@@ -574,7 +601,8 @@ export default function ChatPage() {
                       >
                         <button
                           className="flex-1 text-left min-w-0"
-                          onClick={() => setSelectedThreadId(t.id)}
+                          disabled={isSending}
+                          onClick={() => selectThread(t.id)}
                           type="button"
                         >
                           <div className="flex items-center gap-2">
@@ -593,8 +621,8 @@ export default function ChatPage() {
                             </div>
                           </div>
                         </button>
-                        <Link href={`/chat/${t.id}`} className="shrink-0">
-                          <Button size="icon-sm" variant="ghost" aria-label="Open">
+                        <Link href={`/chat/${t.id}`} className="shrink-0" onClick={(event) => { if (requestPending.current) event.preventDefault(); }}>
+                          <Button size="icon-sm" variant="ghost" aria-label="Open" disabled={isSending}>
                             <MessageSquareIcon className="h-4 w-4" />
                           </Button>
                         </Link>
@@ -602,6 +630,7 @@ export default function ChatPage() {
                           size="icon-sm"
                           variant="ghost"
                           onClick={() => setThreadToDelete(t.id)}
+                          disabled={isSending}
                           aria-label="Delete"
                         >
                           <Trash2 className="h-4 w-4" />
@@ -680,10 +709,10 @@ export default function ChatPage() {
               className="w-full"
             >
               <PromptInputBody>
-                <PromptInputTextarea value={input} onChange={(e) => setInput(e.target.value)} disabled={isSending} />
+                <PromptInputTextarea value={input} onChange={(e) => setInput(e.target.value)} disabled={isSending || loadingThread || threadsLoading} />
               </PromptInputBody>
               <PromptInputFooter>
-                <PromptInputSubmit disabled={!input.trim() || isSending} />
+                <PromptInputSubmit disabled={!input.trim() || isSending || loadingThread || threadsLoading} />
               </PromptInputFooter>
             </PromptInput>
           </section>
@@ -700,6 +729,7 @@ export default function ChatPage() {
             <AlertDialogFooter>
               <AlertDialogCancel>Cancel</AlertDialogCancel>
               <AlertDialogAction
+                disabled={isSending}
                 onClick={(e) => {
                   e.preventDefault();
                   confirmDeleteThread();

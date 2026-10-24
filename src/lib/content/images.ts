@@ -1,6 +1,18 @@
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, unlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import sharp from "sharp";
+
+export async function discardDocumentImage(publicPath?: string): Promise<void> {
+  const filename = publicPath?.match(/^\/document-images\/([0-9a-f-]{36}\.png)$/i)?.[1];
+  if (!filename) return;
+  try {
+    await unlink(join(process.cwd(), "data", "document-images", filename));
+  } catch (error) {
+    if (!(error instanceof Error) || !("code" in error) || error.code !== "ENOENT") {
+      console.error("Could not remove an unused document image:", error);
+    }
+  }
+}
 
 export async function encodeDocumentImage(bytes: Buffer): Promise<Buffer> {
   const image = sharp(bytes, { limitInputPixels: 16_000_000 });

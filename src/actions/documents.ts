@@ -6,6 +6,7 @@ import { eq, desc, ilike, or, sql, count, inArray } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { generateTagsWithDBConfig } from "@/lib/ai";
 import { refreshDocument } from "@/lib/ingestion/service";
+import { discardDocumentImage } from "@/lib/content/images";
 
 export type DocumentWithStats = {
   id: string;
@@ -249,24 +250,28 @@ export async function generateDocumentTags(documentId: string) {
 
   if (!doc) return { success: false, tags: [] as string[] };
 
-  const existing = await db
-    .select({ name: tags.name })
-    .from(tags)
-    .innerJoin(documentTags, eq(documentTags.tagId, tags.id))
-    .where(eq(documentTags.documentId, documentId));
-
   const aiTags = await generateTagsWithDBConfig({
     title: doc.title,
     summary: doc.summary,
     content: doc.content,
   });
 
-  if (aiTags.length === 0) {
-    return { success: false, tags: existing.map((t) => t.name) };
+  if (aiTags.length > 0) {
+    await db.transaction(async (tx) => {
+      await tx.insert(tags).values(aiTags.map((name) => ({ name }))).onConflictDoNothing();
+      const tagRows = await tx.select({ id: tags.id }).from(tags).where(inArray(tags.name, aiTags));
+      await tx.insert(documentTags).values(tagRows.map((tag) => ({ documentId, tagId: tag.id }))).onConflictDoNothing();
+    });
+    revalidatePath(`/library/${documentId}`);
+    revalidatePath("/graph");
   }
 
-  const merged = Array.from(new Set([...existing.map((t) => t.name), ...aiTags]));
-  return updateDocumentTags(documentId, merged);
+  const currentTags = await db
+    .select({ name: tags.name })
+    .from(tags)
+    .innerJoin(documentTags, eq(documentTags.tagId, tags.id))
+    .where(eq(documentTags.documentId, documentId));
+  return { success: aiTags.length > 0, tags: currentTags.map((tag) => tag.name) };
 }
 
 export async function updateDocumentFromSource(documentId: string) {
@@ -302,8 +307,8 @@ export async function getDocumentStats() {
  * Delete a document and all related data
  */
 export async function deleteDocument(id: string) {
-  await db.transaction(async (tx) => {
-    await tx.delete(documents).where(eq(documents.id, id));
+  const deleted = await db.transaction(async (tx) => {
+    const [document] = await tx.delete(documents).where(eq(documents.id, id)).returning({ metadata: documents.metadata });
     await tx
       .delete(entities)
       .where(
@@ -312,8 +317,12 @@ export async function deleteDocument(id: string) {
           FROM entity_mentions
         )`
       );
+    return document;
   });
 
+  if (deleted?.metadata && typeof deleted.metadata === "object" && "imagePath" in deleted.metadata && typeof deleted.metadata.imagePath === "string") {
+    await discardDocumentImage(deleted.metadata.imagePath);
+  }
   revalidatePath("/library");
   return { success: true };
 }

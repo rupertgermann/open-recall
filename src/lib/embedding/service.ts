@@ -37,13 +37,14 @@ const MAX_CONCURRENT_BATCHES = 2; // Limit concurrent Ollama requests
  */
 export async function generateEmbeddingsWithCache(
   texts: string[],
-  purpose: "graph" | "retrieval" = "retrieval"
+  purpose: "graph" | "retrieval" = "retrieval",
+  config?: EmbeddingConfig
 ): Promise<BatchEmbeddingResult> {
   if (texts.length === 0) {
     return { embeddings: [], cacheHits: 0, cacheMisses: 0, timeMs: 0 };
   }
 
-  const config = await getEmbeddingConfigFromDB();
+  config ??= await getEmbeddingConfigFromDB();
   const model = config.model;
 
   const { result, timeMs } = await withTiming("embeddings", async () => {
@@ -121,18 +122,20 @@ export async function generateEmbeddingWithCache(
  * Generate embeddings for graph purposes (entities, summaries)
  */
 export async function generateGraphEmbeddings(
-  texts: string[]
+  texts: string[],
+  config?: EmbeddingConfig
 ): Promise<BatchEmbeddingResult> {
-  return generateEmbeddingsWithCache(texts, "graph");
+  return generateEmbeddingsWithCache(texts, "graph", config);
 }
 
 /**
  * Generate embeddings for retrieval purposes (chunks)
  */
 export async function generateRetrievalEmbeddings(
-  texts: string[]
+  texts: string[],
+  config?: EmbeddingConfig
 ): Promise<BatchEmbeddingResult> {
-  return generateEmbeddingsWithCache(texts, "retrieval");
+  return generateEmbeddingsWithCache(texts, "retrieval", config);
 }
 
 /**
