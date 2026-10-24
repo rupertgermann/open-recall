@@ -204,53 +204,34 @@ export async function reviewSrsItem(
     return { success: false, error: "Invalid review rating" };
   }
 
-  const [item] = await db
-    .select()
-    .from(srsItems)
-    .where(eq(srsItems.id, itemId))
-    .limit(1);
+  const item = await db.transaction(async (tx) => {
+    const [current] = await tx
+      .select()
+      .from(srsItems)
+      .where(eq(srsItems.id, itemId))
+      .limit(1)
+      .for("update");
+
+    if (!current) return;
+
+    const next = scheduleSrsReview(current, rating, new Date());
+    const [updated] = await tx
+      .update(srsItems)
+      .set(next)
+      .where(eq(srsItems.id, itemId))
+      .returning();
+    return updated;
+  });
 
   if (!item) {
     return { success: false, error: "Flashcard not found" };
   }
 
-  const next = scheduleSrsReview(
-    {
-      stability: item.stability,
-      difficulty: item.difficulty,
-      reps: item.reps,
-      lapses: item.lapses,
-      state: item.state,
-      dueDate: item.dueDate,
-      lastReviewDate: item.lastReviewDate,
-    },
-    rating,
-    new Date()
-  );
-
-  await db
-    .update(srsItems)
-    .set({
-      stability: next.stability,
-      difficulty: next.difficulty,
-      elapsedDays: next.elapsedDays,
-      scheduledDays: next.scheduledDays,
-      reps: next.reps,
-      lapses: next.lapses,
-      state: next.state,
-      dueDate: next.dueDate,
-      lastReviewDate: next.lastReviewDate,
-    })
-    .where(eq(srsItems.id, itemId));
-
   revalidateSrsPaths(item.documentId);
 
   return {
     success: true,
-    item: serializeSrsItem({
-      ...item,
-      ...next,
-    }),
+    item: serializeSrsItem(item),
   };
 }
 

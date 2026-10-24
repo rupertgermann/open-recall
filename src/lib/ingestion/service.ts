@@ -1,4 +1,7 @@
-import { and, asc, eq, sql } from "drizzle-orm";
+import { randomUUID } from "node:crypto";
+import { unlink } from "node:fs/promises";
+import { join } from "node:path";
+import { and, asc, eq, isNotNull, sql } from "drizzle-orm";
 import { revalidatePath as nextRevalidatePath } from "next/cache.js";
 
 import {
@@ -14,7 +17,7 @@ import {
   type GogRunner,
 } from "../drive/index.ts";
 import { metricsCollector } from "../embedding/metrics.ts";
-import type { StructuredChunk } from "../embedding/chunker.ts";
+import { CHUNKING_VERSION, type StructuredChunk } from "../embedding/chunker.ts";
 import { generateContentHash } from "../text/index.ts";
 import { dedupeDocumentChunks } from "./chunks.ts";
 import { entityKeysEqual, makeEntityKey, type EntityKey } from "./entity-key.ts";
@@ -211,26 +214,31 @@ async function ingestUrlDocumentWithContext(
   const source = await getUrlSource(normalizedUrl, options);
   await emit(options, "saving", "Creating document record...", 20);
 
-  const doc = await createOrFindUrlDocument(context.database, source);
+  const runId = randomUUID();
+  const doc = await createOrFindUrlDocument(context.database, source, runId);
   if (!doc.created) {
     assertDriveDocumentAvailable(doc);
     return refreshDocumentWithContext(context, doc.id, options);
   }
 
+  let imagePath: string | undefined;
   try {
-    await saveLeadImage(context.database, doc.id, source.leadImageUrl, source.metadata);
+    imagePath = await fetchLeadImage(source, runId);
     const derived = await context.buildDerivedData(doc.id, source, options);
     const persistence = await persistDerivedDocumentData(context.database, {
       documentId: doc.id,
+      runId,
       source,
       derived,
       replaceExisting: false,
     });
+    imagePath = undefined;
     afterPersistDerivedDocumentData(context, doc.id, persistence.droppedRelationshipCount);
     await complete(context, options, doc.id, "Document processed successfully!", false);
     return { success: true, documentId: doc.id, skipped: false, action: "ingested" };
   } catch (error) {
-    await markFailed(context.database, doc.id);
+    await discardImage(imagePath);
+    await markFailed(context.database, doc.id, runId);
     await emit(options, "error", error instanceof Error ? error.message : String(error), 0, true, doc.id);
     throw error;
   }
@@ -258,6 +266,7 @@ async function ingestTextDocumentWithContext(
     url: null,
   };
 
+  const runId = randomUUID();
   await emit(options, "saving", "Creating document record...", 20);
   const [doc] = await context.database
     .insert(documents)
@@ -266,6 +275,7 @@ async function ingestTextDocumentWithContext(
       type: "note",
       content: source.content,
       processingStatus: "processing",
+      metadata: { _ingestionRunId: runId },
     })
     .returning({ id: documents.id });
 
@@ -273,6 +283,7 @@ async function ingestTextDocumentWithContext(
     const derived = await context.buildDerivedData(doc.id, source, options);
     const persistence = await persistDerivedDocumentData(context.database, {
       documentId: doc.id,
+      runId,
       source,
       derived,
       replaceExisting: false,
@@ -281,7 +292,7 @@ async function ingestTextDocumentWithContext(
     await complete(context, options, doc.id, "Document processed successfully!", false);
     return { success: true, documentId: doc.id, skipped: false, action: "ingested" };
   } catch (error) {
-    await markFailed(context.database, doc.id);
+    await markFailed(context.database, doc.id, runId);
     await emit(options, "error", error instanceof Error ? error.message : String(error), 0, true, doc.id);
     throw error;
   }
@@ -300,77 +311,83 @@ async function refreshDocumentWithContext(
   options: DocumentIngestionOptions = {}
 ): Promise<DocumentIngestionResult> {
   await emit(options, "fetching", "Validating document...", 5, false, documentId);
-
+  const runId = randomUUID();
   const [existing] = await context.database
-    .select({
-      id: documents.id,
-      url: documents.url,
-      content: documents.content,
-      contentHash: documents.contentHash,
-      embeddingModel: documents.embeddingModel,
-    })
-    .from(documents)
-    .where(eq(documents.id, documentId))
-    .limit(1);
-
-  if (!existing) throw new Error("Document not found");
-  if (!existing.url) throw new Error("Document has no source URL");
-
-  await emit(options, "fetching", "Fetching content from source...", 15, false, documentId);
-  let source: SourceContent;
-  try {
-    source = await getUrlSource(existing.url, options);
-  } catch (error) {
-    await emit(options, "error", error instanceof Error ? error.message : String(error), 0, true, documentId);
-    throw error;
-  }
-  await saveLeadImage(context.database, documentId, source.leadImageUrl);
-
-  const embeddingModel = await context.getCurrentEmbeddingModel();
-  const contentHash = generateContentHash(source.content);
-  const unchanged =
-    contentHash === existing.contentHash &&
-    source.content === existing.content &&
-    existing.embeddingModel === embeddingModel;
-
-  if (unchanged) {
-    await emit(options, "saving", "Source and embedding model unchanged; keeping derived data.", 85, false, documentId);
-    await context.database
-      .update(documents)
-      .set({
-        title: source.title,
-        type: source.type,
-        content: source.content,
-        contentHash,
-        embeddingModel,
-        processingStatus: "completed",
-        ...(source.metadata ? { metadata: source.metadata } : {}),
-        updatedAt: new Date(),
-      })
-      .where(eq(documents.id, documentId));
-    revalidateDocument(context, documentId);
-    await complete(context, options, documentId, "Document refresh skipped; derived data is unchanged.", true);
-    return { success: true, documentId, skipped: true, action: "skipped" };
-  }
-
-  await context.database
     .update(documents)
-    .set({ processingStatus: "processing", updatedAt: new Date() })
-    .where(eq(documents.id, documentId));
+    .set({
+      metadata: sql`coalesce(${documents.metadata}, '{}'::jsonb) || ${JSON.stringify({ _ingestionRunId: runId })}::jsonb`,
+      updatedAt: new Date(),
+    })
+    .where(and(eq(documents.id, documentId), isNotNull(documents.url)))
+    .returning();
+  if (!existing) {
+    const [document] = await context.database.select({ id: documents.id }).from(documents).where(eq(documents.id, documentId)).limit(1);
+    throw new Error(document ? "Document has no source URL" : "Document not found");
+  }
 
+  let processingStarted = false;
+  let imagePath: string | undefined;
+  const previousImagePath = typeof existing.metadata?.imagePath === "string" ? existing.metadata.imagePath : undefined;
   try {
+    if (!existing.url) throw new Error("Document has no source URL");
+    await emit(options, "fetching", "Fetching content from source...", 15, false, documentId);
+    const source = await getUrlSource(existing.url, options);
+    const embeddingModel = await context.getCurrentEmbeddingModel();
+    const contentHash = generateContentHash(source.content);
+    imagePath = await fetchLeadImage(source, runId);
+    const unchanged =
+      contentHash === existing.contentHash &&
+      source.content === existing.content &&
+      existing.embeddingModel === embeddingModel &&
+      existing.embeddingVersion === CHUNKING_VERSION;
+
+    if (unchanged) {
+      await emit(options, "saving", "Source and embedding model unchanged; keeping derived data.", 85, false, documentId);
+      const updated = await context.database
+        .update(documents)
+        .set({
+          title: source.title,
+          type: source.type,
+          content: source.content,
+          contentHash,
+          embeddingModel,
+          processingStatus: "completed",
+          metadata: sql`(coalesce(${documents.metadata}, '{}'::jsonb) || ${JSON.stringify(source.metadata ?? {})}::jsonb) - '_ingestionRunId'`,
+          updatedAt: new Date(),
+        })
+        .where(ownedRun(documentId, runId))
+        .returning({ id: documents.id });
+      if (updated.length === 0) throw new Error("Document ingestion was superseded by another run");
+      if (imagePath && imagePath !== previousImagePath) await discardImage(previousImagePath);
+      imagePath = undefined;
+      await complete(context, options, documentId, "Document refresh skipped; derived data is unchanged.", true);
+      return { success: true, documentId, skipped: true, action: "skipped" };
+    }
+
+    const updated = await context.database
+      .update(documents)
+      .set({ processingStatus: "processing", updatedAt: new Date() })
+      .where(ownedRun(documentId, runId))
+      .returning({ id: documents.id });
+    if (updated.length === 0) throw new Error("Document ingestion was superseded by another run");
+    processingStarted = true;
     const derived = await context.buildDerivedData(documentId, source, options);
     const persistence = await persistDerivedDocumentData(context.database, {
       documentId,
+      runId,
       source,
       derived,
       replaceExisting: true,
     });
+    if (imagePath && imagePath !== previousImagePath) await discardImage(previousImagePath);
+    imagePath = undefined;
     afterPersistDerivedDocumentData(context, documentId, persistence.droppedRelationshipCount);
     await complete(context, options, documentId, "Document updated successfully!", false);
     return { success: true, documentId, skipped: false, action: "refreshed" };
   } catch (error) {
-    await markFailed(context.database, documentId);
+    await discardImage(imagePath);
+    await markFailed(context.database, documentId, runId,
+      processingStarted || existing.processingStatus === "processing" ? "failed" : existing.processingStatus);
     await emit(options, "error", error instanceof Error ? error.message : String(error), 0, true, documentId);
     throw error;
   }
@@ -597,7 +614,7 @@ function assertDriveDocumentAvailable(document: { processingStatus: string }) {
   }
 }
 
-async function createOrFindUrlDocument(database: IngestionDatabase, source: SourceContent) {
+async function createOrFindUrlDocument(database: IngestionDatabase, source: SourceContent, runId: string) {
   const insert = async (tx: IngestionDatabase) => {
     const [document] = await tx.insert(documents).values({
       url: source.url,
@@ -605,7 +622,7 @@ async function createOrFindUrlDocument(database: IngestionDatabase, source: Sour
       type: source.type,
       content: source.content,
       processingStatus: "processing",
-      metadata: getSourceMetadata(source),
+      metadata: { ...getSourceMetadata(source), _ingestionRunId: runId },
     }).returning({ id: documents.id, processingStatus: documents.processingStatus });
     return { ...document, created: true };
   };
@@ -669,35 +686,45 @@ function getSourceMetadata(source: SourceContent): Record<string, unknown> | und
   };
 }
 
-async function saveLeadImage(
-  database: IngestionDatabase,
-  documentId: string,
-  leadImageUrl?: string,
-  existingMetadata?: Record<string, unknown>
-) {
-  if (!leadImageUrl) return;
-  const image = await downloadDocumentImage(leadImageUrl, documentId);
+async function fetchLeadImage(source: SourceContent, runId: string): Promise<string | undefined> {
+  if (!source.leadImageUrl) return;
+  // Each run owns its image bytes; only its winning database write publishes the path.
+  const image = await downloadDocumentImage(source.leadImageUrl, runId);
   if (!image) return;
+  source.metadata = {
+    ...source.metadata,
+    leadImageUrl: image.url,
+    imagePath: image.publicPath,
+    imageContentType: image.contentType,
+  };
+  return image.publicPath;
+}
 
+async function discardImage(publicPath?: string) {
+  const filename = publicPath?.match(/^\/document-images\/([0-9a-f-]{36}\.png)$/i)?.[1];
+  if (!filename) return;
+  try {
+    await unlink(join(process.cwd(), "data", "document-images", filename));
+  } catch (error) {
+    if (!(error instanceof Error) || !("code" in error) || error.code !== "ENOENT") {
+      metricsCollector.log("[INGEST] Could not remove an unused document image");
+    }
+  }
+}
+
+function ownedRun(documentId: string, runId: string) {
+  return and(eq(documents.id, documentId), sql`${documents.metadata}->>'_ingestionRunId' = ${runId}`);
+}
+
+async function markFailed(database: IngestionDatabase, documentId: string, runId: string, status = "failed") {
   await database
     .update(documents)
     .set({
-      metadata: {
-        ...(existingMetadata ?? {}),
-        leadImageUrl: image.url,
-        imagePath: image.publicPath,
-        imageContentType: image.contentType,
-      },
+      processingStatus: status,
+      metadata: sql`${documents.metadata} - '_ingestionRunId'`,
       updatedAt: new Date(),
     })
-    .where(eq(documents.id, documentId));
-}
-
-async function markFailed(database: IngestionDatabase, documentId: string) {
-  await database
-    .update(documents)
-    .set({ processingStatus: "failed", updatedAt: new Date() })
-    .where(eq(documents.id, documentId));
+    .where(ownedRun(documentId, runId));
 }
 
 async function complete(

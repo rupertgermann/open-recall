@@ -92,7 +92,11 @@ export default function ChatPage() {
 
   const { messages, status, sendMessage, setMessages, error: chatError } = useChat<ChatUIMessage>({
     transport: chatTransport,
+    onFinish: ({ isError, isAbort, isDisconnect }) => {
+      if (!isError && !isAbort && !isDisconnect) setInput("");
+    },
   });
+  const isSending = status === "submitted" || status === "streaming";
 
   const chatErrorMessage = chatRequestError ?? (chatError ? getAIErrorMessage(chatError) : null);
 
@@ -278,7 +282,7 @@ export default function ChatPage() {
 
   const handleSubmit = async () => {
     const text = input.trim();
-    if (!text || status !== "ready") return;
+    if (!text || isSending) return;
     setChatRequestError(null);
     const currentThreadId = selectedThreadId;
 
@@ -311,8 +315,6 @@ export default function ChatPage() {
           body: effectiveThreadId ? { threadId: effectiveThreadId } : undefined,
         }
       );
-
-      setInput("");
     } catch (error) {
       setChatRequestError(getAIErrorMessage(error));
     }
@@ -678,10 +680,10 @@ export default function ChatPage() {
               className="w-full"
             >
               <PromptInputBody>
-                <PromptInputTextarea value={input} onChange={(e) => setInput(e.target.value)} />
+                <PromptInputTextarea value={input} onChange={(e) => setInput(e.target.value)} disabled={isSending} />
               </PromptInputBody>
               <PromptInputFooter>
-                <PromptInputSubmit disabled={!input.trim() || status !== "ready"} />
+                <PromptInputSubmit disabled={!input.trim() || isSending} />
               </PromptInputFooter>
             </PromptInput>
           </section>

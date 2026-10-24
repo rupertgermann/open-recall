@@ -1,4 +1,4 @@
-import { and, eq, inArray } from "drizzle-orm";
+import { and, eq, inArray, sql } from "drizzle-orm";
 
 import {
   chunks,
@@ -9,6 +9,7 @@ import {
   relationships,
   tags,
 } from "../../db/schema.ts";
+import { CHUNKING_VERSION } from "../embedding/chunker.ts";
 import { makeEntityKey, type EntityKey } from "./entity-key.ts";
 import { planEntityMentions } from "./mentions.ts";
 import { planRelationshipInserts } from "./relationships.ts";
@@ -56,6 +57,7 @@ type PersistDerivedDocumentDataInput = {
   source: SourceContent;
   derived: DerivedDocumentData;
   replaceExisting: boolean;
+  runId?: string;
 };
 
 type PersistDerivedDocumentDataResult = {
@@ -77,14 +79,7 @@ export async function persistDerivedDocumentData(
   await database.transaction(async (tx) => {
     const { documentId, source, derived } = input;
 
-    if (input.replaceExisting) {
-      await tx.delete(relationships).where(eq(relationships.sourceDocumentId, documentId));
-      await tx.delete(entityMentions).where(eq(entityMentions.documentId, documentId));
-      await tx.delete(documentTags).where(eq(documentTags.documentId, documentId));
-      await tx.delete(chunks).where(eq(chunks.documentId, documentId));
-    }
-
-    await tx
+    const updated = await tx
       .update(documents)
       .set({
         url: source.url,
@@ -94,12 +89,23 @@ export async function persistDerivedDocumentData(
         contentHash: derived.contentHash,
         summary: derived.summary,
         embeddingModel: derived.embeddingModel,
-        embeddingVersion: "1.0",
+        embeddingVersion: CHUNKING_VERSION,
         processingStatus: "completed",
-        ...(source.metadata ? { metadata: source.metadata } : {}),
+        metadata: sql`(coalesce(${documents.metadata}, '{}'::jsonb) || ${JSON.stringify(source.metadata ?? {})}::jsonb) - '_ingestionRunId'`,
         updatedAt: new Date(),
       })
-      .where(eq(documents.id, documentId));
+      .where(input.runId
+        ? and(eq(documents.id, documentId), sql`${documents.metadata}->>'_ingestionRunId' = ${input.runId}`)
+        : eq(documents.id, documentId))
+      .returning({ id: documents.id });
+    if (updated.length === 0) throw new Error("Document ingestion was superseded by another run");
+
+    if (input.replaceExisting) {
+      await tx.delete(relationships).where(eq(relationships.sourceDocumentId, documentId));
+      await tx.delete(entityMentions).where(eq(entityMentions.documentId, documentId));
+      await tx.delete(documentTags).where(eq(documentTags.documentId, documentId));
+      await tx.delete(chunks).where(eq(chunks.documentId, documentId));
+    }
 
     const insertedChunks =
       derived.chunks.length > 0

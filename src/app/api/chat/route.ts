@@ -1,6 +1,7 @@
 import { streamText, convertToModelMessages, type UIMessage, generateText, tool, stepCountIs } from "ai";
 import { z } from "zod";
-import { getModel } from "@/lib/ai/client";
+import type { OpenAILanguageModelResponsesOptions } from "@ai-sdk/openai";
+import { createChatClient, getModel } from "@/lib/ai/client";
 import { ingestTextDocument } from "@/lib/ingestion/service";
 import { retrieveContext, buildPromptContext } from "@/actions/chat";
 import { getChatConfigFromDB } from "@/lib/ai/config";
@@ -213,6 +214,9 @@ Guidelines:
   const model = getModel(chatConfig);
 
   const chatTools = {
+    ...(chatConfig.provider === "openai" && chatConfig.webSearchEnabled
+      ? { web_search: createChatClient(chatConfig).tools.webSearch({}) }
+      : {}),
     searchKnowledgeBase: tool({
       description: "Search the user's knowledge base for documents and information. Use this when the user asks about something that might be in their saved content.",
       inputSchema: z.object({
@@ -305,22 +309,6 @@ Guidelines:
     }),
   };
 
-  const result = streamText({
-    model: model as Parameters<typeof streamText>[0]["model"],
-    system: systemPrompt,
-    messages: await convertToModelMessages(messages),
-    tools: chatTools,
-    stopWhen: stepCountIs(3),
-  });
-
-  // Ensure the stream runs to completion and triggers onFinish even if the client disconnects.
-  // (best-effort; ignore errors)
-  void result.consumeStream({
-    onError: (error) => {
-      console.error("Chat stream failed:", getAIErrorMessage(error));
-    },
-  });
-
   // Persist latest user message (best-effort).
   try {
     if (lastUserText) {
@@ -338,29 +326,24 @@ Guidelines:
     console.error("Failed to persist user chat message:", error);
   }
 
-  // Return a UI message stream so the client gets structured message parts.
-  return result.toUIMessageStreamResponse({
-    headers: {
-      "X-Chat-Thread-Id": effectiveThreadId,
-    },
-    originalMessages: messages,
-    messageMetadata: ({ part }): ChatMessageMetadata | undefined => {
-      if (part.type === "finish") {
-        return {
-          sources: dedupedSources,
-          entities: dedupedEntities,
-          createdAt: Date.now(),
-        };
-      }
-    },
-    onError: (error) => getAIErrorMessage(error),
-    onFinish: async ({ messages: responseMessages }) => {
+  let generationFailed = false;
+  const result = streamText({
+    model: model as Parameters<typeof streamText>[0]["model"],
+    providerOptions: chatConfig.provider === "openai" ? {
+      openai: {
+        reasoningEffort: chatConfig.reasoningEffort,
+        ...(chatConfig.model.startsWith("gpt-5") && { textVerbosity: chatConfig.verbosity }),
+      } satisfies OpenAILanguageModelResponsesOptions,
+    } : undefined,
+    system: systemPrompt,
+    messages: await convertToModelMessages(messages),
+    tools: chatTools,
+    stopWhen: stepCountIs(3),
+    onError: () => { generationFailed = true; },
+    onFinish: async ({ steps, finishReason }) => {
+      if (generationFailed || finishReason === "error") return;
       try {
-        const lastAssistant = [...responseMessages].reverse().find((m) => m.role === "assistant");
-        const assistantText = lastAssistant?.parts
-          .filter((part) => part.type === "text")
-          .map((part) => part.text)
-          .join("");
+        const assistantText = steps.map((step) => step.text).join("");
 
         if (assistantText) {
           const storedMetadata: ChatMessageMetadata = {
@@ -418,5 +401,31 @@ Guidelines:
         console.error("Failed to persist assistant chat message:", error);
       }
     },
+  });
+
+  // Ensure the stream runs to completion and triggers onFinish even if the client disconnects.
+  // (best-effort; ignore errors)
+  void result.consumeStream({
+    onError: (error) => {
+      console.error("Chat stream failed:", getAIErrorMessage(error));
+    },
+  });
+
+  // Return a UI message stream so the client gets structured message parts.
+  return result.toUIMessageStreamResponse({
+    headers: {
+      "X-Chat-Thread-Id": effectiveThreadId,
+    },
+    originalMessages: messages,
+    messageMetadata: ({ part }): ChatMessageMetadata | undefined => {
+      if (part.type === "finish") {
+        return {
+          sources: dedupedSources,
+          entities: dedupedEntities,
+          createdAt: Date.now(),
+        };
+      }
+    },
+    onError: (error) => getAIErrorMessage(error),
   });
 }

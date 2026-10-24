@@ -69,7 +69,7 @@ test("resolveDriveFileSource exports a Google Doc as markdown-backed gdoc Source
     maxChunkTokens: 20,
     targetChunkTokens: 10,
   });
-  assert.match(chunks[0]?.content ?? "", /^## Strategy/);
+  assert.equal(chunks.map(chunk => chunk.content).join(""), source.content);
 });
 
 test("resolveDriveFileSource falls back to plain text when markdown export fails", async () => {

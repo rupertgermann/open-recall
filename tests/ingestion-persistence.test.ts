@@ -12,6 +12,7 @@ import {
   relationships,
   tags,
 } from "../src/db/schema.ts";
+import { CHUNKING_VERSION } from "../src/lib/embedding/chunker.ts";
 import { makeEntityKey } from "../src/lib/ingestion/entity-key.ts";
 import { persistDerivedDocumentData } from "../src/lib/ingestion/persistence.ts";
 import { createTestDatabase, type TestDatabase } from "./helpers/db.ts";
@@ -52,7 +53,7 @@ test("persistDerivedDocumentData writes a fresh Document's Derived Document Data
     summary: "React works with Postgres.",
     processingStatus: "completed",
     embeddingModel: "test-embedding-model",
-    embeddingVersion: "1.0",
+    embeddingVersion: CHUNKING_VERSION,
   });
 
   const chunkRows = await db

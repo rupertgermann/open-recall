@@ -360,9 +360,10 @@ operations still require matching dimensions when comparing vectors.
 
 The app tracks document-level `embedding_model` and `embedding_version`, and the
 embedding cache is keyed by content hash, model, and purpose. When a
-source-backed document is refreshed and the configured embedding model differs,
-the ingestion pipeline rebuilds derived data for that document. Existing mixed
-dimension data can still make retrieval fail until affected documents are
+source-backed document is refreshed and the configured embedding model or chunking
+version differs, the ingestion pipeline rebuilds derived data for that document.
+Chunks and their cached embeddings distinguish case and meaningful whitespace.
+Existing data with mixed dimensions can still make retrieval fail until affected documents are
 re-ingested with one embedding model.
 
 Recommended recovery:

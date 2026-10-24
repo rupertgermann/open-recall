@@ -6,7 +6,7 @@
 import { db } from "@/db";
 import { embeddingCache } from "@/db/schema";
 import {
-  generateContentHash as generateSharedContentHash,
+  generateExactContentHash as generateSharedContentHash,
   normalizeTextForHash as normalizeSharedTextForHash,
 } from "@/lib/text";
 import { eq, and, inArray } from "drizzle-orm";

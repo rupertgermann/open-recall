@@ -66,3 +66,51 @@ test("entity web research requires the provider search tool and limits output", 
   assert.deepEqual(request?.tool_choice, { type: "web_search" });
   assert.equal(request?.max_output_tokens, 800);
 });
+
+for (const scenario of [
+  { provider: "openai", model: "gpt-5.4", webSearchEnabled: true },
+  { provider: "openai", model: "gpt-5.4", webSearchEnabled: false },
+  { provider: "openai", model: "gpt-4.1", webSearchEnabled: false },
+  { provider: "local", model: "local-model", webSearchEnabled: true },
+] as const) {
+  test(`chat request applies saved options for ${scenario.provider}/${scenario.model} with search ${scenario.webSearchEnabled}`, async (t) => {
+    const { db, close } = await createTestDatabase();
+    t.after(close);
+    useDatabase(db);
+    const { saveAISettings } = await import("../src/actions/settings.ts");
+    await saveAISettings({
+      chat: { ...localConfig, ...scenario, reasoningEffort: "high", verbosity: "low", apiKey: "saved-key" },
+      embedding: localConfig,
+    });
+    const { chatThreads } = await import("../src/db/schema.ts");
+    const [thread] = await db.insert(chatThreads).values({ title: "Options discussion" }).returning();
+    const { embeddings } = await import("./helpers/provider.ts");
+    const requests: unknown[] = [];
+    t.mock.method(globalThis, "fetch", async (url: Parameters<typeof fetch>[0], init: RequestInit) => {
+      const body = JSON.parse(String(init.body));
+      if (String(url).endsWith("/embeddings")) return embeddings(body);
+      assert.equal(String(url), `${localConfig.baseUrl}/${scenario.provider === "openai" ? "responses" : "chat/completions"}`);
+      assert.equal(new Headers(init.headers).get("authorization"), "Bearer saved-key");
+      requests.push(body);
+      return Response.json({ error: { message: "Controlled request rejection", type: "invalid_request_error" } }, { status: 400 });
+    });
+    const { POST } = await import("../src/app/api/chat/route.ts");
+    const response = await POST(new Request("http://localhost/api/chat", { method: "POST", body: JSON.stringify({
+      threadId: thread.id, messages: [{ id: "user-1", role: "user", parts: [{ type: "text", text: "Find information" }] }],
+    }) }));
+    await response.text();
+    assert.equal(requests.length, 1);
+    const { z } = await import("zod");
+    const request = z.object({
+      reasoning: z.object({ effort: z.string() }).optional(),
+      text: z.object({ verbosity: z.string() }).optional(),
+      tools: z.array(z.object({ type: z.string(), name: z.string().optional(), function: z.object({ name: z.string() }).optional() })),
+    }).parse(requests[0]);
+    const supportsOptions = scenario.provider === "openai" && scenario.model === "gpt-5.4";
+    assert.equal(request.reasoning?.effort, supportsOptions ? "high" : undefined);
+    assert.equal(request.text?.verbosity, supportsOptions ? "low" : undefined);
+    assert.equal(request.tools.some(tool => tool.type === "web_search"), scenario.provider === "openai" && scenario.webSearchEnabled);
+    assert.deepEqual(request.tools.filter(tool => tool.type === "function").map(tool => tool.name ?? tool.function?.name).sort(),
+      ["createNote", "findRelatedDocuments", "lookupEntity", "searchKnowledgeBase"]);
+  });
+}

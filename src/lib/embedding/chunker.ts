@@ -3,7 +3,9 @@
  * Replaces fixed-size chunking with semantic-aware splitting
  */
 
-import { estimateTokens, generateContentHash, normalizeText } from "../text/index.ts";
+import { estimateTokens, generateExactContentHash } from "../text/index.ts";
+
+export const CHUNKING_VERSION = "2.0";
 
 export interface StructuredChunk {
   content: string;
@@ -28,88 +30,42 @@ const DEFAULT_OPTIONS: Required<StructuredChunkerOptions> = {
 /**
  * Split text by markdown headings
  */
-function splitByHeadings(text: string): { heading: string | null; content: string }[] {
-  const sections: { heading: string | null; content: string }[] = [];
-  const headingRegex = /^(#{1,6})\s+(.+)$/gm;
-  
-  let lastIndex = 0;
-  let match;
-  let currentHeading: string | null = null;
-  
-  while ((match = headingRegex.exec(text)) !== null) {
-    // Content before this heading
-    if (match.index > lastIndex) {
-      const content = text.slice(lastIndex, match.index).trim();
-      if (content) {
-        sections.push({ heading: currentHeading, content });
-      }
-    }
-    currentHeading = match[2].trim();
-    lastIndex = match.index + match[0].length;
-  }
-  
-  // Remaining content after last heading
-  if (lastIndex < text.length) {
-    const content = text.slice(lastIndex).trim();
-    if (content) {
-      sections.push({ heading: currentHeading, content });
-    }
-  }
-  
-  // If no headings found, return entire text as single section
-  if (sections.length === 0 && text.trim()) {
-    sections.push({ heading: null, content: text.trim() });
-  }
-  
-  return sections;
+function splitByHeadings(text: string): string[] {
+  return text.split(/(?=^#{1,6}[ \t]+\S)/m);
 }
 
 /**
  * Split text by paragraphs (double newlines)
  */
 function splitByParagraphs(text: string): string[] {
-  return text
-    .split(/\n\n+/)
-    .map(p => p.trim())
-    .filter(p => p.length > 0);
+  return text.split(/(?<=\n\n)(?=[^\n])/);
 }
 
 /**
  * Split text by sentences
  */
 function splitBySentences(text: string): string[] {
-  // Split on sentence-ending punctuation followed by space or end
-  const sentences = text.split(/(?<=[.!?])\s+/);
-  return sentences.map(s => s.trim()).filter(s => s.length > 0);
+  // Keep separators in the slices so code indentation survives splitting.
+  return text.split(/(?<=[.!?])(?=\s)/);
 }
 
 /**
- * Merge small chunks together until they reach minimum size
+ * Merge adjacent slices without exceeding the maximum size.
  */
 function mergeSmallChunks(
   chunks: string[],
-  minTokens: number,
   maxTokens: number
 ): string[] {
   const merged: string[] = [];
   let current = "";
   
   for (const chunk of chunks) {
-    const chunkTokens = estimateTokens(chunk);
-    const currentTokens = estimateTokens(current);
-    
     if (current === "") {
       current = chunk;
-    } else if (currentTokens + chunkTokens <= maxTokens) {
-      current = current + "\n\n" + chunk;
+    } else if (estimateTokens(current + chunk) <= maxTokens) {
+      current += chunk;
     } else {
-      if (currentTokens >= minTokens) {
-        merged.push(current);
-      } else {
-        // Force merge even if it exceeds max
-        current = current + "\n\n" + chunk;
-        continue;
-      }
+      merged.push(current);
       current = chunk;
     }
   }
@@ -127,21 +83,21 @@ function mergeSmallChunks(
  */
 function splitByTokenBudget(text: string, maxTokens: number): string[] {
   const maxChars = maxTokens * 4; // inverse of estimateTokens
-  const words = text.split(/\s+/).filter((w) => w.length > 0);
+  const words = text.match(/\s*\S+|\s+$/g) ?? [];
   const pieces: string[] = [];
   let current = "";
 
   for (const word of words) {
     const parts =
       word.length > maxChars
-        ? (word.match(new RegExp(`.{1,${maxChars}}`, "g")) ?? [])
+        ? (word.match(new RegExp(`[\\s\\S]{1,${maxChars}}`, "g")) ?? [])
         : [word];
 
     for (const part of parts) {
       if (current === "") {
         current = part;
-      } else if (current.length + 1 + part.length <= maxChars) {
-        current = current + " " + part;
+      } else if (current.length + part.length <= maxChars) {
+        current += part;
       } else {
         pieces.push(current);
         current = part;
@@ -171,13 +127,10 @@ function splitLargeChunk(text: string, maxTokens: number): string[] {
   let current = "";
 
   for (const sentence of sentences) {
-    const sentenceTokens = estimateTokens(sentence);
-    const currentTokens = estimateTokens(current);
-
     if (current === "") {
       current = sentence;
-    } else if (currentTokens + sentenceTokens <= maxTokens) {
-      current = current + " " + sentence;
+    } else if (estimateTokens(current + sentence) <= maxTokens) {
+      current += sentence;
     } else {
       chunks.push(current);
       current = sentence;
@@ -215,12 +168,7 @@ export function chunkStructured(
   // Step 2: Process each section
   const rawChunks: string[] = [];
   
-  for (const section of sections) {
-    // Include heading with content if present
-    const sectionText = section.heading 
-      ? `## ${section.heading}\n\n${section.content}`
-      : section.content;
-    
+  for (const sectionText of sections) {
     const sectionTokens = estimateTokens(sectionText);
     
     if (sectionTokens <= opts.maxChunkTokens) {
@@ -228,7 +176,7 @@ export function chunkStructured(
       rawChunks.push(sectionText);
     } else {
       // Split section by paragraphs
-      const paragraphs = splitByParagraphs(section.content);
+      const paragraphs = splitByParagraphs(sectionText);
       
       for (const para of paragraphs) {
         const paraTokens = estimateTokens(para);
@@ -245,19 +193,18 @@ export function chunkStructured(
   }
   
   // Step 3: Merge small chunks
-  const mergedChunks = mergeSmallChunks(rawChunks, opts.minChunkTokens, opts.maxChunkTokens);
+  const mergedChunks = mergeSmallChunks(rawChunks, opts.maxChunkTokens);
   
   // Step 4: Create final chunk objects with hashes
   let index = 0;
   for (const content of mergedChunks) {
-    const normalized = normalizeText(content);
-    if (normalized.length === 0) continue;
+    if (content.trim().length === 0) continue;
     
     chunks.push({
-      content: normalized,
+      content,
       index,
-      tokenCount: estimateTokens(normalized),
-      contentHash: generateContentHash(normalized),
+      tokenCount: estimateTokens(content),
+      contentHash: generateExactContentHash(content),
       type: "merged",
     });
     index++;
