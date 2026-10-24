@@ -146,11 +146,11 @@ cache immediately after saving.
 - **Framework**: [Next.js 16](https://nextjs.org/) App Router
 - **Language**: TypeScript with strict mode
 - **UI**: [Shadcn UI](https://ui.shadcn.com/), Radix primitives, TailwindCSS, lucide-react
-- **Database**: PostgreSQL with [pgvector](https://github.com/pgvector/pgvector) and Apache AGE initialization
+- **Database**: PostgreSQL with [pgvector](https://github.com/pgvector/pgvector)
 - **ORM**: [Drizzle](https://orm.drizzle.team/)
 - **AI**: Vercel AI SDK-compatible `ai` package with OpenAI-compatible local and OpenAI providers
 - **Graph Visualization**: [react-force-graph-2d](https://github.com/vasturiano/react-force-graph)
-- **Content Extraction**: [Mozilla Readability](https://github.com/mozilla/readability), JSDOM, and lead-image download into `public/document-images`
+- **Content Extraction**: [Mozilla Readability](https://github.com/mozilla/readability), JSDOM, and validated PNG lead images in `data/document-images`, served through an image route
 - **Markdown**: `react-markdown`, `remark-gfm`, and Streamdown for chat rendering
 - **Syntax Highlighting**: [Shiki](https://shiki.style/)
 - **Animations**: Motion
@@ -206,7 +206,7 @@ store Google credentials.
 ### 4. Start PostgreSQL
 
 ```bash
-docker compose up db -d
+docker compose up db -d --wait
 ```
 
 The database is exposed on host port `6432` and uses the database name
@@ -231,19 +231,25 @@ Open [http://localhost:3000](http://localhost:3000).
 
 ## Docker Deployment
 
-Run the app and database together:
+Initialize the database and apply the schema from the host checkout before
+starting the app. The standalone app image does not contain migration tools.
 
 ```bash
-docker compose up --build
-
-# detached mode
+npm ci
+docker compose up db -d --wait
+DATABASE_URL=postgres://postgres:postgres@localhost:6432/openrecall npm run db:migrate
 docker compose up -d --build
 ```
 
-The app is available at [http://localhost:3000](http://localhost:3000). In
-Compose mode, the app uses `DATABASE_URL=postgres://postgres:postgres@db:5432/openrecall`
-inside the Docker network and `AI_BASE_URL=http://host.docker.internal:11434/v1`
-to reach Ollama on the host.
+The app is available at [http://localhost:3000](http://localhost:3000). Both app
+and database ports bind to localhost. In Compose mode, the app connects to the
+`db` service and uses `http://host.docker.internal:11434/v1` for local AI.
+Saved provider settings override these environment defaults.
+
+Downloaded images live in the persistent `document_images` volume. Outside
+Docker, they live in `data/document-images`. Existing `/document-images/` URLs pass through the image route,
+which decodes supported bitmap formats and serves PNG bytes. The same route
+can read existing images from `public/document-images` without moving them.
 
 ## Data Models
 
@@ -368,12 +374,12 @@ Recommended recovery:
 
 See [`docs/embedding_dimensions_concept.md`](docs/embedding_dimensions_concept.md).
 
-### Apache AGE Graph Initialization
+### Database Initialization
 
-`docker/init-db.sql` enables `vector` and `age`, loads AGE, and creates
-`knowledge_graph` on first database initialization. If graph initialization fails
-on a fresh database, inspect the database image and extension availability, then
-run the initialization SQL again.
+`docker/init-db.sql` enables pgvector on first database initialization. Run
+`npm run db:migrate` from the host checkout with `DATABASE_URL` pointing to the
+database before starting the app. The knowledge graph uses ordinary tables;
+Apache AGE is not required.
 
 ### Ollama Connection Errors
 

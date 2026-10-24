@@ -9,7 +9,7 @@ services:
       POSTGRES_PASSWORD: postgres
       POSTGRES_DB: openrecall
     ports:
-      - "6432:5432"
+      - "127.0.0.1:6432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./docker/init-db.sql:/docker-entrypoint-initdb.d/init-db.sql
@@ -26,7 +26,7 @@ services:
     container_name: openrecall-app
     restart: unless-stopped
     ports:
-      - "3000:3000"
+      - "127.0.0.1:3000:3000"
     environment:
       DATABASE_URL: postgres://postgres:postgres@db:5432/openrecall
       AI_BASE_URL: http://host.docker.internal:11434/v1
@@ -37,6 +37,9 @@ services:
         condition: service_healthy
     extra_hosts:
       - "host.docker.internal:host-gateway"
+    volumes:
+      - document_images:/app/data/document-images
 
 volumes:
   postgres_data:
+  document_images:

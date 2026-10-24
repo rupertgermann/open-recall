@@ -4,6 +4,8 @@ import { listDueSrsItems } from "@/actions/srs";
 import { Header } from "@/components/layout/header";
 import { ReviewClient } from "./review-client";
 
+export const dynamic = "force-dynamic";
+
 export default async function ReviewPage() {
   const dueCards = await listDueSrsItems(50);
 

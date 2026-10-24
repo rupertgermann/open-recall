@@ -10,6 +10,7 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { getAIErrorMessage } from "@/lib/ai/errors";
+import { readIngestionStream, type FolderImportPlan, type FolderImportSummary } from "@/lib/ingestion/events";
 
 type ContentType = "url" | "text";
 
@@ -18,21 +19,6 @@ type StepStatus = {
   message: string;
   progress: number;
   error?: boolean;
-};
-
-type FolderImportPlan = {
-  folderId: string;
-  supportedCount: number;
-  skipped: { id: string; name: string; mimeType: string; reason: string }[];
-};
-
-type FolderImportSummary = {
-  ingested: number;
-  refreshed: number;
-  skippedUnchanged: number;
-  skippedUnsupported: number;
-  failed: number;
-  failures: { fileId: string; name: string; error: string }[];
 };
 
 const STEP_ORDER = ["fetching", "chunking", "summarizing", "extracting", "embedding", "saving", "complete"];
@@ -88,109 +74,38 @@ function AddPageContent() {
         signal: controller.signal,
       });
 
-      if (!response.ok) {
-        let message = `Failed to start processing (${response.status})`;
-
-        try {
-          const contentType = response.headers.get("content-type") || "";
-          if (contentType.includes("application/json")) {
-            const data = await response.json();
-            message = data.error || data.message || message;
+      await readIngestionStream(response, (data) => {
+        if (data.step === "done") {
+          if (data.summary) {
+            setFolderImportSummary(data.summary);
+            setFolderImportPlan(null);
+            setIsProcessing(false);
+          } else if (endpoint === "/api/update-document") {
+            setTimeout(() => setIsProcessing(false), 500);
           } else {
-            const text = await response.text();
-            message = text.trim() || message;
+            setTimeout(() => router.push("/library"), 500);
           }
-        } catch {
-          // Keep the status-based message.
+          return;
         }
-
-        throw new Error(message);
-      }
-
-      const reader = response.body?.getReader();
-      if (!reader) throw new Error("No response stream");
-
-      const decoder = new TextDecoder();
-      let buffer = "";
-
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-
-        buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split("\n");
-        buffer = lines.pop() || "";
-
-        for (const line of lines) {
-          if (!line.startsWith("data: ")) continue;
-
-          try {
-            const data = JSON.parse(line.slice(6));
-
-            if (data.step === "done") {
-              if (data.summary) {
-                setFolderImportSummary(data.summary);
-                setFolderImportPlan(null);
-                setIsProcessing(false);
-                return;
-              }
-              if (endpoint === "/api/update-document" && typeof (body as any)?.documentId === "string") {
-                setTimeout(() => setIsProcessing(false), 500);
-              } else {
-                setTimeout(() => router.push("/library"), 500);
-              }
-              return;
-            }
-
-            if (data.step === "folder_confirmation") {
-              setFolderImportPlan(data.folderImportPlan);
-              setFolderImportSummary(null);
-              setIsProcessing(false);
-              return;
-            }
-
-            if (data.error) {
-              const message = data.message || "Processing failed";
-              setError(message);
-              setCurrentStatus((prev) => ({
-                step: prev?.step ?? "fetching",
-                message,
-                progress: data.progress ?? prev?.progress ?? 0,
-                error: true,
-              }));
-              setIsProcessing(false);
-              return;
-            }
-
-            setCurrentStatus({
-              step: data.step,
-              message: data.message,
-              progress: data.progress || 0,
-            });
-
-            const currentIndex = STEP_ORDER.indexOf(data.step);
-            if (currentIndex > 0) {
-              setCompletedSteps((prev) => {
-                const newSet = new Set(prev);
-                for (let i = 0; i < currentIndex; i++) {
-                  newSet.add(STEP_ORDER[i]);
-                }
-                return newSet;
-              });
-            }
-
-            if (data.step === "complete") {
-              setCompletedSteps((prev) => {
-                const newSet = new Set(prev);
-                STEP_ORDER.forEach((s) => newSet.add(s));
-                return newSet;
-              });
-            }
-          } catch {
-            // Ignore parse errors
-          }
+        if (data.step === "folder_confirmation" && data.folderImportPlan) {
+          setFolderImportPlan(data.folderImportPlan);
+          setFolderImportSummary(null);
+          setIsProcessing(false);
+          return;
         }
-      }
+        if (data.error && data.recoverable) return;
+        setCurrentStatus({
+          step: data.step,
+          message: data.message || "",
+          progress: data.progress || 0,
+          error: data.error,
+        });
+        const currentIndex = STEP_ORDER.indexOf(data.step);
+        if (currentIndex > 0) {
+          setCompletedSteps((prev) => new Set([...prev, ...STEP_ORDER.slice(0, currentIndex)]));
+        }
+        if (data.step === "complete") setCompletedSteps(new Set(STEP_ORDER));
+      });
     } finally {
       if (abortControllerRef.current === controller) {
         abortControllerRef.current = null;

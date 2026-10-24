@@ -2,6 +2,8 @@ import { getDiscoverSnapshot } from "@/actions/discover";
 import { DiscoverClient } from "@/components/discover/discover-client";
 import { Header } from "@/components/layout/header";
 
+export const dynamic = "force-dynamic";
+
 export default async function DiscoverPage() {
   const initialData = await getDiscoverSnapshot();
 

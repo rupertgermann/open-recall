@@ -1,8 +1,9 @@
 import { streamText, convertToModelMessages, type UIMessage, generateText, tool, stepCountIs } from "ai";
 import { z } from "zod";
-import { createOpenAI } from "@ai-sdk/openai";
+import { getModel } from "@/lib/ai/client";
+import { ingestTextDocument } from "@/lib/ingestion/service";
 import { retrieveContext, buildPromptContext } from "@/actions/chat";
-import { getChatConfigFromDB, type ChatConfig } from "@/lib/ai/config";
+import { getChatConfigFromDB } from "@/lib/ai/config";
 import { createAIErrorResponse, getAIErrorMessage } from "@/lib/ai/errors";
 import {
   dedupeChatSources,
@@ -18,22 +19,6 @@ import { db } from "@/db";
 import { chatMessages, chatThreads, entities, documents } from "@/db/schema";
 import { eq, ilike, or, desc } from "drizzle-orm";
 import type { ChatMessageMetadata, ChatEntityReference } from "@/lib/chat/types";
-
-// Helper to create AI client from config
-function createAIClient(config: ChatConfig) {
-  return createOpenAI({
-    baseURL: config.baseUrl,
-    apiKey: config.apiKey || "ollama",
-  });
-}
-
-// Helper to get model instance based on provider
-function getModelFromConfig(config: ChatConfig) {
-  const client = createAIClient(config);
-  
-  // Use standard client for all providers
-  return client(config.model);
-}
 
 function getLastUserText(messages: UIMessage[]): string | null {
   for (let i = messages.length - 1; i >= 0; i--) {
@@ -230,7 +215,7 @@ Guidelines:
 - Acknowledge uncertainty when unsure`;
 
   // Get model from DB-backed config
-  const model = getModelFromConfig(chatConfig);
+  const model = getModel(chatConfig);
 
   const chatTools = {
     searchKnowledgeBase: tool({
@@ -266,18 +251,8 @@ Guidelines:
       }),
       execute: async ({ title, content }) => {
         try {
-          const [created] = await db
-            .insert(documents)
-            .values({
-              title,
-              type: "note",
-              content,
-              summary: content.slice(0, 500),
-              processingStatus: "pending",
-            })
-            .returning({ id: documents.id });
-
-          return `Note "${title}" created successfully (ID: ${created.id}). It will be processed and added to the knowledge graph shortly.`;
+          const result = await ingestTextDocument({ title, content });
+          return `Note "${title}" saved and added to the knowledge base (ID: ${result.documentId}).`;
         } catch {
           return "Failed to create the note.";
         }

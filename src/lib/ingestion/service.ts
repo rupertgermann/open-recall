@@ -36,6 +36,7 @@ export type DocumentIngestionEvent = {
   message: string;
   progress: number;
   error?: boolean;
+  recoverable?: boolean;
   documentId?: string;
 };
 
@@ -408,6 +409,7 @@ async function ingestDriveFolderWithContext(
         onEvent: async (event) => {
           await options.onEvent?.({
             ...event,
+            ...(event.error ? { recoverable: true } : {}),
             message: `File ${fileNumber}/${total}: ${event.message}`,
             progress: Math.round(((index + event.progress / 100) / total) * 100),
           });
@@ -421,13 +423,13 @@ async function ingestDriveFolderWithContext(
       const message = error instanceof Error ? error.message : String(error);
       summary.failed += 1;
       summary.failures.push({ fileId: file.id, name: file.name, error: message });
-      await emit(
-        options,
-        "error",
-        `File ${fileNumber}/${total}: ${file.name} failed: ${message}`,
-        Math.round((fileNumber / total) * 100),
-        true
-      );
+      await options.onEvent?.({
+        step: "error",
+        message: `File ${fileNumber}/${total}: ${file.name} failed: ${message}`,
+        progress: Math.round((fileNumber / total) * 100),
+        error: true,
+        recoverable: true,
+      });
     }
   }
 

@@ -37,27 +37,22 @@ export async function generateTags(
   const content = input.content || "";
   const text = `${title}\n\n${summary}\n\n${content}`.slice(0, 8000);
 
-  try {
-    const { object } = await generateObject({
-      model,
-      schema: tagResultSchema,
-      system:
-        "Generate short, useful, reusable tags for a personal knowledge base. Tags must be lowercase, concise (1-3 words), and not include punctuation. Return 5 to 12 tags.",
-      prompt: `Generate tags for the following document:\n\n${text}`,
-    });
+  const { object } = await generateObject({
+    model,
+    schema: tagResultSchema,
+    system:
+      "Generate short, useful, reusable tags for a personal knowledge base. Tags must be lowercase, concise (1-3 words), and not include punctuation. Return 5 to 12 tags.",
+    prompt: `Generate tags for the following document:\n\n${text}`,
+  });
 
-    const normalized = Array.from(
-      new Set(
-        (object.tags || [])
-          .map((t) => t.trim().toLowerCase())
-          .filter((t) => t.length > 0)
-      )
-    );
-    return normalized;
-  } catch (error) {
-    console.error("Tag generation failed:", error);
-    return [];
-  }
+  const normalized = Array.from(
+    new Set(
+      (object.tags || [])
+        .map((t) => t.trim().toLowerCase())
+        .filter((t) => t.length > 0)
+    )
+  );
+  return normalized;
 }
 
 // Create AI client for embeddings
@@ -71,10 +66,7 @@ export function createEmbeddingClient(config: EmbeddingConfig = defaultEmbedding
 // Get the chat model instance
 export function getModel(config: ChatConfig = defaultChatConfig) {
   const client = createChatClient(config);
-  // Use the standard model interface which works for both text generation
-  // and structured output (generateObject). Do NOT use responses() as it
-  // is incompatible with generateObject for structured entity extraction.
-  return client(config.model);
+  return config.provider === "local" ? client.chat(config.model) : client.responses(config.model);
 }
 
 // Get the embedding model instance
@@ -176,11 +168,10 @@ export async function extractEntitiesAndRelationships(
       ? Math.max(0, Math.floor(options.maxRelationships))
       : undefined;
 
-  try {
-    const { object } = await generateObject({
-      model,
-      schema: extractionResultSchema,
-      system: `You are an expert at extracting structured knowledge from text.
+  const { object } = await generateObject({
+    model,
+    schema: extractionResultSchema,
+    system: `You are an expert at extracting structured knowledge from text.
 Your task is to identify:
 1. Key entities (people, concepts, technologies, organizations, etc.)
 2. Relationships between these entities
@@ -191,7 +182,7 @@ For relationships, use descriptive types like "created_by", "part_of", "related_
 Important: Order entities by importance (most important first). Do not invent entities.
 If an entity limit is provided, return at most that many entities.
 Only include relationships that connect entities you returned.`,
-      prompt: `Extract entities and their relationships from the following text.
+    prompt: `Extract entities and their relationships from the following text.
 
 Constraints:
 - Return entities ordered by importance (descending)
@@ -200,28 +191,23 @@ Constraints:
 
 Text:
 ${content}`,
-    });
+  });
 
-    const limitedEntities = maxEntities ? object.entities.slice(0, maxEntities) : object.entities;
-    const keptEntityNames = new Set(limitedEntities.map((e) => e.name));
+  const limitedEntities = maxEntities ? object.entities.slice(0, maxEntities) : object.entities;
+  const keptEntityNames = new Set(limitedEntities.map((e) => e.name));
 
-    let limitedRelationships = object.relationships.filter(
-      (r) => keptEntityNames.has(r.source) && keptEntityNames.has(r.target)
-    );
+  let limitedRelationships = object.relationships.filter(
+    (r) => keptEntityNames.has(r.source) && keptEntityNames.has(r.target)
+  );
 
-    if (maxRelationships !== undefined) {
-      limitedRelationships = limitedRelationships.slice(0, maxRelationships);
-    }
-
-    return {
-      entities: limitedEntities,
-      relationships: limitedRelationships,
-    };
-  } catch (error) {
-    console.error("Entity extraction failed:", error);
-    // Return empty result on failure (graceful degradation)
-    return { entities: [], relationships: [] };
+  if (maxRelationships !== undefined) {
+    limitedRelationships = limitedRelationships.slice(0, maxRelationships);
   }
+
+  return {
+    entities: limitedEntities,
+    relationships: limitedRelationships,
+  };
 }
 
 // ============================================================================
