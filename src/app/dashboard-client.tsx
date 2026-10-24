@@ -123,7 +123,7 @@ export function DashboardClient({ data }: { data: DashboardData }) {
       <main className="container mx-auto px-4 py-8">
         <div className="flex flex-col gap-8">
           {/* Hero Section */}
-          <div className="flex items-center justify-between">
+          <div className="flex flex-col items-start gap-4 md:flex-row md:items-center md:justify-between">
             <div>
               <h1 className="text-3xl font-bold tracking-tight">
                 Welcome to <span className="text-primary">open-recall</span>
@@ -198,7 +198,7 @@ export function DashboardClient({ data }: { data: DashboardData }) {
           {/* Stats Grid */}
           {!isEmpty && (
             <>
-              <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 2xl:grid-cols-6 gap-4">
                 <StatCard label="Documents" value={data.stats.documents} icon={BookOpen} href="/library" color="text-blue-500" />
                 <StatCard label="Entities" value={data.stats.entities} icon={Network} href="/graph" color="text-emerald-500" />
                 <StatCard label="Relations" value={data.stats.relationships} icon={TrendingUp} href="/graph" color="text-purple-500" />
@@ -267,7 +267,7 @@ export function DashboardClient({ data }: { data: DashboardData }) {
                 </Card>
               </div>
 
-              <div className="grid md:grid-cols-2 gap-6">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                 {/* Recent Documents */}
                 <Card>
                   <CardHeader className="pb-2 flex flex-row items-center justify-between">
