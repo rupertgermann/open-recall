@@ -2,7 +2,7 @@
 
 import { db } from "@/db";
 import { documents, chunks, entities, entityMentions, relationships, tags, documentTags, documentCollections } from "@/db/schema";
-import { eq, desc, like, or, sql, count, inArray } from "drizzle-orm";
+import { eq, desc, ilike, or, sql, count, inArray } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { generateTagsWithDBConfig } from "@/lib/ai";
 import { refreshDocument } from "@/lib/ingestion/service";
@@ -40,8 +40,8 @@ export async function getDocuments(options?: {
   if (search) {
     conditions.push(
       or(
-        like(documents.title, `%${search}%`),
-        like(documents.summary, `%${search}%`)
+        ilike(documents.title, `%${search}%`),
+        ilike(documents.summary, `%${search}%`)
       )
     );
   }
@@ -302,22 +302,18 @@ export async function getDocumentStats() {
  * Delete a document and all related data
  */
 export async function deleteDocument(id: string) {
-  // Delete relationships that reference this document directly
-  await db.delete(relationships).where(eq(relationships.sourceDocumentId, id));
-  
-  // Delete the document (cascades to chunks, entityMentions, srsItems)
-  await db.delete(documents).where(eq(documents.id, id));
-  
-  // Delete orphaned entities (entities with no remaining mentions)
-  await db
-    .delete(entities)
-    .where(
-      sql`${entities.id} NOT IN (
-        SELECT DISTINCT entity_id
-        FROM entity_mentions
-      )`
-    );
-  
+  await db.transaction(async (tx) => {
+    await tx.delete(documents).where(eq(documents.id, id));
+    await tx
+      .delete(entities)
+      .where(
+        sql`${entities.id} NOT IN (
+          SELECT DISTINCT entity_id
+          FROM entity_mentions
+        )`
+      );
+  });
+
   revalidatePath("/library");
   return { success: true };
 }

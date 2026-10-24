@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect } from "react";
 import { RefreshCw, CheckCircle, Loader2, Server, Cpu, Database, MessageSquare, Binary, HardDrive } from "lucide-react";
-import { getAISettings, saveAISettings, getDatabaseStats, testAIConnection, validateOpenAIApiKey } from "@/actions/settings";
+import { getAISettings, saveAISettings, getDatabaseStats, testAIConnection, validateOpenAIApiKey, type AISettings } from "@/actions/settings";
 import { Header } from "@/components/layout/header";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -44,6 +44,9 @@ type GogStatusResponse =
 
 export default function SettingsPage() {
   const [isLoading, setIsLoading] = useState(true);
+  const [loadedSettings, setLoadedSettings] = useState<AISettings | null>(null);
+  const [hasChanges, setHasChanges] = useState(false);
+  const [keyChanged, setKeyChanged] = useState(false);
 
   const [openaiApiKey, setOpenaiApiKey] = useState("");
   const [openaiApiKeyStatus, setOpenaiApiKeyStatus] = useState<ApiKeyValidationStatus>("idle");
@@ -59,8 +62,8 @@ export default function SettingsPage() {
   const [chatAvailableModels, setChatAvailableModels] = useState<string[]>([...LOCAL_CHAT_MODELS]);
 
   // OpenAI-specific chat settings
-  const [reasoningEffort, setReasoningEffort] = useState("medium");
-  const [verbosity, setVerbosity] = useState("medium");
+  const [reasoningEffort, setReasoningEffort] = useState<"low" | "medium" | "high">("medium");
+  const [verbosity, setVerbosity] = useState<"low" | "medium" | "high">("medium");
   const [webSearchEnabled, setWebSearchEnabled] = useState(false);
 
   // Embedding provider settings
@@ -77,64 +80,16 @@ export default function SettingsPage() {
   const [gogStatus, setGogStatus] = useState<GogStatusResponse | null>(null);
   const [gogStatusError, setGogStatusError] = useState<string | null>(null);
 
-  // Auto-save function with debouncing
-  const autoSave = React.useCallback(
-    debounce(async () => {
-      setIsSaving(true);
-      try {
-        const openaiBaseUrl = "https://api.openai.com/v1";
-        const sharedKey = openaiApiKey || undefined;
-
-        await saveAISettings({
-          openaiApiKey: sharedKey,
-          chat: {
-            provider: chatProvider,
-            baseUrl: chatProvider === "openai" ? openaiBaseUrl : chatBaseUrl,
-            model: chatModel,
-            apiKey: chatProvider === "openai" ? sharedKey : undefined,
-            // Only include OpenAI-specific options for OpenAI provider
-            ...(chatProvider === "openai" && {
-              reasoningEffort: reasoningEffort as "low" | "medium" | "high",
-              verbosity: verbosity as "low" | "medium" | "high",
-              webSearchEnabled: webSearchEnabled,
-            }),
-          },
-          embedding: {
-            provider: embeddingProvider,
-            baseUrl: embeddingProvider === "openai" ? openaiBaseUrl : embeddingBaseUrl,
-            model: embeddingModel,
-            apiKey: embeddingProvider === "openai" ? sharedKey : undefined,
-            // Embeddings don't use reasoning or web search
-          },
-        });
-        setSaved(true);
-        setTimeout(() => setSaved(false), 2000);
-      } catch (error) {
-        console.error("Failed to auto-save settings:", error);
-      } finally {
-        setIsSaving(false);
-      }
-    }, 1000), // 1 second debounce
-    [chatProvider, chatBaseUrl, chatModel, reasoningEffort, verbosity, webSearchEnabled, embeddingProvider, embeddingBaseUrl, embeddingModel, openaiApiKey]
-  );
-
-  // Simple debounce function
-  function debounce<T extends (...args: any[]) => any>(func: T, wait: number): T {
-    let timeout: NodeJS.Timeout;
-    return ((...args: any[]) => {
-      clearTimeout(timeout);
-      timeout = setTimeout(() => func(...args), wait);
-    }) as T;
-  }
-
   // Load settings on mount
   useEffect(() => {
+    let cancelled = false;
     async function loadSettings() {
       try {
         const [settings, stats] = await Promise.all([
           getAISettings(),
           getDatabaseStats(),
         ]);
+        if (cancelled) return;
         // Chat settings
         const loadedChatModel =
           settings.chat.provider === "openai"
@@ -163,17 +118,21 @@ export default function SettingsPage() {
         );
 
         const keyFromSettings =
-          settings.chat.apiKey || settings.embedding.apiKey || "";
+          settings.openaiApiKey ||
+          (settings.chat.provider === "openai" ? settings.chat.apiKey : undefined) ||
+          (settings.embedding.provider === "openai" ? settings.embedding.apiKey : undefined) || "";
         setOpenaiApiKey(keyFromSettings);
         // Stats
         setDbStats(stats);
+        setLoadedSettings(settings);
       } catch (error) {
         console.error("Failed to load settings:", error);
       } finally {
-        setIsLoading(false);
+        if (!cancelled) setIsLoading(false);
       }
     }
     loadSettings();
+    return () => { cancelled = true; };
   }, []);
 
   useEffect(() => {
@@ -206,10 +165,53 @@ export default function SettingsPage() {
     };
   }, []);
 
-  // Auto-save when any setting changes
   useEffect(() => {
-    autoSave();
-  }, [chatProvider, chatBaseUrl, chatModel, reasoningEffort, verbosity, webSearchEnabled, embeddingProvider, embeddingBaseUrl, embeddingModel, openaiApiKey]);
+    if (!loadedSettings || !hasChanges || isSaving) return;
+
+    setSaved(false);
+    const timeout = setTimeout(async () => {
+      setHasChanges(false);
+      setIsSaving(true);
+      const sharedKey = openaiApiKey || undefined;
+      try {
+        await saveAISettings({
+          ...loadedSettings,
+          openaiApiKey: keyChanged ? sharedKey : loadedSettings.openaiApiKey,
+          chat: {
+            ...loadedSettings.chat,
+            provider: chatProvider,
+            baseUrl: chatProvider === "openai" ? "https://api.openai.com/v1" : chatBaseUrl,
+            model: chatModel,
+            apiKey: chatProvider === "openai"
+              ? (keyChanged || loadedSettings.chat.provider !== "openai" ? sharedKey : loadedSettings.chat.apiKey)
+              : (loadedSettings.chat.provider === "local" ? loadedSettings.chat.apiKey : undefined),
+            ...(chatProvider === "openai" && { reasoningEffort, verbosity, webSearchEnabled }),
+          },
+          embedding: {
+            ...loadedSettings.embedding,
+            provider: embeddingProvider,
+            baseUrl: embeddingProvider === "openai" ? "https://api.openai.com/v1" : embeddingBaseUrl,
+            model: embeddingModel,
+            apiKey: embeddingProvider === "openai"
+              ? (keyChanged || loadedSettings.embedding.provider !== "openai" ? sharedKey : loadedSettings.embedding.apiKey)
+              : (loadedSettings.embedding.provider === "local" ? loadedSettings.embedding.apiKey : undefined),
+          },
+        });
+        setSaved(true);
+      } catch (error) {
+        console.error("Failed to auto-save settings:", error);
+      } finally {
+        setIsSaving(false);
+      }
+    }, 1000);
+    return () => clearTimeout(timeout);
+  }, [loadedSettings, hasChanges, isSaving, keyChanged, chatProvider, chatBaseUrl, chatModel, reasoningEffort, verbosity, webSearchEnabled, embeddingProvider, embeddingBaseUrl, embeddingModel, openaiApiKey]);
+
+  useEffect(() => {
+    if (!saved) return;
+    const timeout = setTimeout(() => setSaved(false), 2000);
+    return () => clearTimeout(timeout);
+  }, [saved]);
 
   const testChatConnection = async () => {
     setChatConnectionStatus("testing");
@@ -218,7 +220,9 @@ export default function SettingsPage() {
     try {
       const result = await testAIConnection(
         chatProvider === "openai" ? "https://api.openai.com/v1" : chatBaseUrl,
-        chatProvider === "openai" ? (openaiApiKey || undefined) : undefined
+        chatProvider === "openai"
+          ? (openaiApiKey || undefined)
+          : (loadedSettings?.chat.provider === "local" ? loadedSettings.chat.apiKey : undefined)
       );
       if (result.success) {
         setChatConnectionStatus("connected");
@@ -257,7 +261,9 @@ export default function SettingsPage() {
     try {
       const result = await testAIConnection(
         embeddingProvider === "openai" ? "https://api.openai.com/v1" : embeddingBaseUrl,
-        embeddingProvider === "openai" ? (openaiApiKey || undefined) : undefined
+        embeddingProvider === "openai"
+          ? (openaiApiKey || undefined)
+          : (loadedSettings?.embedding.provider === "local" ? loadedSettings.embedding.apiKey : undefined)
       );
       if (result.success) {
         setEmbeddingConnectionStatus("connected");
@@ -370,6 +376,17 @@ export default function SettingsPage() {
     );
   }
 
+  if (!loadedSettings) {
+    return (
+      <div className="min-h-screen bg-background">
+        <Header />
+        <main className="container mx-auto px-4 py-8 max-w-3xl" role="alert">
+          Failed to load settings. Reload this page to try again.
+        </main>
+      </div>
+    );
+  }
+
   // Helper component for provider config
   const ProviderConfig = ({
     title,
@@ -427,7 +444,7 @@ export default function SettingsPage() {
         <div className="flex gap-2">
           <Button
             variant={provider === "local" ? "default" : "outline"}
-            onClick={() => setProvider("local")}
+            onClick={() => { setHasChanges(true); setProvider("local"); }}
             className="flex-1"
           >
             <Cpu className="mr-2 h-4 w-4" />
@@ -435,7 +452,7 @@ export default function SettingsPage() {
           </Button>
           <Button
             variant={provider === "openai" ? "default" : "outline"}
-            onClick={() => setProvider("openai")}
+            onClick={() => { setHasChanges(true); setProvider("openai"); }}
             className="flex-1"
           >
             <Server className="mr-2 h-4 w-4" />
@@ -450,7 +467,7 @@ export default function SettingsPage() {
               <div className="flex gap-2">
                 <Input
                   value={baseUrl}
-                  onChange={(e) => setBaseUrl(e.target.value)}
+                  onChange={(e) => { setHasChanges(true); setBaseUrl(e.target.value); }}
                   placeholder="http://localhost:11434/v1"
                 />
                 <Button
@@ -489,7 +506,7 @@ export default function SettingsPage() {
             <label className="text-sm font-medium">Model</label>
             <select
               value={model}
-              onChange={(e) => setModel(e.target.value)}
+              onChange={(e) => { setHasChanges(true); setModel(e.target.value); }}
               disabled={availableModels.length === 0}
               className="h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm disabled:opacity-50"
             >
@@ -508,7 +525,7 @@ export default function SettingsPage() {
                 <label className="text-sm font-medium">Reasoning Effort</label>
                 <Select 
                   value={reasoningEffort} 
-                  onValueChange={(value: "low" | "medium" | "high") => setReasoningEffort?.(value)}
+                  onValueChange={(value: "low" | "medium" | "high") => { setHasChanges(true); setReasoningEffort?.(value); }}
                 >
                   <SelectTrigger>
                     <SelectValue />
@@ -528,7 +545,7 @@ export default function SettingsPage() {
                 <label className="text-sm font-medium">Verbosity</label>
                 <Select 
                   value={verbosity} 
-                  onValueChange={(value: "low" | "medium" | "high") => setVerbosity?.(value)}
+                  onValueChange={(value: "low" | "medium" | "high") => { setHasChanges(true); setVerbosity?.(value); }}
                 >
                   <SelectTrigger>
                     <SelectValue />
@@ -551,7 +568,7 @@ export default function SettingsPage() {
                     type="checkbox"
                     id="web-search"
                     checked={webSearchEnabled}
-                    onChange={(e) => setWebSearchEnabled?.(e.target.checked)}
+                    onChange={(e) => { setHasChanges(true); setWebSearchEnabled?.(e.target.checked); }}
                     className="rounded"
                   />
                   <label htmlFor="web-search" className="text-sm">
@@ -690,6 +707,8 @@ export default function SettingsPage() {
                   data-form-type="other"
                   onFocus={() => setOpenaiApiKeyInputActive(true)}
                   onChange={(e) => {
+                    setHasChanges(true);
+                    setKeyChanged(true);
                     setOpenaiApiKey(e.target.value);
                     setOpenaiApiKeyStatus("idle");
                     setOpenaiApiKeyError(null);
