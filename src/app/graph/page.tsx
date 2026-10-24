@@ -107,7 +107,11 @@ function GraphPageContent() {
   const [dimensions, setDimensions] = useState({ width: 0, height: 0 });
   const graphRef = useRef<any>(null);
   const isInitialized = useRef(false);
-  const hasAutoZoomed = useRef(false);
+  const focusRequest = useRef<{ id: string; zoom: number; pending: boolean; final: boolean } | null>(null);
+  const focusTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const cameraReadyAt = useRef(0);
+  const [focusRevision, setFocusRevision] = useState(0);
+  const selectionZoom = useRef(5);
 
   useEffect(() => {
     (async () => {
@@ -182,8 +186,8 @@ function GraphPageContent() {
 
         // Restore camera if graph ref exists
         if (state.camera && graphRef.current) {
-          graphRef.current.centerAt(state.camera.x, state.camera.y, 0);
-          graphRef.current.zoom(state.camera.k, 0);
+          graphRef.current.centerAt(state.camera.x, state.camera.y, 500);
+          graphRef.current.zoom(state.camera.k, 500);
         }
       }
     } catch (e) {
@@ -191,14 +195,6 @@ function GraphPageContent() {
     }
     isInitialized.current = true;
   }, [focusDocumentId, focusEntityId, graphData.nodes, saveGraphState]);
-
-  // Save camera state on zoom/pan end
-  const handleEngineStop = useCallback(() => {
-    if (graphRef.current) {
-      const { x, y, k } = graphRef.current.cameraPosition();
-      saveGraphState({ camera: { x, y, k } });
-    }
-  }, [saveGraphState]);
 
   useEffect(() => {
     if (!containerRef.current) return;
@@ -336,7 +332,13 @@ function GraphPageContent() {
     }
   };
 
+  const cancelPendingFocus = useCallback(() => {
+    focusRequest.current = null;
+    if (focusTimer.current) clearTimeout(focusTimer.current);
+  }, []);
+
   const handleReset = () => {
+    cancelPendingFocus();
     setSearchQuery("");
     setSelectedTypes([]);
     setSelectedTags([]);
@@ -350,6 +352,7 @@ function GraphPageContent() {
     }
   };
 
+  const entityFilterId = filterByEntity ? selectedNode?.id : null;
   const filteredData = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
 
@@ -369,8 +372,8 @@ function GraphPageContent() {
       return nodeIds.has(sourceId) && nodeIds.has(targetId);
     });
 
-    if (filterByEntity && selectedNode) {
-      const selectedId = selectedNode.id;
+    if (entityFilterId) {
+      const selectedId = entityFilterId;
       const allowedIds = new Set<string>([selectedId]);
 
       for (const l of links) {
@@ -389,7 +392,7 @@ function GraphPageContent() {
     }
 
     return { nodes, links };
-  }, [graphData, selectedTypes, searchQuery, filterByEntity, selectedNode]);
+  }, [graphData, selectedTypes, searchQuery, entityFilterId]);
 
   // Transform data for force graph
   const forceGraphData = useMemo(() => {
@@ -440,9 +443,11 @@ function GraphPageContent() {
     return neighbors;
   }, [hoveredNode, filteredData.links]);
 
-  const handleNodeClick = useCallback((node: { id: string; name: string; type: string }) => {
+  const handleNodeClick = useCallback((node: { id: string }, zoom = 5) => {
     const graphNode = graphData.nodes.find((n) => n.id === node.id);
     if (graphNode) {
+      selectionZoom.current = zoom;
+      setFocusRevision((revision) => revision + 1);
       setSelectedNode(graphNode);
       saveGraphState({ selectedNodeId: graphNode.id });
     }
@@ -450,7 +455,7 @@ function GraphPageContent() {
 
   // Restore state when data loads
   useEffect(() => {
-    if (isLoading || graphData.nodes.length === 0) return;
+    if (isLoading || graphData.nodes.length === 0 || focusEntityId) return;
 
     try {
       const saved = localStorage.getItem(STORAGE_KEY);
@@ -468,8 +473,8 @@ function GraphPageContent() {
           // Add a small delay to ensure graph is ready
           setTimeout(() => {
              if (graphRef.current) {
-                graphRef.current.centerAt(state.camera!.x, state.camera!.y, 0);
-                graphRef.current.zoom(state.camera!.k, 0);
+                graphRef.current.centerAt(state.camera!.x, state.camera!.y, 500);
+                graphRef.current.zoom(state.camera!.k, 500);
              }
           }, 100);
           isInitialized.current = true;
@@ -478,7 +483,7 @@ function GraphPageContent() {
     } catch (e) {
       console.error("Failed to restore graph state:", e);
     }
-  }, [isLoading, graphData.nodes, selectedNode, saveGraphState]);
+  }, [isLoading, graphData.nodes, selectedNode, focusEntityId, saveGraphState]);
 
   // Save camera state handler
   const handleZoomEnd = useCallback((transform: { k: number; x: number; y: number }) => {
@@ -486,6 +491,7 @@ function GraphPageContent() {
   }, [saveGraphState]);
 
   const handleZoomIn = useCallback(() => {
+    cancelPendingFocus();
     if (graphRef.current) {
       const currentZoom = graphRef.current.zoom();
       const newZoom = currentZoom * 1.5;
@@ -504,9 +510,10 @@ function GraphPageContent() {
       
       graphRef.current.zoom(newZoom, 400);
     }
-  }, [selectedNode, forceGraphData]);
+  }, [selectedNode, forceGraphData, cancelPendingFocus]);
 
   const handleZoomOut = useCallback(() => {
+    cancelPendingFocus();
     if (graphRef.current) {
       const currentZoom = graphRef.current.zoom();
       const newZoom = currentZoom / 1.2;
@@ -525,50 +532,58 @@ function GraphPageContent() {
 
       graphRef.current.zoom(newZoom, 400);
     }
-  }, [selectedNode, forceGraphData]);
+  }, [selectedNode, forceGraphData, cancelPendingFocus]);
 
-  // Zoom to and center on the selected node
-  const handleZoomToNode = useCallback(() => {
-    if (!selectedNode || !graphRef.current) return;
-    
-    const graphInstance = graphRef.current;
-    const internalData = (graphInstance as any)._graphData || forceGraphData;
-    const internalNode = internalData.nodes.find((n: any) => n.id === selectedNode.id);
-    
-    if (internalNode && internalNode.x !== undefined && internalNode.y !== undefined) {
-      // Center on the node and zoom in for focus
-      graphInstance.centerAt(internalNode.x, internalNode.y, 500);
-      graphInstance.zoom(5, 500);
+  const applyPendingFocus = useCallback(function applyPendingFocus() {
+    const request = focusRequest.current;
+    if (!request?.pending) return;
+    if (focusTimer.current) clearTimeout(focusTimer.current);
+    // Native camera tweens accumulate, so finish the current move before starting another.
+    const delay = cameraReadyAt.current - Date.now();
+    if (delay > 0) {
+      focusTimer.current = setTimeout(applyPendingFocus, delay);
+      return;
     }
-  }, [selectedNode, forceGraphData]);
+    const node: { id: string; x?: number; y?: number } | undefined = forceGraphData.nodes.find((node) => node.id === request.id);
+    if (!graphRef.current || !node || !Number.isFinite(node.x) || !Number.isFinite(node.y)) return;
+    graphRef.current.centerAt(node.x, node.y, 500);
+    graphRef.current.zoom(request.zoom, 500);
+    cameraReadyAt.current = Date.now() + 500;
+    request.pending = false;
+    if (request.final) focusRequest.current = null;
+  }, [forceGraphData]);
 
-  // Auto-zoom to selected node on page load
   useEffect(() => {
-    if (!selectedNode || !graphRef.current || isLoading || hasAutoZoomed.current) return;
-    
-    // Wait for the graph to stabilize and node positions to be calculated
-    const timer = setTimeout(() => {
-      if (!graphRef.current) return;
-      
-      const graphInstance = graphRef.current;
-      const internalData = (graphInstance as any)._graphData || forceGraphData;
-      const internalNode = internalData.nodes.find((n: any) => n.id === selectedNode.id);
-      
-      if (internalNode && internalNode.x !== undefined && internalNode.y !== undefined) {
-        graphInstance.centerAt(internalNode.x, internalNode.y, 500);
-        graphInstance.zoom(5, 500);
-        hasAutoZoomed.current = true;
-      }
-    }, 800);
-    
-    return () => clearTimeout(timer);
-  }, [selectedNode, isLoading, forceGraphData]);
+    cameraReadyAt.current = Math.max(cameraReadyAt.current, Date.now() + 800);
+  }, [forceGraphData]);
+
+  useEffect(() => {
+    if (!selectedNode) return;
+    focusRequest.current = { id: selectedNode.id, zoom: selectionZoom.current, pending: true, final: false };
+  }, [selectedNode, focusRevision]);
+
+  useEffect(() => {
+    applyPendingFocus();
+  }, [selectedNode, isLoading, focusRevision, applyPendingFocus]);
+
+  useEffect(() => cancelPendingFocus, [cancelPendingFocus]);
+
+  const handleEngineStop = useCallback(() => {
+    if (!focusRequest.current) return;
+    focusRequest.current.pending = true;
+    focusRequest.current.final = true;
+    applyPendingFocus();
+  }, [applyPendingFocus]);
+
+  const handleZoomToNode = useCallback(() => {
+    if (selectedNode) handleNodeClick(selectedNode);
+  }, [selectedNode, handleNodeClick]);
 
   return (
     <div className="h-screen flex flex-col overflow-hidden">
       <Header />
 
-      <main className="flex-1 flex gap-0 p-0 overflow-hidden">
+      <main className="flex-1 flex gap-0 p-0 overflow-hidden" onPointerDownCapture={cancelPendingFocus} onWheelCapture={cancelPendingFocus}>
         {/* Graph Canvas */}
         <div className="flex-1 h-full min-w-0">
           <Card className="h-full relative overflow-hidden flex flex-col">
@@ -831,6 +846,8 @@ function GraphPageContent() {
                   onNodeHover={(node) => setHoveredNode(node ? (node as any).id : null)}
                   onNodeClick={(node) => handleNodeClick(node as any)}
                   onZoomEnd={handleZoomEnd}
+                  onEngineTick={applyPendingFocus}
+                  onEngineStop={handleEngineStop}
                   nodeCanvasObjectMode={() => "replace"}
                   nodeCanvasObject={(node: { x?: number; y?: number; name?: string; type?: string; val?: number; degree?: number }, ctx: CanvasRenderingContext2D, globalScale: number) => {
                     const label = node.name || "";
@@ -1055,24 +1072,7 @@ function GraphPageContent() {
                             className="flex items-center gap-2 p-2 rounded-lg bg-muted cursor-pointer hover:bg-muted/80"
                             onClick={() => {
                               const node = graphData.nodes.find((n) => n.id === entity.id);
-                              if (node && graphRef.current) {
-                                setSelectedNode(node);
-                                saveGraphState({ selectedNodeId: node.id });
-                                // Get the current zoom level
-                                const currentZoom = graphRef.current.zoom();
-                                
-                                // Use the force graph's internal data structure
-                                const graphInstance = graphRef.current;
-                                // Access the graph's current state through the internal _graphData property
-                                const internalData = (graphInstance as any)._graphData || forceGraphData;
-                                const internalNode = internalData.nodes.find((n: any) => n.id === entity.id);
-                                
-                                if (internalNode && internalNode.x !== undefined && internalNode.y !== undefined) {
-                                  // Center the graph on this node while preserving current zoom
-                                  graphInstance.centerAt(internalNode.x, internalNode.y, 400);
-                                  graphInstance.zoom(currentZoom, 400);
-                                }
-                              }
+                              if (node) handleNodeClick(node, graphRef.current?.zoom() ?? 5);
                             }}
                           >
                             <div
