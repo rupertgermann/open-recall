@@ -1,4 +1,4 @@
-import { and, eq } from "drizzle-orm";
+import { and, asc, eq, sql } from "drizzle-orm";
 import { revalidatePath as nextRevalidatePath } from "next/cache.js";
 
 import {
@@ -194,33 +194,28 @@ async function ingestUrlDocumentWithContext(
   const normalizedUrl = validateUrl(url);
   await emit(options, "fetching", `Extracting content from ${normalizedUrl}...`, 10);
 
-  const existingDriveDocumentId = await findExistingDriveDocumentId(context.database, normalizedUrl);
-  if (existingDriveDocumentId) {
+  const existingDriveDocument = await findExistingDriveDocument(context.database, normalizedUrl);
+  if (existingDriveDocument) {
+    assertDriveDocumentAvailable(existingDriveDocument);
     await emit(
       options,
       "fetching",
       "Existing Drive File found; refreshing source.",
       15,
       false,
-      existingDriveDocumentId
+      existingDriveDocument.id
     );
-    return refreshDocumentWithContext(context, existingDriveDocumentId, options);
+    return refreshDocumentWithContext(context, existingDriveDocument.id, options);
   }
 
   const source = await getUrlSource(normalizedUrl, options);
   await emit(options, "saving", "Creating document record...", 20);
 
-  const [doc] = await context.database
-    .insert(documents)
-    .values({
-      url: source.url,
-      title: source.title,
-      type: source.type,
-      content: source.content,
-      processingStatus: "processing",
-      metadata: getSourceMetadata(source),
-    })
-    .returning({ id: documents.id });
+  const doc = await createOrFindUrlDocument(context.database, source);
+  if (!doc.created) {
+    assertDriveDocumentAvailable(doc);
+    return refreshDocumentWithContext(context, doc.id, options);
+  }
 
   try {
     await saveLeadImage(context.database, doc.id, source.leadImageUrl, source.metadata);
@@ -310,6 +305,7 @@ async function refreshDocumentWithContext(
     .select({
       id: documents.id,
       url: documents.url,
+      content: documents.content,
       contentHash: documents.contentHash,
       embeddingModel: documents.embeddingModel,
     })
@@ -334,6 +330,7 @@ async function refreshDocumentWithContext(
   const contentHash = generateContentHash(source.content);
   const unchanged =
     contentHash === existing.contentHash &&
+    source.content === existing.content &&
     existing.embeddingModel === embeddingModel;
 
   if (unchanged) {
@@ -407,7 +404,7 @@ async function ingestDriveFolderWithContext(
       const result = await ingestUrlDocumentWithContext(context, file.canonicalUrl, {
         ...options,
         onEvent: async (event) => {
-          await options.onEvent?.({
+          await notify(options, {
             ...event,
             ...(event.error ? { recoverable: true } : {}),
             message: `File ${fileNumber}/${total}: ${event.message}`,
@@ -423,7 +420,7 @@ async function ingestDriveFolderWithContext(
       const message = error instanceof Error ? error.message : String(error);
       summary.failed += 1;
       summary.failures.push({ fileId: file.id, name: file.name, error: message });
-      await options.onEvent?.({
+      await notify(options, {
         step: "error",
         message: `File ${fileNumber}/${total}: ${file.name} failed: ${message}`,
         progress: Math.round((fileNumber / total) * 100),
@@ -577,20 +574,51 @@ function afterPersistDerivedDocumentData(
   revalidateDocument(context, documentId);
 }
 
-async function findExistingDriveDocumentId(
+async function findExistingDriveDocument(
   database: IngestionDatabase,
   url: string
-): Promise<string | null> {
+): Promise<{ id: string; processingStatus: string } | null> {
   const parsed = parseDriveUrl(url);
   if (parsed?.kind !== "file") return null;
 
   const [existing] = await database
-    .select({ id: documents.id })
+    .select({ id: documents.id, processingStatus: documents.processingStatus })
     .from(documents)
     .where(eq(documents.url, parsed.canonicalUrl))
+    .orderBy(asc(documents.createdAt), asc(documents.id))
     .limit(1);
 
-  return existing?.id ?? null;
+  return existing ?? null;
+}
+
+function assertDriveDocumentAvailable(document: { processingStatus: string }) {
+  if (document.processingStatus === "processing") {
+    throw new Error("Drive File is already being processed. Try again when it finishes.");
+  }
+}
+
+async function createOrFindUrlDocument(database: IngestionDatabase, source: SourceContent) {
+  const insert = async (tx: IngestionDatabase) => {
+    const [document] = await tx.insert(documents).values({
+      url: source.url,
+      title: source.title,
+      type: source.type,
+      content: source.content,
+      processingStatus: "processing",
+      metadata: getSourceMetadata(source),
+    }).returning({ id: documents.id, processingStatus: documents.processingStatus });
+    return { ...document, created: true };
+  };
+  const drive = source.url ? parseDriveUrl(source.url) : null;
+  if (drive?.kind !== "file") return insert(database);
+
+  return database.transaction(async (tx: IngestionDatabase) => {
+    // Serialize only the identity claim, not the network or AI work.
+    await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${drive.canonicalUrl}))`);
+    const existing = await findExistingDriveDocument(tx, drive.canonicalUrl);
+    if (existing) return { ...existing, created: false };
+    return insert(tx);
+  });
 }
 
 async function getUrlSource(
@@ -694,7 +722,16 @@ async function emit(
   error = false,
   documentId?: string
 ) {
-  await options.onEvent?.({ step, message, progress, error, documentId });
+  await notify(options, { step, message, progress, error, documentId });
+}
+
+async function notify(options: DocumentIngestionOptions, event: DocumentIngestionEvent) {
+  try {
+    await options.onEvent?.(event);
+  } catch {
+    // Progress delivery cannot undo Document Persistence or stop a Folder Import.
+    metricsCollector.log("[INGEST] Progress delivery failed; continuing ingestion");
+  }
 }
 
 function revalidateDocument(

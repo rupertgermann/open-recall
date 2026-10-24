@@ -27,13 +27,17 @@ function createSSEMessage(event: DocumentIngestionEvent | Record<string, unknown
 export async function POST(req: Request) {
   const body: IngestRequest = await req.json();
   const encoder = new TextEncoder();
+  let cancelled = false;
 
   const stream = new ReadableStream({
     async start(controller) {
       let emittedError = false;
+      const send = (event: DocumentIngestionEvent | Record<string, unknown>) => {
+        if (!cancelled) controller.enqueue(encoder.encode(createSSEMessage(event)));
+      };
       const onEvent = (event: DocumentIngestionEvent) => {
         if (event.error && !event.recoverable) emittedError = true;
-        controller.enqueue(encoder.encode(createSSEMessage(event)));
+        send(event);
       };
 
       try {
@@ -42,25 +46,21 @@ export async function POST(req: Request) {
           const driveLink = parseDriveUrl(url);
           if (driveLink?.kind === "folder" && !body.confirmFolderImport) {
             const plan = await buildDriveFolderImportPlan(url);
-            controller.enqueue(
-              encoder.encode(
-                createSSEMessage({
-                  step: "folder_confirmation",
-                  message: "Confirm Folder Import",
-                  progress: 0,
-                  folderImportPlan: {
-                    folderId: plan.folderId,
-                    supportedCount: plan.supported.length,
-                    skipped: plan.skipped.map((file) => ({
-                      id: file.id,
-                      name: file.name,
-                      mimeType: file.mimeType,
-                      reason: file.reason,
-                    })),
-                  },
-                })
-              )
-            );
+            send({
+              step: "folder_confirmation",
+              message: "Confirm Folder Import",
+              progress: 0,
+              folderImportPlan: {
+                folderId: plan.folderId,
+                supportedCount: plan.supported.length,
+                skipped: plan.skipped.map((file) => ({
+                  id: file.id,
+                  name: file.name,
+                  mimeType: file.mimeType,
+                  reason: file.reason,
+                })),
+              },
+            });
             return;
           }
 
@@ -76,15 +76,11 @@ export async function POST(req: Request) {
                 onEvent,
               });
 
-          controller.enqueue(
-            encoder.encode(
-              createSSEMessage({
-                step: "done",
-                documentId: "documentId" in result ? result.documentId : undefined,
-                summary: "summary" in result ? result.summary : undefined,
-              })
-            )
-          );
+          send({
+            step: "done",
+            documentId: "documentId" in result ? result.documentId : undefined,
+            summary: "summary" in result ? result.summary : undefined,
+          });
           return;
         }
 
@@ -97,23 +93,22 @@ export async function POST(req: Request) {
           }
         );
 
-        controller.enqueue(encoder.encode(createSSEMessage({ step: "done", documentId: result.documentId })));
+        send({ step: "done", documentId: result.documentId });
       } catch (error) {
         if (!emittedError) {
-          controller.enqueue(
-            encoder.encode(
-              createSSEMessage({
-                step: "error",
-                message: getAIErrorMessage(error),
-                progress: 0,
-                error: true,
-              })
-            )
-          );
+          send({
+            step: "error",
+            message: getAIErrorMessage(error),
+            progress: 0,
+            error: true,
+          });
         }
       } finally {
-        controller.close();
+        if (!cancelled) controller.close();
       }
+    },
+    cancel() {
+      cancelled = true;
     },
   });
 

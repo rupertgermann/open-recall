@@ -79,13 +79,14 @@ export async function updateProject(
 }
 
 export async function deleteProject(id: string) {
-  // Unlink threads (don't delete them)
-  await db
-    .update(chatThreads)
-    .set({ projectId: null, category: "general" })
-    .where(eq(chatThreads.projectId, id));
+  await db.transaction(async (tx) => {
+    await tx
+      .update(chatThreads)
+      .set({ projectId: null, category: "general" })
+      .where(eq(chatThreads.projectId, id));
 
-  await db.delete(projects).where(eq(projects.id, id));
+    await tx.delete(projects).where(eq(projects.id, id));
+  });
   revalidatePath("/chat");
   return { success: true };
 }

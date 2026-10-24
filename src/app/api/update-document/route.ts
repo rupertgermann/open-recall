@@ -22,12 +22,16 @@ export async function POST(req: Request) {
   }
 
   const encoder = new TextEncoder();
+  let cancelled = false;
   const stream = new ReadableStream({
     async start(controller) {
       let emittedError = false;
+      const send = (event: Parameters<typeof createSSEMessage>[0]) => {
+        if (!cancelled) controller.enqueue(encoder.encode(createSSEMessage(event)));
+      };
       const onEvent = (event: DocumentIngestionEvent) => {
         if (event.error) emittedError = true;
-        controller.enqueue(encoder.encode(createSSEMessage(event)));
+        send(event);
       };
 
       try {
@@ -37,23 +41,22 @@ export async function POST(req: Request) {
           onEvent,
         });
 
-        controller.enqueue(encoder.encode(createSSEMessage({ step: "done", documentId: result.documentId })));
+        send({ step: "done", documentId: result.documentId });
       } catch (error) {
         if (!emittedError) {
-          controller.enqueue(
-            encoder.encode(
-              createSSEMessage({
-                step: "error",
-                message: getAIErrorMessage(error),
-                progress: 0,
-                error: true,
-              })
-            )
-          );
+          send({
+            step: "error",
+            message: getAIErrorMessage(error),
+            progress: 0,
+            error: true,
+          });
         }
       } finally {
-        controller.close();
+        if (!cancelled) controller.close();
       }
+    },
+    cancel() {
+      cancelled = true;
     },
   });
 

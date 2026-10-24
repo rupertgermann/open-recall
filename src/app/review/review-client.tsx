@@ -3,7 +3,7 @@
 import { useState, useTransition } from "react";
 import Link from "next/link";
 import { BookOpen, CheckCircle2, Loader2 } from "lucide-react";
-import { reviewSrsItem, type DueSrsCard } from "@/actions/srs";
+import { listDueSrsItems, reviewSrsItem, type DueSrsCard } from "@/actions/srs";
 import { SRS_RATINGS, type SrsRating } from "@/lib/srs/scheduler";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -23,6 +23,17 @@ export function ReviewClient({ initialCards }: { initialCards: DueSrsCard[] }) {
   const [isPending, startTransition] = useTransition();
   const current = cards[0];
 
+  const loadNextBatch = () => {
+    setError(null);
+    startTransition(async () => {
+      try {
+        setCards(await listDueSrsItems(50));
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Failed to load flashcards");
+      }
+    });
+  };
+
   const handleReview = (rating: SrsRating) => {
     if (!current) return;
 
@@ -37,11 +48,29 @@ export function ReviewClient({ initialCards }: { initialCards: DueSrsCard[] }) {
 
         setCards((queue) => queue.filter((card) => card.id !== current.id));
         setShowAnswer(false);
+        if (cards.length === 1) loadNextBatch();
       } catch (err) {
         setError(err instanceof Error ? err.message : "Failed to review flashcard");
       }
     });
   };
+
+  if (!current && (isPending || error)) {
+    return (
+      <Card>
+        <CardContent className="p-10 text-center">
+          {isPending ? (
+            <p role="status">Loading flashcards...</p>
+          ) : (
+            <>
+              <p role="alert">{error}</p>
+              <Button onClick={loadNextBatch} className="mt-4">Retry</Button>
+            </>
+          )}
+        </CardContent>
+      </Card>
+    );
+  }
 
   if (!current) {
     return (

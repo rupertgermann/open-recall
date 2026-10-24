@@ -172,13 +172,8 @@ async function handleChatPost(req: Request) {
           // Add document context to the query (only title and summary, not full content)
           const truncatedSummary = doc.summary ? doc.summary.slice(0, 200) : "";
           const enhancedQuery = `${lastUserText} ${doc.title} ${truncatedSummary}`;
-          retrievedData = await retrieveContext(enhancedQuery, 3); // Reduced from 5 to 3
-          
-          // Prioritize chunks from this document
-          retrievedData.chunks.sort((a, b) => {
-            if (a.documentId === threadContext.documentId && b.documentId !== threadContext.documentId) return -1;
-            if (a.documentId !== threadContext.documentId && b.documentId === threadContext.documentId) return 1;
-            return b.score - a.score;
+          retrievedData = await retrieveContext(enhancedQuery, 3, {
+            prioritizedDocumentId: threadContext.documentId,
           });
         } else {
           retrievedData = await retrieveContext(lastUserText, 3); // Reduced from 5 to 3
@@ -362,9 +357,10 @@ Guidelines:
     onFinish: async ({ messages: responseMessages }) => {
       try {
         const lastAssistant = [...responseMessages].reverse().find((m) => m.role === "assistant");
-        const assistantTextPart = lastAssistant?.parts.find((p) => p.type === "text");
-        const assistantText =
-          assistantTextPart && "text" in assistantTextPart ? assistantTextPart.text : null;
+        const assistantText = lastAssistant?.parts
+          .filter((part) => part.type === "text")
+          .map((part) => part.text)
+          .join("");
 
         if (assistantText) {
           const storedMetadata: ChatMessageMetadata = {

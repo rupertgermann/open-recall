@@ -188,6 +188,137 @@ test("Drive Folder Import summarizes unsupported, failed, ingested, and unchange
   ]);
 });
 
+test("Source Refresh rebuilds case and indentation changes, then skips identical content", async (t) => {
+  const { db, close } = await createTestDatabase();
+  t.after(close);
+  let builds = 0;
+  const service = createDocumentIngestionService({
+    database: db,
+    buildDerivedData: async (_id, source) => { builds++; return derivedFromSource(source); },
+    getCurrentEmbeddingModel: async () => "test-embedding-model",
+    revalidatePath: () => {},
+  });
+  const state = { content: "Use API_KEY.\n  run()" };
+  const options = { driveRunner: fakeGoogleDocRunner(state) };
+  const original = await service.ingestUrlDocument("https://docs.google.com/document/d/doc-123/edit", options);
+  for (const content of ["Use api_key.\n  run()", "Use api_key.\n    run()"]) {
+    state.content = content;
+    assert.equal((await service.refreshDocument(original.documentId, options)).skipped, false);
+    assert.deepEqual((await db.select({ content: chunks.content }).from(chunks)), [{ content }]);
+  }
+  assert.equal((await service.refreshDocument(original.documentId, options)).skipped, true);
+  assert.equal(builds, 3);
+});
+
+test("progress observer errors cannot mark committed ingestion failed or stop folder summaries", async (t) => {
+  const { db, close } = await createTestDatabase();
+  t.after(close);
+  const service = createDocumentIngestionService({
+    database: db,
+    buildDerivedData: async (_id, source) => derivedFromSource(source),
+    getCurrentEmbeddingModel: async () => "test-embedding-model",
+    revalidatePath: () => {},
+  });
+  const onEvent = () => { throw new TypeError("Controller is already closed"); };
+  const note = await service.ingestTextDocument({ title: "Note", content: "Committed content" }, {
+    onEvent: event => { if (event.step === "complete") onEvent(); },
+  });
+  assert.equal((await db.select().from(documents).where(eq(documents.id, note.documentId)))[0].processingStatus, "completed");
+  assert.equal((await db.select().from(chunks).where(eq(chunks.documentId, note.documentId))).length, 1);
+  const folder = await service.ingestDriveFolder("https://drive.google.com/drive/folders/folder-root", {
+    driveRunner: fakeFolderRunner({
+      failFileIds: new Set(["bad-doc"]),
+      contentById: new Map([["good-doc", "Good content"], ["notes", "Notes content"]]),
+    }),
+    onEvent,
+  });
+  assert.equal(folder.summary.ingested, 2);
+  assert.equal(folder.summary.failed, 1);
+  await assert.rejects(service.refreshDocument(note.documentId, { onEvent }), /no source URL/);
+});
+
+test("overlapping Drive imports retain one Document and reject a competing processing import", async (t) => {
+  const { db, close } = await createTestDatabase();
+  t.after(close);
+  let releaseBuild: () => void = () => {};
+  const buildGate = new Promise<void>(resolve => { releaseBuild = resolve; });
+  let buildStarted: () => void = () => {};
+  const started = new Promise<void>(resolve => { buildStarted = resolve; });
+  let builds = 0;
+  const dependencies = {
+    database: db,
+    buildDerivedData: async (_id: string, source: SourceContent) => {
+      builds++;
+      buildStarted();
+      if (builds === 1) await buildGate;
+      return derivedFromSource(source);
+    },
+    getCurrentEmbeddingModel: async () => "test-embedding-model",
+    revalidatePath: () => {},
+  };
+  const firstService = createDocumentIngestionService(dependencies);
+  const secondService = createDocumentIngestionService(dependencies);
+  const options = { driveRunner: fakeGoogleDocRunner({ content: "Concurrent content" }) };
+  const first = firstService.ingestUrlDocument("https://docs.google.com/document/d/doc-123/edit", options);
+  const competing = secondService.ingestUrlDocument("https://drive.google.com/open?id=doc-123", options);
+  const competingCheck = assert.rejects(competing, /already being processed/);
+  await started;
+  try {
+    await competingCheck;
+  } finally {
+    releaseBuild();
+    await first;
+  }
+  assert.equal(builds, 1);
+  assert.equal((await db.select().from(documents)).length, 1);
+  assert.equal((await db.select().from(chunks)).length, 1);
+  const refreshed = await secondService.ingestUrlDocument("https://drive.google.com/open?id=doc-123", options);
+  assert.equal(refreshed.skipped, true);
+});
+
+test("Drive imports preserve legacy duplicates and refresh the oldest matching Document", async (t) => {
+  const { db, close } = await createTestDatabase();
+  t.after(close);
+  const content = "Stored content";
+  const [older, newer] = await db.insert(documents).values([
+    { title: "Oldest", type: "note", url: "https://drive.google.com/file/d/doc-123/view",
+      content, contentHash: generateContentHash(content), embeddingModel: "test-embedding-model",
+      processingStatus: "completed", createdAt: new Date("2025-01-01") },
+    { title: "Legacy duplicate", type: "note", url: "https://drive.google.com/file/d/doc-123/view",
+      content: "Preserve this", processingStatus: "completed", createdAt: new Date("2025-01-02") },
+  ]).returning();
+  const service = createDocumentIngestionService({
+    database: db,
+    buildDerivedData: async () => { throw new Error("Unchanged content must not rebuild"); },
+    getCurrentEmbeddingModel: async () => "test-embedding-model",
+    revalidatePath: () => {},
+  });
+  const result = await service.ingestUrlDocument("https://docs.google.com/document/d/doc-123/edit", {
+    driveRunner: fakeGoogleDocRunner({ content }),
+  });
+  assert.equal(result.documentId, older.id);
+  assert.equal(result.skipped, true);
+  assert.equal((await db.select().from(documents)).length, 2);
+  assert.deepEqual((await db.select().from(documents).where(eq(documents.id, newer.id)))[0], newer);
+  await db.update(documents).set({ processingStatus: "processing" }).where(eq(documents.id, older.id));
+  await assert.rejects(service.ingestUrlDocument("https://drive.google.com/open?id=doc-123"), /already being processed/);
+});
+
+test("ordinary article imports retain their existing non-deduplicating behavior", async (t) => {
+  const { db, close } = await createTestDatabase();
+  t.after(close);
+  t.mock.method(globalThis, "fetch", async () => new Response("<html><head><title>Article</title></head><body><article><p>Useful content about a saved article.</p></article></body></html>"));
+  const service = createDocumentIngestionService({
+    database: db,
+    buildDerivedData: async (_id, source) => derivedFromSource(source),
+    revalidatePath: () => {},
+  });
+  const first = await service.ingestUrlDocument("https://example.invalid/article");
+  const second = await service.ingestUrlDocument("https://example.invalid/article");
+  assert.notEqual(first.documentId, second.documentId);
+  assert.equal((await db.select().from(documents)).length, 2);
+});
+
 function derivedFromSource(source: SourceContent): DerivedDocumentData {
   return {
     contentHash: generateContentHash(source.content),
