@@ -258,7 +258,7 @@ export type AutoOrganizeSuggestion = {
 const autoOrganizeSuggestionSchema = z.object({
   assignments: z.array(
     z.object({
-      documentId: z.string().uuid(),
+      documentId: z.uuid(),
       existingCollections: z.array(
         z.object({
           collectionName: z.string(),
