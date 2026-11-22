@@ -4,7 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useChat } from "@ai-sdk/react";
 import { DefaultChatTransport } from "ai";
 import Link from "next/link";
-import { AlertCircle, Loader2, MessageSquareIcon, Plus, Trash2, Filter, Search, FolderKanban, MoreVertical, Pencil } from "lucide-react";
+import { AlertCircle, Loader2, MessageSquareIcon, Plus, Trash2, Filter, Search, FolderKanban, MoreVertical } from "lucide-react";
 import {
   AlertDialog,
   AlertDialogAction,

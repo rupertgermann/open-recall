@@ -338,7 +338,7 @@ export default function LibraryPage() {
       }
       await refreshCollections();
       toast({ title: "Collection deleted" });
-    } catch (error) {
+    } catch {
       toast({ title: "Delete failed", variant: "destructive" });
     } finally {
       setCollectionToDelete(null);
@@ -397,7 +397,7 @@ export default function LibraryPage() {
       await refreshCollections();
       setBulkSelectMode(false);
       setSelectedDocIds(new Set());
-    } catch (error) {
+    } catch {
       toast({ title: "Assignment failed", variant: "destructive" });
     }
   };
@@ -506,7 +506,7 @@ export default function LibraryPage() {
           description: `"${results[0].documentTitle}" added to ${results[0].assignedCollections.join(", ")}.`,
         });
       }
-    } catch (error) {
+    } catch {
       toast({ title: "Failed to apply suggestion", variant: "destructive" });
     } finally {
       setIsApplyingOrganize(false);
@@ -609,7 +609,7 @@ export default function LibraryPage() {
         title: "Removed from collection",
         description: "The document has been removed from this collection.",
       });
-    } catch (error) {
+    } catch {
       toast({
         title: "Error",
         description: "Failed to remove document from collection.",

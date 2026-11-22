@@ -302,7 +302,7 @@ async function readSupportedDriveFile(
   }
 
   if (support.type === "note") {
-    const buffer = await downloadDriveFile(metadata.id, runner, support.format ?? fileExtension(metadata.name) ?? "txt");
+    const buffer = await downloadDriveFile(metadata.id, runner, support.format ?? "txt");
     return buffer.toString("utf8");
   }
 
@@ -322,11 +322,12 @@ async function exportDriveFile(
 async function downloadDriveFile(
   fileId: string,
   runner: GogRunner,
-  extension: string,
+  extension: "md" | "txt" | "pdf",
   format?: "md" | "txt"
 ): Promise<Buffer> {
   const dir = await mkdtemp(join(tmpdir(), "open-recall-drive-"));
-  const outPath = join(dir, `${fileId}.${extension}`);
+  // gog writes this file in a fresh OS temporary directory at request time.
+  const outPath = join(/* turbopackIgnore: true */ dir, `download.${extension}`);
 
   try {
     const formatArgs = format ? ["--format", format] : [];
@@ -343,7 +344,7 @@ async function downloadDriveFile(
       "--no-input",
       "--readonly",
     ]);
-    return await readFile(outPath);
+    return await readFile(/* turbopackIgnore: true */ outPath);
   } finally {
     await rm(dir, { recursive: true, force: true });
   }

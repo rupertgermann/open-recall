@@ -4,7 +4,7 @@ import { Suspense, useState, useCallback, useMemo, useEffect, useRef } from "rea
 import dynamic from "next/dynamic";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
-import { Search, Loader2, RefreshCw, Focus, X, RotateCcw, ZoomIn, ZoomOut, MessageSquare, FolderOpen, Library } from "lucide-react";
+import { Search, Loader2, RefreshCw, Focus, X, RotateCcw, ZoomIn, ZoomOut, FolderOpen, Library } from "lucide-react";
 import { ChatAboutButton } from "@/app/library/chat-about-button";
 import { RelatedChats } from "@/components/related-chats";
 import { getGraphData, getDocumentGraph, getEntityDetails, type GraphData, type GraphNode } from "@/actions/graph";

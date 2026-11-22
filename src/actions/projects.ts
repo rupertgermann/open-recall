@@ -2,7 +2,7 @@
 
 import { db } from "@/db";
 import { projects, projectDocuments, chatThreads, documents } from "@/db/schema";
-import { eq, desc, sql, count } from "drizzle-orm";
+import { eq, desc, sql } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 
 export type ProjectWithCounts = {

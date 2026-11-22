@@ -1,7 +1,7 @@
 "use server";
 
 import { db } from "@/db";
-import { documents, chunks, entities, entityMentions, relationships, tags, documentTags, documentCollections } from "@/db/schema";
+import { documents, chunks, entities, entityMentions, relationships, tags, documentTags } from "@/db/schema";
 import { eq, desc, ilike, or, sql, count, inArray } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { generateTagsWithDBConfig } from "@/lib/ai";

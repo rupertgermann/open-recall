@@ -1,8 +1,8 @@
 "use server";
 
 import { db } from "@/db";
-import { documents, entities, relationships, chunks, chatThreads, chatMessages, collections, documentCollections } from "@/db/schema";
-import { count, desc, sql, eq } from "drizzle-orm";
+import { documents, entities, relationships, chunks, chatThreads, collections } from "@/db/schema";
+import { count, desc, sql } from "drizzle-orm";
 
 export type DashboardStats = {
   documents: number;

@@ -1,7 +1,4 @@
 import { pgTable, index, foreignKey, uuid, real, timestamp, uniqueIndex, text, vector, jsonb, unique, integer } from "drizzle-orm/pg-core"
-import { sql } from "drizzle-orm"
-
-
 
 export const entityMentions = pgTable("entity_mentions", {
 	id: uuid().defaultRandom().primaryKey().notNull(),

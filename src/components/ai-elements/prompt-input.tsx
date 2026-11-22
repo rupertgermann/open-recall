@@ -47,6 +47,7 @@ import {
   XIcon,
 } from "lucide-react";
 import { nanoid } from "nanoid";
+import Image from "next/image";
 import {
   type ChangeEvent,
   type ChangeEventHandler,
@@ -310,11 +311,13 @@ export function PromptInputAttachment({
           <div className="relative size-5 shrink-0">
             <div className="absolute inset-0 flex size-5 items-center justify-center overflow-hidden rounded bg-background transition-opacity group-hover:opacity-0">
               {isImage ? (
-                <img
+                <Image
                   alt={filename || "attachment"}
                   className="size-5 object-cover"
                   height={20}
+                  loading="eager"
                   src={data.url}
+                  unoptimized
                   width={20}
                 />
               ) : (
@@ -345,11 +348,13 @@ export function PromptInputAttachment({
         <div className="w-auto space-y-3">
           {isImage && (
             <div className="flex max-h-96 w-96 items-center justify-center overflow-hidden rounded-md border">
-              <img
+              <Image
                 alt={filename || "attachment preview"}
                 className="max-h-full max-w-full object-contain"
                 height={384}
+                loading="eager"
                 src={data.url}
+                unoptimized
                 width={448}
               />
             </div>
@@ -666,7 +671,6 @@ export const PromptInput = ({
         }
       }
     },
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- cleanup only on unmount; filesRef always current
     [usingProvider]
   );
 
@@ -726,7 +730,9 @@ export const PromptInput = ({
 
     // Convert blob URLs to data URLs asynchronously
     Promise.all(
-      files.map(async ({ id, ...item }) => {
+      files.map(async (file) => {
+        const item: FileUIPart & { id?: string } = { ...file };
+        delete item.id;
         if (item.url && item.url.startsWith("blob:")) {
           const dataUrl = await convertBlobUrlToDataUrl(item.url);
           // If conversion failed, keep the original blob URL
