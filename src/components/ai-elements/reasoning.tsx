@@ -12,7 +12,7 @@ import type { ComponentProps, ReactNode } from "react";
 import { createContext, memo, useContext, useEffect, useState } from "react";
 import { Streamdown } from "streamdown";
 import { Shimmer } from "./shimmer";
-import { streamdownPlugins } from "./streamdown";
+import { streamdownProps } from "./streamdown";
 
 type ReasoningContextValue = {
   isStreaming: boolean;
@@ -171,7 +171,7 @@ export const ReasoningContent = memo(
       )}
       {...props}
     >
-      <Streamdown plugins={streamdownPlugins}>{children}</Streamdown>
+      <Streamdown {...streamdownProps}>{children}</Streamdown>
     </CollapsibleContent>
   )
 );

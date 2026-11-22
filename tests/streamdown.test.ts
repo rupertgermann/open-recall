@@ -16,6 +16,46 @@ const { MessageResponse } = await import("../src/components/ai-elements/message.
 const { ReasoningContent } = await import("../src/components/ai-elements/reasoning.tsx");
 const markdown = "```js\nconst answer = 42;\n```";
 
+async function waitFor(check: () => boolean, message: string) {
+  for (let attempt = 0; attempt < 100 && !check(); attempt++) {
+    await act(async () => { await setTimeout(50); });
+  }
+  assert.ok(check(), message);
+}
+
+test("chat messages render math and offer diagram controls for Mermaid fences", async (t) => {
+  // JSDOM has no viewport. Leave the diagram offscreen while testing its controls.
+  if (!("IntersectionObserver" in globalThis)) {
+    Object.defineProperty(globalThis, "IntersectionObserver", {
+      configurable: true,
+      value: class { observe() {} disconnect() {} },
+    });
+    t.after(() => { Reflect.deleteProperty(globalThis, "IntersectionObserver"); });
+  }
+  const children = "$$\nx^2\n$$\n\n```mermaid\nflowchart LR\n  A --> B\n```";
+  const ui = await renderUi(createElement(MessageResponse, { children }));
+  t.after(ui.close);
+  assert.equal(ui.document.querySelector("math msup")?.textContent, "x2");
+  await waitFor(
+    () => ui.document.querySelector('button[aria-label="Download diagram"]') !== null,
+    "Mermaid diagram controls did not appear"
+  );
+});
+
+test("chat footnote links point to the note and back to its reference", async (t) => {
+  const children = "A fact[^source].\n\n[^source]: A source.";
+  const ui = await renderUi(createElement(MessageResponse, { children }));
+  t.after(ui.close);
+
+  const reference = ui.document.querySelector("a[data-footnote-ref]");
+  const backlink = ui.document.querySelector("a[data-footnote-backref]");
+  assert.ok(reference?.id && backlink);
+  assert.equal(backlink.getAttribute("href"), `#${reference.id}`);
+  const note = backlink.closest("li");
+  assert.ok(note?.id);
+  assert.equal(reference.getAttribute("href"), `#${note.id}`);
+});
+
 for (const [name, element] of [
   ["message", createElement(MessageResponse, { children: markdown })],
   ["reasoning", createElement(ReasoningContent, { children: markdown })],
@@ -29,10 +69,7 @@ for (const [name, element] of [
       const color = span.style.getPropertyValue("--sdm-c");
       return color !== "" && color !== "inherit";
     });
-    for (let attempt = 0; attempt < 100 && !hasHighlight(); attempt++) {
-      await act(async () => { await setTimeout(50); });
-    }
+    await waitFor(hasHighlight, "code block was not syntax-highlighted");
     assert.match(ui.document.body.textContent ?? "", /const answer = 42;/);
-    assert.ok(hasHighlight(), "code block was not syntax-highlighted");
   });
 }
