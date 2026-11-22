@@ -151,13 +151,18 @@ export const QueueItemImage = ({
   className,
   ...props
 }: QueueItemImageProps) => (
-  <img
-    alt=""
-    className={cn("h-8 w-8 rounded border object-cover", className)}
-    height={32}
-    width={32}
-    {...props}
-  />
+  <picture className="contents">
+    {props.sizes && props.srcSet && (
+      <source sizes={props.sizes} srcSet={props.srcSet} />
+    )}
+    <img
+      alt=""
+      className={cn("h-8 w-8 rounded border object-cover", className)}
+      height={32}
+      width={32}
+      {...props}
+    />
+  </picture>
 );
 
 export type QueueItemFileProps = ComponentProps<"span">;

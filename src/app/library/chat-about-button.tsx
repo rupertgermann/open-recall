@@ -42,7 +42,7 @@ export function ChatAboutButton({
       } else {
         throw new Error("Failed to create chat");
       }
-    } catch (error) {
+    } catch {
       toast({
         title: "Error",
         description: "Failed to create chat. Please try again.",

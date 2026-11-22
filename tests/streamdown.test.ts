@@ -5,6 +5,7 @@ import { act, createElement, loadUi, renderUi } from "./helpers/ui.ts";
 
 const react = `import { createElement } from ${JSON.stringify(new URL("../node_modules/react/index.js", import.meta.url).href)};`;
 loadUi({
+  "next/image": "export default () => null;",
   "@/components/ui/button": "export const Button = () => null;",
   "@/components/ui/button-group": "export const ButtonGroup = () => null; export const ButtonGroupText = () => null;",
   "@/components/ui/tooltip": "export const Tooltip = () => null; export const TooltipContent = () => null; export const TooltipProvider = () => null; export const TooltipTrigger = () => null;",

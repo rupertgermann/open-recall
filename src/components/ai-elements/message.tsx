@@ -19,8 +19,9 @@ import {
   PaperclipIcon,
   XIcon,
 } from "lucide-react";
-import type { ComponentProps, HTMLAttributes, ReactElement } from "react";
-import { createContext, memo, useContext, useEffect, useState } from "react";
+import Image from "next/image";
+import type { ComponentProps, HTMLAttributes } from "react";
+import { Children, createContext, memo, useContext, useEffect, useState } from "react";
 import { Streamdown } from "streamdown";
 import { streamdownProps } from "./streamdown";
 
@@ -112,8 +113,7 @@ type MessageBranchContextType = {
   totalBranches: number;
   goToPrevious: () => void;
   goToNext: () => void;
-  branches: ReactElement[];
-  setBranches: (branches: ReactElement[]) => void;
+  setTotalBranches: (count: number) => void;
 };
 
 const MessageBranchContext = createContext<MessageBranchContextType | null>(
@@ -144,7 +144,7 @@ export const MessageBranch = ({
   ...props
 }: MessageBranchProps) => {
   const [currentBranch, setCurrentBranch] = useState(defaultBranch);
-  const [branches, setBranches] = useState<ReactElement[]>([]);
+  const [totalBranches, setTotalBranches] = useState(0);
 
   const handleBranchChange = (newBranch: number) => {
     setCurrentBranch(newBranch);
@@ -153,23 +153,22 @@ export const MessageBranch = ({
 
   const goToPrevious = () => {
     const newBranch =
-      currentBranch > 0 ? currentBranch - 1 : branches.length - 1;
+      currentBranch > 0 ? currentBranch - 1 : totalBranches - 1;
     handleBranchChange(newBranch);
   };
 
   const goToNext = () => {
     const newBranch =
-      currentBranch < branches.length - 1 ? currentBranch + 1 : 0;
+      currentBranch < totalBranches - 1 ? currentBranch + 1 : 0;
     handleBranchChange(newBranch);
   };
 
   const contextValue: MessageBranchContextType = {
     currentBranch,
-    totalBranches: branches.length,
+    totalBranches,
     goToPrevious,
     goToNext,
-    branches,
-    setBranches,
+    setTotalBranches,
   };
 
   return (
@@ -188,23 +187,19 @@ export const MessageBranchContent = ({
   children,
   ...props
 }: MessageBranchContentProps) => {
-  const { currentBranch, setBranches, branches } = useMessageBranch();
-  const childrenArray = Array.isArray(children) ? children : [children];
+  const { currentBranch, setTotalBranches } = useMessageBranch();
+  const branchCount = Children.count(children);
 
-  // Use useEffect to update branches when they change
   useEffect(() => {
-    if (branches.length !== childrenArray.length) {
-      setBranches(childrenArray);
-    }
-  }, [childrenArray, branches, setBranches]);
+    setTotalBranches(branchCount);
+  }, [branchCount, setTotalBranches]);
 
-  return childrenArray.map((branch, index) => (
+  return Children.map(children, (branch, index) => (
     <div
       className={cn(
         "grid gap-2 overflow-hidden [&>div]:pb-0",
         index === currentBranch ? "block" : "hidden"
       )}
-      key={branch.key}
       {...props}
     >
       {branch}
@@ -230,7 +225,11 @@ export const MessageBranchSelector = ({
 
   return (
     <ButtonGroup
-      className="[&>*:not(:first-child)]:rounded-l-md [&>*:not(:last-child)]:rounded-r-md"
+      aria-label={`${from} message branches`}
+      className={cn(
+        "[&>*:not(:first-child)]:rounded-l-md [&>*:not(:last-child)]:rounded-r-md",
+        className
+      )}
       orientation="horizontal"
       {...props}
     />
@@ -264,7 +263,6 @@ export type MessageBranchNextProps = ComponentProps<typeof Button>;
 
 export const MessageBranchNext = ({
   children,
-  className,
   ...props
 }: MessageBranchNextProps) => {
   const { goToNext, totalBranches } = useMessageBranch();
@@ -351,11 +349,13 @@ export function MessageAttachment({
     >
       {isImage ? (
         <>
-          <img
+          <Image
             alt={filename || "attachment"}
             className="size-full object-cover"
             height={100}
+            loading="eager"
             src={data.url}
+            unoptimized
             width={100}
           />
           {onRemove && (

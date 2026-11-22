@@ -2,7 +2,7 @@
 
 import { db } from "@/db";
 import { collections, documentCollections, documents } from "@/db/schema";
-import { eq, desc, sql, count, inArray, notInArray } from "drizzle-orm";
+import { eq, desc, sql } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { generateObject } from "ai";
 import { z } from "zod";
