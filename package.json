@@ -1,6 +1,6 @@
 {
   "name": "open-recall",
-  "version": "1.2.1",
+  "version": "1.2.2",
   "private": true,
   "description": "Privacy-focused, local-first Personal Knowledge Management powered by GraphRAG",
   "license": "MIT",
